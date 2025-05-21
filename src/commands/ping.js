@@ -1,3 +1,5 @@
+// src/commands/ping.js - ping指令
+
 const { SlashCommandBuilder} = require('discord.js');
 
 const data = new SlashCommandBuilder()

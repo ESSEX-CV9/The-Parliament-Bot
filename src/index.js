@@ -1,3 +1,5 @@
+// src/index.js - 主入口文件
+
 require('dotenv').config();
 
 const  {
@@ -8,6 +10,7 @@ const  {
 } = require('discord.js')
 
 const { clientReadyHandler } = require('./events/clientReady')
+const { interactionCreateHandler } = require('./events/interactionCreate')
 
 const pingCommand = require('./commands/ping')
 
@@ -21,6 +24,8 @@ client.commands = new Collection();
 
 client.commands.set(pingCommand.data.name, pingCommand);
 
-client.on(Events.ClientReady,clientReadyHandler);
+client.once(Events.ClientReady,clientReadyHandler); // only tragger once
+
+client.on(Events.InteractionCreate, interactionCreateHandler)
 
 client.login(process.env.DISCORD_TOKEN);

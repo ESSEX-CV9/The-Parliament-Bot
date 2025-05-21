@@ -1,3 +1,5 @@
+// src/events/clientReady.js
+
 const { 
     REST, 
     Routes, 
