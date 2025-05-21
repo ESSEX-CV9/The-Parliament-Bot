@@ -15,11 +15,31 @@ async function createForumPost(client, messageData) {
         const author = await client.users.fetch(messageData.authorId).catch(() => null);
         const authorMention = author ? `<@${author.id}>` : "未知用户";
         
+        // 获取当前时间戳（Discord格式）
+        const currentTimestamp = Math.floor(Date.now() / 1000);
+        
+        // 构建新的帖子内容格式
+        const postContent = `***提案人: ${authorMention}***
+
+> ## 提案原因
+${messageData.formData.reason}
+
+> ## 议案动议
+${messageData.formData.motion}
+
+> ## 执行方案
+${messageData.formData.implementation}
+
+> ## 投票时间
+${messageData.formData.voteTime}
+
+*讨论帖创建时间: <t:${currentTimestamp}:f>*`;
+        
         // 创建论坛帖子
         const thread = await forumChannel.threads.create({
             name: messageData.formData.title,
             message: {
-                content: `提案人：${authorMention}\n\n**提案原因**\n${messageData.formData.reason}\n\n**议案动议**\n${messageData.formData.motion}\n\n**执行方案**\n${messageData.formData.implementation}\n\n**投票时间**\n${messageData.formData.voteTime}\n\n*此帖子在收到 ${messageData.currentVotes} 个支持后创建。提案ID: ${messageData.proposalId}*`,
+                content: postContent,
             },
             // 可以添加适当的标签
             appliedTags: []
