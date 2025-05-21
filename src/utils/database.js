@@ -9,15 +9,11 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
-const ID_COUNTER_FILE = path.join(DATA_DIR, 'id_counter.json');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
     fs.writeFileSync(SETTINGS_FILE, '{}', 'utf8');
-}
-if (!fs.existsSync(ID_COUNTER_FILE)) {
-    fs.writeFileSync(ID_COUNTER_FILE, JSON.stringify({ lastId: 0 }), 'utf8');
 }
 if (!fs.existsSync(MESSAGES_FILE)) {
     fs.writeFileSync(MESSAGES_FILE, '{}', 'utf8');
@@ -43,20 +39,6 @@ function writeSettings(data) {
     }
 }
 
-// 获取并递增下一个ID
-function getNextId() {
-    try {
-        const data = fs.readFileSync(ID_COUNTER_FILE, 'utf8');
-        const counter = JSON.parse(data);
-        counter.lastId += 1;
-        fs.writeFileSync(ID_COUNTER_FILE, JSON.stringify(counter), 'utf8');
-        return counter.lastId;
-    } catch (err) {
-        console.error('ID计数器操作失败:', err);
-        return Date.now(); // 故障时使用时间戳
-    }
-}
-
 // 读取消息数据
 function readMessages() {
     try {
@@ -74,6 +56,31 @@ function writeMessages(data) {
         fs.writeFileSync(MESSAGES_FILE, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) {
         console.error('写入消息文件失败:', err);
+    }
+}
+
+// 获取下一个提案ID
+function getNextId() {
+    try {
+        const messages = readMessages();
+        
+        // 从现有消息中找出最大ID
+        let maxId = 0;
+        for (const messageId in messages) {
+            const message = messages[messageId];
+            if (message.proposalId && !isNaN(parseInt(message.proposalId))) {
+                const proposalId = parseInt(message.proposalId);
+                if (proposalId > maxId) {
+                    maxId = proposalId;
+                }
+            }
+        }
+        
+        // 返回最大ID+1，或者1（如果没有现存消息）
+        return maxId > 0 ? maxId + 1 : 1;
+    } catch (err) {
+        console.error('获取下一个ID失败:', err);
+        return 1; // 默认从1开始
     }
 }
 
