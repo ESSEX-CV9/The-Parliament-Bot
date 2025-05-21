@@ -12,7 +12,8 @@ const  {
 const { clientReadyHandler } = require('./events/clientReady')
 const { interactionCreateHandler } = require('./events/interactionCreate')
 
-const pingCommand = require('./commands/ping')
+const pingCommand = require('./commands/ping');
+const setupFormCommand = require('./commands/setupForm');
 
 const client = new Client({ 
     intents: [
@@ -23,6 +24,8 @@ const client = new Client({
 client.commands = new Collection();
 
 client.commands.set(pingCommand.data.name, pingCommand);
+
+client.commands.set(setupFormCommand.data.name, setupFormCommand);
 
 client.once(Events.ClientReady,clientReadyHandler); // only tragger once
 

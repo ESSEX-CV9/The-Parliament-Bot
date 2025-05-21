@@ -1,0 +1,34 @@
+{
+  "1374854299762299001": {
+    "messageId": "1374854299762299001",
+    "channelId": "1374792366807846992",
+    "formData": {
+      "title": "1",
+      "description": "1",
+      "contact": "1"
+    },
+    "requiredVotes": 1,
+    "currentVotes": 0,
+    "voters": [],
+    "forumChannelId": "1374848112568434731",
+    "authorId": "757946225323671664"
+  },
+  "1374855588076458035": {
+    "messageId": "1374855588076458035",
+    "channelId": "1374792366807846992",
+    "formData": {
+      "title": "1",
+      "description": "2",
+      "contact": "2"
+    },
+    "requiredVotes": 1,
+    "currentVotes": 1,
+    "voters": [
+      "757946225323671664"
+    ],
+    "forumChannelId": "1374848112568434731",
+    "authorId": "757946225323671664",
+    "status": "posted",
+    "threadId": "1374855625619542028"
+  }
+}
