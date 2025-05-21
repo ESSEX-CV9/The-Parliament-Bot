@@ -1,5 +1,5 @@
 // src/services/voteTracker.js
-const { MessageFlags, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
+const { MessageFlags, ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = require('discord.js');
 const { getMessage, updateMessage } = require('../utils/database');
 const { createForumPost } = require('./forumPoster');
 
@@ -84,25 +84,39 @@ async function processVote(interaction) {
                 });
                 
                 // 创建论坛帖子
-                await createForumPost(interaction.client, messageData);
+                const forumPostResult = await createForumPost(interaction.client, messageData);
                 
-                // 更新消息，表示已发布到论坛
+                // 创建通过后的嵌入消息
+                const passedEmbed = new EmbedBuilder()
+                    .setTitle(messageData.formData.title)
+                    .setDescription(`提案人：<@${messageData.authorId}>\n\n此提案已经满足所需支持数，已创建议案讨论帖 ${forumPostResult.url}`)
+                    .setColor('#0099ff') 
+                    .setFooter({ 
+                        text: `提案ID ${messageData.proposalId} | 已通过`,
+                        iconURL: interaction.guild.iconURL()
+                    })
+                    .setTimestamp();
+                
+                // 更新消息，表示已创立讨论帖
                 const disabledButton = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
                             .setCustomId(`complete_${messageId}`)
-                            .setLabel(`已发布到论坛 ✅`)
+                            .setLabel(`已创立讨论帖 ✅`)
                             .setStyle(ButtonStyle.Success)
                             .setDisabled(true)
                     );
                 
                 await interaction.message.edit({
+                    embeds: [passedEmbed],
                     components: [disabledButton]
                 });
                 
-                // 更新数据库中的状态
+                // 更新数据库中的状态，包括论坛帖子URL
                 await updateMessage(messageId, {
-                    status: 'posted'
+                    status: 'posted',
+                    forumPostUrl: forumPostResult.url,
+                    forumThreadId: forumPostResult.id
                 });
                 
                 // 更新回复
@@ -110,6 +124,23 @@ async function processVote(interaction) {
             } catch (error) {
                 console.error('发布到论坛时出错:', error);
                 replyContent = '您的支持已记录，但发布到论坛时出现错误。请联系管理员。';
+                
+                // 如果创建论坛帖子失败，恢复按钮状态
+                const errorButtons = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`support_${messageId}`)
+                            .setLabel(`支持 (${messageData.currentVotes}/${messageData.requiredVotes}) - 发布失败`)
+                            .setStyle(ButtonStyle.Danger),
+                        new ButtonBuilder()
+                            .setCustomId(`withdraw_${messageId}`)
+                            .setLabel('撤回提案')
+                            .setStyle(ButtonStyle.Danger)
+                    );
+                
+                await interaction.message.edit({
+                    components: [errorButtons]
+                });
             }
         }
         

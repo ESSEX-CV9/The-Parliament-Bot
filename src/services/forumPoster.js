@@ -8,7 +8,7 @@ async function createForumPost(client, messageData) {
         
         if (!forumChannel || forumChannel.type !== 15) { // 15 = GUILD_FORUM
             console.error('无效的论坛频道');
-            return;
+            throw new Error('无效的论坛频道');
         }
         
         // 获取提案人用户
@@ -33,7 +33,12 @@ async function createForumPost(client, messageData) {
         
         console.log(`成功创建论坛帖子: ${thread.id}`);
         
-        return thread;
+        // 返回帖子信息，包括URL
+        return {
+            id: thread.id,
+            url: `https://discord.com/channels/${messageData.forumChannelId}/${thread.id}`,
+            thread: thread
+        };
         
     } catch (error) {
         console.error('创建论坛帖子时出错:', error);
