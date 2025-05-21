@@ -22,17 +22,29 @@ async function processVote(interaction) {
         });
     }
     
-    // 检查用户是否已经投票
-    if (messageData.voters.includes(interaction.user.id)) {
+    // 如果消息已经发布到论坛，不允许再更改投票
+    if (messageData.status === 'posted') {
         return interaction.reply({ 
-            content: '您已经支持过这个提交。',
+            content: '此议案已经发布到论坛，不能再更改支持状态。',
             flags: MessageFlags.Ephemeral 
         });
     }
     
-    // 更新投票
-    messageData.currentVotes += 1;
-    messageData.voters.push(interaction.user.id);
+    // 检查用户是否已经投票
+    const userIndex = messageData.voters.indexOf(interaction.user.id);
+    let replyContent = '';
+    
+    if (userIndex !== -1) {
+        // 用户已投票，撤销投票
+        messageData.currentVotes -= 1;
+        messageData.voters.splice(userIndex, 1);
+        replyContent = '您已撤销对此议案的支持！';
+    } else {
+        // 用户未投票，添加投票
+        messageData.currentVotes += 1;
+        messageData.voters.push(interaction.user.id);
+        replyContent = '您的支持已记录！';
+    }
     
     // 更新按钮标签
     const updatedButton = new ActionRowBuilder()
@@ -55,26 +67,35 @@ async function processVote(interaction) {
     
     // 检查是否达到所需票数
     if (messageData.currentVotes >= messageData.requiredVotes) {
-        // 创建论坛帖子
-        await createForumPost(interaction.client, messageData);
-        
-        // 更新消息，表示已发布到论坛
-        const disabledButton = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`complete_${messageId}`)
-                    .setLabel(`已发布到论坛 ✅`)
-                    .setStyle(ButtonStyle.Success)
-                    .setDisabled(true)
-            );
-        
-        await interaction.message.edit({
-            components: [disabledButton]
-        });
+        try {
+            // 创建论坛帖子
+            await createForumPost(interaction.client, messageData);
+            
+            // 更新消息，表示已发布到论坛
+            const disabledButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`complete_${messageId}`)
+                        .setLabel(`已发布到论坛 ✅`)
+                        .setStyle(ButtonStyle.Success)
+                        .setDisabled(true)
+                );
+            
+            await interaction.message.edit({
+                components: [disabledButton]
+            });
+            
+            // 更新数据库中的状态
+            await updateMessage(messageId, {
+                status: 'posted'
+            });
+        } catch (error) {
+            console.error('发布到论坛时出错:', error);
+        }
     }
     
     await interaction.reply({ 
-        content: '您的支持已记录！', 
+        content: replyContent, 
         flags: MessageFlags.Ephemeral 
     });
 }

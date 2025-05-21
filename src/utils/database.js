@@ -9,11 +9,15 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const ID_COUNTER_FILE = path.join(DATA_DIR, 'id_counter.json');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
     fs.writeFileSync(SETTINGS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(ID_COUNTER_FILE)) {
+    fs.writeFileSync(ID_COUNTER_FILE, JSON.stringify({ lastId: 0 }), 'utf8');
 }
 if (!fs.existsSync(MESSAGES_FILE)) {
     fs.writeFileSync(MESSAGES_FILE, '{}', 'utf8');
@@ -36,6 +40,20 @@ function writeSettings(data) {
         fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) {
         console.error('写入设置文件失败:', err);
+    }
+}
+
+// 获取并递增下一个ID
+function getNextId() {
+    try {
+        const data = fs.readFileSync(ID_COUNTER_FILE, 'utf8');
+        const counter = JSON.parse(data);
+        counter.lastId += 1;
+        fs.writeFileSync(ID_COUNTER_FILE, JSON.stringify(counter), 'utf8');
+        return counter.lastId;
+    } catch (err) {
+        console.error('ID计数器操作失败:', err);
+        return Date.now(); // 故障时使用时间戳
     }
 }
 
@@ -100,10 +118,17 @@ async function updateMessage(messageId, updates) {
     return null;
 }
 
+// 获取所有消息
+async function getAllMessages() {
+    return readMessages();
+}
+
 module.exports = {
     saveSettings,
     getSettings,
     saveMessage,
     getMessage,
-    updateMessage
+    updateMessage,
+    getAllMessages,
+    getNextId  
 };

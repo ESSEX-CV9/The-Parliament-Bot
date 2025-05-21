@@ -11,11 +11,15 @@ async function createForumPost(client, messageData) {
             return;
         }
         
+        // 获取提案人用户
+        const author = await client.users.fetch(messageData.authorId).catch(() => null);
+        const authorMention = author ? `<@${author.id}>` : "未知用户";
+        
         // 创建论坛帖子
         const thread = await forumChannel.threads.create({
             name: messageData.formData.title,
             message: {
-                content: `**描述:** ${messageData.formData.description}\n\n**联系方式:** ${messageData.formData.contact}\n\n*此帖子在收到 ${messageData.currentVotes} 个支持后创建。*`,
+                content: `提案人：${authorMention}\n\n**提案原因**\n${messageData.formData.reason}\n\n**议案动议**\n${messageData.formData.motion}\n\n**执行方案**\n${messageData.formData.implementation}\n\n**投票时间**\n${messageData.formData.voteTime}\n\n*此帖子在收到 ${messageData.currentVotes} 个支持后创建。提案ID: ${messageData.proposalId}*`,
             },
             // 可以添加适当的标签
             appliedTags: []
@@ -27,8 +31,13 @@ async function createForumPost(client, messageData) {
             threadId: thread.id
         });
         
+        console.log(`成功创建论坛帖子: ${thread.id}`);
+        
+        return thread;
+        
     } catch (error) {
         console.error('创建论坛帖子时出错:', error);
+        throw error;
     }
 }
 

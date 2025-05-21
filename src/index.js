@@ -11,6 +11,7 @@ const  {
 
 const { clientReadyHandler } = require('./events/clientReady')
 const { interactionCreateHandler } = require('./events/interactionCreate')
+const { startProposalChecker } = require('./services/proposalChecker');
 
 const pingCommand = require('./commands/ping');
 const setupFormCommand = require('./commands/setupForm');
@@ -27,7 +28,17 @@ client.commands.set(pingCommand.data.name, pingCommand);
 
 client.commands.set(setupFormCommand.data.name, setupFormCommand);
 
-client.once(Events.ClientReady,clientReadyHandler); // only tragger once
+// client.once(Events.ClientReady,clientReadyHandler); // only tragger once
+
+client.once(Events.ClientReady, async (readyClient) => {
+    // 调用ready处理程序
+    await clientReadyHandler(readyClient);
+    
+    // 启动提案检查器
+    startProposalChecker(readyClient);
+    
+    console.log('提案检查器已启动');
+})
 
 client.on(Events.InteractionCreate, interactionCreateHandler)
 

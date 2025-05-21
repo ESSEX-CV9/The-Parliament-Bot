@@ -49,21 +49,27 @@ async function execute(interaction) {
         
         // 创建表单入口按钮
         const message = await interaction.channel.send({
-            content: '📝 **点击下方按钮填写表单**',
-            components: [
-                {
-                    type: 1, // ACTION_ROW
-                    components: [
-                        {
-                            type: 2, // BUTTON
-                            style: 1, // PRIMARY
-                            label: '填写表单',
-                            custom_id: 'open_form'
-                        }
-                    ]
-                }
-            ]
-        });
+        content: '📝议案预审核提交入口\n请点击下方的按钮，并按照议案表格的格式填写内容。\n* 议案标题：简洁明了，不超过30字\n* 提案原因：说明提出此动议的原因\n* 议案动议：详细说明您的议案内容\n* 执行方案：说明如何落实此动议\n* 投票时间：建议的投票持续时间\n提交后，议案需要获得20个支持才能进入讨论阶段',
+        components: [
+            {
+                type: 1, // ACTION_ROW
+                components: [
+                    {
+                        type: 2, // BUTTON
+                        style: 1, // PRIMARY
+                        label: '填写表单',
+                        custom_id: 'open_form'
+                    },
+                    {
+                        type: 2, // BUTTON
+                        style: 4, // DANGER
+                        label: '删除入口',
+                        custom_id: 'delete_entry'
+                    }
+                ]
+            }
+        ]
+    });
         
         // 使用MessageFlags.Ephemeral替代ephemeral: true
         await interaction.reply({ 

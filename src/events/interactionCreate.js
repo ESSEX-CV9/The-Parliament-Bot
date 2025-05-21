@@ -1,4 +1,5 @@
 // src/events/interactionCreate.js
+const { PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { createFormModal } = require('../components/formModal');
 const { processFormSubmission } = require('../services/formService');
 const { processVote } = require('../services/voteTracker');
@@ -21,6 +22,21 @@ async function interactionCreateHandler(interaction) {
                 // 打开表单模态窗口
                 const modal = createFormModal();
                 await interaction.showModal(modal);
+            } else if (interaction.customId === 'delete_entry') {
+                // 检查用户是否有管理员权限
+                if (interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    // 删除消息
+                    await interaction.message.delete();
+                    await interaction.reply({
+                        content: '入口已删除',
+                        flags: MessageFlags.Ephemeral
+                    });
+                } else {
+                    await interaction.reply({
+                        content: '你没有权限执行此操作',
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
             } else if (interaction.customId.startsWith('support_')) {
                 // 处理支持按钮
                 await processVote(interaction);
@@ -39,7 +55,7 @@ async function interactionCreateHandler(interaction) {
             if (!interaction.replied && !interaction.deferred) {
                 await interaction.reply({ 
                     content: '处理您的请求时出现错误。', 
-                    ephemeral: true 
+                    flags: MessageFlags.Ephemeral
                 });
             }
         } catch (replyError) {

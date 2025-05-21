@@ -1,22 +1,24 @@
 // src/services/formService.js
-const { MessageFlags } = require('discord.js'); // 添加这行
+const { MessageFlags } = require('discord.js');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { getSettings, saveMessage } = require('../utils/database'); // 确保正确导入
+const { getSettings, saveMessage, getNextId } = require('../utils/database');
 
 async function processFormSubmission(interaction) {
     // 获取表单数据
     const title = interaction.fields.getTextInputValue('title');
-    const description = interaction.fields.getTextInputValue('description');
-    const contact = interaction.fields.getTextInputValue('contact');
+    const reason = interaction.fields.getTextInputValue('reason');
+    const motion = interaction.fields.getTextInputValue('motion');
+    const implementation = interaction.fields.getTextInputValue('implementation');
+    const voteTime = interaction.fields.getTextInputValue('voteTime');
     
-    // 从数据库获取设置 - 使用正确的键
+    // 从数据库获取设置
     const settings = await getSettings(interaction.guild.id);
-    console.log('处理表单提交，获取设置:', settings); // 添加调试日志
+    console.log('处理表单提交，获取设置:', settings);
     
     if (!settings) {
         return interaction.reply({ 
             content: '找不到表单设置。请联系管理员设置表单。',
-            flags: MessageFlags.Ephemeral // 修复弃用警告
+            flags: MessageFlags.Ephemeral
         });
     }
     
@@ -26,37 +28,34 @@ async function processFormSubmission(interaction) {
     if (!targetChannel) {
         return interaction.reply({ 
             content: '找不到目标频道。请联系管理员修复设置。',
-            ephemeral: true 
+            flags: MessageFlags.Ephemeral 
         });
     }
+    
+    // 计算截止日期（24小时后）
+    const deadlineDate = new Date();
+    deadlineDate.setHours(deadlineDate.getHours() + 24);
+    const deadlineTimestamp = Math.floor(deadlineDate.getTime() / 1000);
+    
+    // 获取下一个顺序ID
+    const proposalId = getNextId();
     
     // 创建嵌入消息
     const embed = new EmbedBuilder()
         .setTitle(title)
-        .setDescription(description)
-        .addFields({ name: '联系方式', value: contact })
+        .setDescription(`提案人：<@${interaction.user.id}>\n议事截止日期：<t:${deadlineTimestamp}:f>\n\n**提案原因**\n${reason}\n\n**议案动议**\n${motion}\n\n**执行方案**\n${implementation}\n\n**投票时间**\n${voteTime}`)
         .setColor('#0099ff')
-        .setTimestamp()
         .setFooter({ 
-            text: `由 ${interaction.user.tag} 提交`, 
+            text: `再次点击支持按钮可以撤掉支持 | 提案ID ${proposalId}`, 
             iconURL: interaction.user.displayAvatarURL() 
-        });
+        })
+        .setTimestamp(); 
     
-    // 创建支持按钮
-    const messageId = Date.now().toString();
-    const supportButton = new ActionRowBuilder()
-        .addComponents(
-            new ButtonBuilder()
-                .setCustomId(`support_PLACEHOLDER`) // 临时占位符
-                .setLabel(`支持 (0/${settings.requiredVotes})`)
-                .setStyle(ButtonStyle.Primary)
-        );
-
     // 发送消息到目标频道
     const message = await targetChannel.send({
         embeds: [embed],
         components: [] // 先不添加按钮
-    })
+    });
 
     // 使用真实消息ID更新按钮
     const updatedButton = new ActionRowBuilder()
@@ -71,26 +70,36 @@ async function processFormSubmission(interaction) {
     await message.edit({
         embeds: [embed],
         components: [updatedButton]
+        // 移除了content字段，不再显示额外的文本提示
     });
     
     // 使用Discord消息ID作为键存储到数据库
     await saveMessage({
-        messageId: message.id, // 使用Discord消息ID
+        messageId: message.id,
         channelId: targetChannel.id,
-        formData: { title, description, contact },
+        proposalId: proposalId,  // 使用顺序ID
+        formData: { 
+            title, 
+            reason, 
+            motion, 
+            implementation, 
+            voteTime 
+        },
         requiredVotes: settings.requiredVotes,
         currentVotes: 0,
         voters: [],
         forumChannelId: settings.forumChannelId,
-        authorId: interaction.user.id
+        authorId: interaction.user.id,
+        deadline: deadlineDate.toISOString(),
+        status: 'pending'
     });
 
-    console.log(`成功创建表单消息 ID: ${message.id}, 使用的custom_id: support_${message.id}`);
+    console.log(`成功创建表单消息 ID: ${message.id}, 提案ID: ${proposalId}, 截止日期: ${deadlineDate.toISOString()}`);
     
     // 回复用户
     await interaction.reply({ 
-        content: '您的表单已成功提交！', 
-        ephemeral: true 
+        content: '您的议案已成功提交！', 
+        flags: MessageFlags.Ephemeral 
     });
 }
 
