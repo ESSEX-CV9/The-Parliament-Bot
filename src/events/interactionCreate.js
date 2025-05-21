@@ -1,8 +1,10 @@
 // src/events/interactionCreate.js
 const { PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { createFormModal } = require('../components/formModal');
+const { createWithdrawModal } = require('../components/withdrawModal');
 const { processFormSubmission } = require('../services/formService');
 const { processVote } = require('../services/voteTracker');
+const { processWithdraw } = require('../services/withdrawService');
 
 async function interactionCreateHandler(interaction) {
     try {
@@ -40,13 +42,34 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('support_')) {
                 // 处理支持按钮
                 await processVote(interaction);
+            } else if (interaction.customId.startsWith('withdraw_')) {
+                // 处理撤回按钮 - 仅管理员可见
+                if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    await interaction.reply({
+                        content: '你没有权限执行此操作',
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // 从按钮ID中提取消息ID
+                const messageId = interaction.customId.replace('withdraw_', '');
+                
+                // 创建并显示撤回原因模态窗口
+                const modal = createWithdrawModal(messageId);
+                await interaction.showModal(modal);
             }
             return;
         }
         
         // 处理模态窗口提交
-        if (interaction.isModalSubmit() && interaction.customId === 'form_submission') {
-            await processFormSubmission(interaction);
+        if (interaction.isModalSubmit()) {
+            if (interaction.customId === 'form_submission') {
+                await processFormSubmission(interaction);
+            } else if (interaction.customId.startsWith('withdraw_submission_')) {
+                // 处理撤回提案模态窗口提交
+                await processWithdraw(interaction);
+            }
             return;
         }
     } catch (error) {

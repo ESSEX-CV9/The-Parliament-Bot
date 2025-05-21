@@ -57,27 +57,30 @@ async function processFormSubmission(interaction) {
         components: [] // 先不添加按钮
     });
 
-    // 使用真实消息ID更新按钮
-    const updatedButton = new ActionRowBuilder()
+    // 创建按钮组件 - 包括支持按钮和撤回按钮
+    const buttonRow = new ActionRowBuilder()
         .addComponents(
             new ButtonBuilder()
-                .setCustomId(`support_${message.id}`) // 使用真实的消息ID
+                .setCustomId(`support_${message.id}`)
                 .setLabel(`支持 (0/${settings.requiredVotes})`)
-                .setStyle(ButtonStyle.Primary)
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId(`withdraw_${message.id}`)
+                .setLabel('撤回提案')
+                .setStyle(ButtonStyle.Danger)
         );
 
-    // 编辑消息添加正确的按钮
+    // 编辑消息添加按钮
     await message.edit({
         embeds: [embed],
-        components: [updatedButton]
-        // 移除了content字段，不再显示额外的文本提示
+        components: [buttonRow]
     });
     
     // 使用Discord消息ID作为键存储到数据库
     await saveMessage({
         messageId: message.id,
         channelId: targetChannel.id,
-        proposalId: proposalId,  // 使用顺序ID
+        proposalId: proposalId,
         formData: { 
             title, 
             reason, 

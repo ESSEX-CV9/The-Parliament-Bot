@@ -18,17 +18,21 @@ async function processVote(interaction) {
         
         if (!messageData) {
             console.error(`在数据库中找不到消息ID: ${messageId}`);
-            console.log(`当前数据库中的所有消息ID:`, Object.keys(require('fs').readFileSync(require('path').join(__dirname, '../../data/messages.json'), 'utf8') || '{}'));
-            
             return interaction.editReply({ 
                 content: '在数据库中找不到此消息。这可能是因为机器人重启或数据丢失。'
             });
         }
         
-        // 如果消息已经发布到论坛，不允许再更改投票
+        // 如果消息已经发布到论坛或被撤回，不允许再更改投票
         if (messageData.status === 'posted') {
             return interaction.editReply({ 
                 content: '此议案已经发布到论坛，不能再更改支持状态。'
+            });
+        }
+        
+        if (messageData.status === 'withdrawn') {
+            return interaction.editReply({ 
+                content: '此议案已被撤回，不能再更改支持状态。'
             });
         }
         
@@ -48,17 +52,21 @@ async function processVote(interaction) {
             replyContent = '您的支持已记录！';
         }
         
-        // 更新按钮标签
-        const updatedButton = new ActionRowBuilder()
+        // 更新按钮 - 包括支持按钮和撤回按钮
+        const updatedButtons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId(`support_${messageId}`)
                     .setLabel(`支持 (${messageData.currentVotes}/${messageData.requiredVotes})`)
-                    .setStyle(ButtonStyle.Primary)
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId(`withdraw_${messageId}`)
+                    .setLabel('撤回提案')
+                    .setStyle(ButtonStyle.Danger)
             );
         
         await interaction.message.edit({
-            components: [updatedButton]
+            components: [updatedButtons]
         });
         
         // 更新数据库
