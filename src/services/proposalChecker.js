@@ -78,10 +78,10 @@ function startProposalChecker(client) {
     // 立即进行一次检查
     checkExpiredProposals(client);
     
-    // 设置每小时检查一次
+    // 设置定时检查一次
     setInterval(() => {
         checkExpiredProposals(client);
-    }, 60 * 60 * 1000); // 每小时检查一次
+    }, 20 * 60 * 1000); // 每20分钟检查一次
 }
 
 module.exports = {
