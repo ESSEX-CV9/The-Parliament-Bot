@@ -12,6 +12,7 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
 const CHECK_SETTINGS_FILE = path.join(DATA_DIR, 'checkSettings.json'); 
 const REVIEW_SETTINGS_FILE = path.join(DATA_DIR, 'reviewSettings.json');
+const ALLOWED_SERVERS_FILE = path.join(DATA_DIR, 'allowedServers.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -25,6 +26,9 @@ if (!fs.existsSync(CHECK_SETTINGS_FILE)) {
 }
 if (!fs.existsSync(REVIEW_SETTINGS_FILE)) {
     fs.writeFileSync(REVIEW_SETTINGS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(ALLOWED_SERVERS_FILE)) {
+    fs.writeFileSync(ALLOWED_SERVERS_FILE, '{}', 'utf8');
 }
 
 // 读取设置数据
@@ -222,6 +226,77 @@ async function getReviewSettings(guildId) {
     return result;
 }
 
+// 读取允许服务器数据
+function readAllowedServers() {
+    try {
+        const data = fs.readFileSync(ALLOWED_SERVERS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取允许服务器文件失败:', err);
+        return {};
+    }
+}
+
+// 写入允许服务器数据
+function writeAllowedServers(data) {
+    try {
+        fs.writeFileSync(ALLOWED_SERVERS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入允许服务器文件失败:', err);
+    }
+}
+
+// 获取服务器的允许服务器列表
+async function getAllowedServers(guildId) {
+    const servers = readAllowedServers();
+    const result = servers[guildId] || [];
+    console.log(`获取允许服务器列表 - guildId: ${guildId}`, result);
+    return result;
+}
+
+// 添加允许的服务器
+async function addAllowedServer(guildId, targetGuildId) {
+    const servers = readAllowedServers();
+    if (!servers[guildId]) {
+        servers[guildId] = [];
+    }
+    
+    if (!servers[guildId].includes(targetGuildId)) {
+        servers[guildId].push(targetGuildId);
+        writeAllowedServers(servers);
+        console.log(`成功添加允许服务器 - guildId: ${guildId}, targetGuildId: ${targetGuildId}`);
+        return true;
+    }
+    
+    console.log(`服务器已存在于允许列表中 - guildId: ${guildId}, targetGuildId: ${targetGuildId}`);
+    return false;
+}
+
+// 移除允许的服务器
+async function removeAllowedServer(guildId, targetGuildId) {
+    const servers = readAllowedServers();
+    if (!servers[guildId]) {
+        return false;
+    }
+    
+    const index = servers[guildId].indexOf(targetGuildId);
+    if (index > -1) {
+        servers[guildId].splice(index, 1);
+        writeAllowedServers(servers);
+        console.log(`成功移除允许服务器 - guildId: ${guildId}, targetGuildId: ${targetGuildId}`);
+        return true;
+    }
+    
+    console.log(`服务器不在允许列表中 - guildId: ${guildId}, targetGuildId: ${targetGuildId}`);
+    return false;
+}
+
+// 检查服务器是否在允许列表中
+async function isServerAllowed(guildId, targetGuildId) {
+    const allowedServers = await getAllowedServers(guildId);
+    return allowedServers.includes(targetGuildId);
+}
+
 module.exports = {
     saveSettings,
     getSettings,
@@ -234,5 +309,9 @@ module.exports = {
     getCheckChannelSettings,
     getAllCheckChannelSettings,
     saveReviewSettings,
-    getReviewSettings
+    getReviewSettings,
+    getAllowedServers,
+    addAllowedServer,
+    removeAllowedServer,
+    isServerAllowed
 };

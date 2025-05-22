@@ -16,20 +16,11 @@ function createReviewModal() {
         .setLabel('帖子链接')
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
-        .setPlaceholder('请输入Discord帖子的完整链接，例如：https://discord.com/channels/...');
+        .setPlaceholder('支持两种格式：帖子整体链接或帖子首条消息链接');
         
-    const descriptionInput = new TextInputBuilder()
-        .setCustomId('description')
-        .setLabel('补充说明（可选）')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(false)
-        .setPlaceholder('可以添加一些关于您帖子的说明...');
-    
-    // 构建表单行
     const row1 = new ActionRowBuilder().addComponents(postLinkInput);
-    const row2 = new ActionRowBuilder().addComponents(descriptionInput);
     
-    modal.addComponents(row1, row2);
+    modal.addComponents(row1);
     
     return modal;
 }

@@ -18,7 +18,9 @@ const setupFormCommand = require('./commands/setupForm');
 const deleteEntryCommand = require('./commands/deleteEntry');
 const withdrawProposalCommand = require('./commands/withdrawProposal');
 const setCheckChannelCommand = require('./commands/setCheckChannel');
-const setupReviewCommand = require('./commands/setupReview'); 
+const setupReviewCommand = require('./commands/setupReview');
+const addAllowPreviewServerCommand = require('./commands/addAllowPreviewServer'); 
+const removeAllowPreviewServerCommand = require('./commands/removeAllowPreviewServer'); 
 
 const client = new Client({ 
     intents: [
@@ -33,7 +35,9 @@ client.commands.set(setupFormCommand.data.name, setupFormCommand);
 client.commands.set(deleteEntryCommand.data.name, deleteEntryCommand);
 client.commands.set(withdrawProposalCommand.data.name, withdrawProposalCommand);
 client.commands.set(setCheckChannelCommand.data.name, setCheckChannelCommand);
-client.commands.set(setupReviewCommand.data.name, setupReviewCommand); 
+client.commands.set(setupReviewCommand.data.name, setupReviewCommand);
+client.commands.set(addAllowPreviewServerCommand.data.name, addAllowPreviewServerCommand); 
+client.commands.set(removeAllowPreviewServerCommand.data.name, removeAllowPreviewServerCommand); 
 
 client.once(Events.ClientReady, async (readyClient) => {
     // 调用ready处理程序

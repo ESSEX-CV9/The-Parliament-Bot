@@ -1,27 +1,52 @@
 // src/services/reviewService.js
-const { MessageFlags } = require('discord.js');
-const { getReviewSettings } = require('../utils/database');
+const { MessageFlags, ChannelType } = require('discord.js');
+const { getReviewSettings, isServerAllowed } = require('../utils/database');
 
 /**
  * 解析Discord帖子链接
  * @param {string} link - Discord帖子链接
- * @returns {object|null} 解析结果包含 guildId, channelId, messageId
+ * @returns {object|null} 解析结果包含 guildId, channelId, messageId (可选)
  */
 function parseDiscordLink(link) {
-    // Discord消息链接格式: https://discord.com/channels/{guild_id}/{channel_id}/{message_id}
-    // 或者 https://discordapp.com/channels/{guild_id}/{channel_id}/{message_id}
-    const regex = /https:\/\/(discord|discordapp)\.com\/channels\/(\d+)\/(\d+)\/(\d+)/;
-    const match = link.match(regex);
+    // 支持两种格式:
+    // 1. https://discord.com/channels/{guild_id}/{channel_id} (帖子整体)
+    // 2. https://discord.com/channels/{guild_id}/{channel_id}/{message_id} (帖子首条消息)
+    const regexWithMessage = /https:\/\/(discord|discordapp)\.com\/channels\/(\d+)\/(\d+)\/(\d+)/;
+    const regexWithoutMessage = /https:\/\/(discord|discordapp)\.com\/channels\/(\d+)\/(\d+)$/;
     
-    if (!match) {
-        return null;
+    let match = link.match(regexWithMessage);
+    if (match) {
+        return {
+            guildId: match[2],
+            channelId: match[3],
+            messageId: match[4],
+            hasMessageId: true
+        };
     }
     
-    return {
-        guildId: match[2],
-        channelId: match[3],
-        messageId: match[4]
-    };
+    match = link.match(regexWithoutMessage);
+    if (match) {
+        return {
+            guildId: match[2],
+            channelId: match[3],
+            messageId: null,
+            hasMessageId: false
+        };
+    }
+    
+    return null;
+}
+
+/**
+ * 检查频道是否为论坛帖子
+ * @param {Channel} channel - Discord频道对象
+ * @returns {boolean} 是否为论坛帖子
+ */
+function isForumThread(channel) {
+    // 检查频道类型是否为论坛帖子
+    return channel.type === ChannelType.PublicThread && 
+           channel.parent && 
+           channel.parent.type === ChannelType.GuildForum;
 }
 
 /**
@@ -42,13 +67,39 @@ function getTotalReactions(message) {
     return totalReactions;
 }
 
+/**
+ * 获取帖子的总反应数（包括所有消息的反应）
+ * @param {ThreadChannel} thread - 论坛帖子频道
+ * @returns {number} 总反应数
+ */
+async function getThreadTotalReactions(thread) {
+    try {
+        let totalReactions = 0;
+        
+        // 获取帖子中的所有消息
+        const messages = await thread.messages.fetch({ limit: 100 });
+        
+        messages.forEach(message => {
+            if (message.reactions && message.reactions.cache) {
+                message.reactions.cache.forEach(reaction => {
+                    totalReactions += reaction.count;
+                });
+            }
+        });
+        
+        return totalReactions;
+    } catch (error) {
+        console.error('获取帖子总反应数失败:', error);
+        return 0;
+    }
+}
+
 async function processReviewSubmission(interaction) {
     try {
         // 获取表单数据
         const postLink = interaction.fields.getTextInputValue('post_link').trim();
-        const description = interaction.fields.getTextInputValue('description') || '';
-        
-        console.log(`用户 ${interaction.user.tag} 提交审核:`, { postLink, description });
+
+        console.log(`用户 ${interaction.user.tag} 提交审核:`, { postLink });
         
         // 从数据库获取审核设置
         const reviewSettings = await getReviewSettings(interaction.guild.id);
@@ -65,22 +116,35 @@ async function processReviewSubmission(interaction) {
         
         if (!linkData) {
             return interaction.reply({ 
-                content: '❌ 无效的Discord帖子链接格式。\n\n请确保链接格式类似于：\n`https://discord.com/channels/123456789/123456789/123456789`',
+                content: '❌ 无效的Discord帖子链接格式。\n\n支持的格式：\n• `https://discord.com/channels/服务器ID/频道ID` (帖子整体)\n• `https://discord.com/channels/服务器ID/频道ID/消息ID` (帖子首条消息)',
                 flags: MessageFlags.Ephemeral
             });
         }
         
-        // 检查是否为当前服务器的帖子
-        if (linkData.guildId !== interaction.guild.id) {
+        // 检查服务器是否在允许列表中
+        const isAllowed = await isServerAllowed(interaction.guild.id, linkData.guildId);
+        if (!isAllowed) {
             return interaction.reply({ 
-                content: '❌ 只能提交当前服务器的帖子进行审核。',
+                content: '❌ 目前机器人只能审核当前服务器的帖子。',
+                // content: '❌ 该服务器的帖子不在允许审核范围内。请联系管理员将该服务器添加到允许列表中。',
                 flags: MessageFlags.Ephemeral
             });
         }
         
-        // 获取频道和消息
-        let targetChannel, targetMessage;
+        // 获取目标服务器
+        let targetGuild;
+        try {
+            targetGuild = await interaction.client.guilds.fetch(linkData.guildId);
+        } catch (error) {
+            console.error('获取目标服务器失败:', error);
+            return interaction.reply({ 
+                content: '❌ 无法访问目标服务器，机器人可能不在该服务器中。',
+                flags: MessageFlags.Ephemeral
+            });
+        }
         
+        // 获取频道
+        let targetChannel;
         try {
             targetChannel = await interaction.client.channels.fetch(linkData.channelId);
         } catch (error) {
@@ -91,18 +155,51 @@ async function processReviewSubmission(interaction) {
             });
         }
         
-        try {
-            targetMessage = await targetChannel.messages.fetch(linkData.messageId);
-        } catch (error) {
-            console.error('获取消息失败:', error);
+        // 检查是否为论坛帖子
+        if (!isForumThread(targetChannel)) {
             return interaction.reply({ 
-                content: '❌ 无法找到指定的帖子，请检查链接是否正确。',
+                content: '❌ 指定的链接不是论坛帖子。只能审核论坛帖子。',
                 flags: MessageFlags.Ephemeral
             });
         }
         
+        // 获取帖子作者
+        let threadAuthor;
+        if (linkData.hasMessageId) {
+            // 如果有消息ID，检查该消息的作者
+            try {
+                const targetMessage = await targetChannel.messages.fetch(linkData.messageId);
+                threadAuthor = targetMessage.author;
+            } catch (error) {
+                console.error('获取消息失败:', error);
+                return interaction.reply({ 
+                    content: '❌ 无法找到指定的消息，请检查链接是否正确。',
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+        } else {
+            // 如果没有消息ID，获取帖子的第一条消息作者
+            try {
+                const messages = await targetChannel.messages.fetch({ limit: 1 });
+                const firstMessage = messages.first();
+                if (!firstMessage) {
+                    return interaction.reply({ 
+                        content: '❌ 无法找到帖子的首条消息。',
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+                threadAuthor = firstMessage.author;
+            } catch (error) {
+                console.error('获取帖子首条消息失败:', error);
+                return interaction.reply({ 
+                    content: '❌ 无法获取帖子信息，请检查链接是否正确。',
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+        }
+        
         // 检查帖子作者是否为提交者
-        if (targetMessage.author.id !== interaction.user.id) {
+        if (threadAuthor.id !== interaction.user.id) {
             return interaction.reply({ 
                 content: '❌ 您只能提交自己发表的帖子进行审核。',
                 flags: MessageFlags.Ephemeral
@@ -110,15 +207,16 @@ async function processReviewSubmission(interaction) {
         }
         
         // 计算总反应数
-        const totalReactions = getTotalReactions(targetMessage);
+        const totalReactions = await getThreadTotalReactions(targetChannel);
         const requiredReactions = reviewSettings.requiredReactions;
         
         console.log(`帖子反应统计: 当前=${totalReactions}, 需要=${requiredReactions}`);
+        console.log(`帖子信息: 服务器=${targetGuild.name}, 频道=${targetChannel.name}, 作者=${threadAuthor.tag}`);
         
         // 检查是否达到要求
         if (totalReactions < requiredReactions) {
             return interaction.reply({ 
-                content: `❌ **审核未通过**\n\n您的帖子当前反应数为 **${totalReactions}**，需要达到 **${requiredReactions}** 个反应才能通过审核。\n\n请继续努力获取更多反应后再次提交。`,
+                content: `❌ **审核未通过**\n\n您的作品当前反应数为 **${totalReactions}**，需要达到 **${requiredReactions}** 个反应才能通过审核。\n\n**作品信息：**\n• 作品：${postLink}\n\n请继续努力获取更多反应后再次提交。`,
                 flags: MessageFlags.Ephemeral
             });
         }
@@ -149,7 +247,7 @@ async function processReviewSubmission(interaction) {
             console.log(`成功为用户 ${interaction.user.tag} 添加身份组 ${rewardRole.name}`);
             
             await interaction.reply({ 
-                content: `✅ **审核通过！**\n\n🎉 恭喜您！您的帖子已达到 **${totalReactions}** 个反应，成功通过审核。\n\n您已获得 ${rewardRole} 身份组！\n\n**帖子信息：**\n• 频道：<#${targetChannel.id}>\n• 反应数：${totalReactions}/${requiredReactions}\n• 帖子链接：[点击查看](${postLink})`,
+                content: `✅ **审核通过！**\n\n🎉 恭喜您！您的作品已达到 **${totalReactions}** 个反应，成功通过审核。\n\n您已获得 ${rewardRole} 身份组！\n\n**作品信息：**\n• 服务器：${targetGuild.name}\n• 作品：${postLink}\n• 反应数：${totalReactions}/${requiredReactions}`,
                 flags: MessageFlags.Ephemeral
             });
             
@@ -180,5 +278,7 @@ async function processReviewSubmission(interaction) {
 module.exports = {
     processReviewSubmission,
     parseDiscordLink,
-    getTotalReactions
+    getTotalReactions,
+    getThreadTotalReactions,
+    isForumThread
 };
