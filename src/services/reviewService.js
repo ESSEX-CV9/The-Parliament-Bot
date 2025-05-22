@@ -96,18 +96,20 @@ async function getThreadTotalReactions(thread) {
 
 async function processReviewSubmission(interaction) {
     try {
+        // 立即defer回复以避免超时
+        await interaction.deferReply({ ephemeral: true });
+        
         // 获取表单数据
         const postLink = interaction.fields.getTextInputValue('post_link').trim();
-
+        
         console.log(`用户 ${interaction.user.tag} 提交审核:`, { postLink });
         
         // 从数据库获取审核设置
         const reviewSettings = await getReviewSettings(interaction.guild.id);
         
         if (!reviewSettings) {
-            return interaction.reply({ 
-                content: '找不到审核设置。请联系管理员设置审核入口。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: '找不到审核设置。请联系管理员设置审核入口。'
             });
         }
         
@@ -115,19 +117,16 @@ async function processReviewSubmission(interaction) {
         const linkData = parseDiscordLink(postLink);
         
         if (!linkData) {
-            return interaction.reply({ 
-                content: '❌ 无效的Discord帖子链接格式。\n\n支持的格式：\n• `https://discord.com/channels/服务器ID/频道ID` (帖子整体)\n• `https://discord.com/channels/服务器ID/频道ID/消息ID` (帖子首条消息)',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: '❌ 无效的Discord帖子链接格式。\n\n支持的格式：\n• `https://discord.com/channels/服务器ID/频道ID` (帖子整体)\n• `https://discord.com/channels/服务器ID/频道ID/消息ID` (帖子首条消息)'
             });
         }
         
         // 检查服务器是否在允许列表中
         const isAllowed = await isServerAllowed(interaction.guild.id, linkData.guildId);
         if (!isAllowed) {
-            return interaction.reply({ 
-                content: '❌ 目前机器人只能审核当前服务器的帖子。',
-                // content: '❌ 该服务器的帖子不在允许审核范围内。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: '❌ 该服务器的帖子不在允许审核范围内。请联系管理员将该服务器添加到允许列表中。'
             });
         }
         
@@ -137,9 +136,8 @@ async function processReviewSubmission(interaction) {
             targetGuild = await interaction.client.guilds.fetch(linkData.guildId);
         } catch (error) {
             console.error('获取目标服务器失败:', error);
-            return interaction.reply({ 
-                content: '❌ 无法访问目标服务器，机器人可能不在该服务器中。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: '❌ 无法访问目标服务器，机器人可能不在该服务器中。'
             });
         }
         
@@ -149,28 +147,25 @@ async function processReviewSubmission(interaction) {
             targetChannel = await interaction.client.channels.fetch(linkData.channelId);
         } catch (error) {
             console.error('获取频道失败:', error);
-            return interaction.reply({ 
-                content: '❌ 无法访问指定的频道，请检查链接是否正确或机器人是否有权限访问该频道。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: '❌ 无法访问指定的频道，请检查链接是否正确或机器人是否有权限访问该频道。'
             });
         }
         
         // 检查是否为论坛帖子
         if (!isForumThread(targetChannel)) {
-            return interaction.reply({ 
-                content: '❌ 指定的链接不是论坛帖子。只能审核论坛帖子。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: '❌ 指定的链接不是论坛帖子。只能审核论坛帖子。'
             });
         }
-
+        
         // 检查论坛频道是否在允许列表中
         const forumChannelId = targetChannel.parent.id; // 获取父论坛频道ID
         const forumAllowed = await isForumAllowed(interaction.guild.id, linkData.guildId, forumChannelId);
 
         if (!forumAllowed) {
-            return interaction.reply({ 
-                content: `❌ 该频道不在允许审核范围内。\n\n**频道信息：**\n• 服务器：${targetGuild.name}\n• 频道：${targetChannel.parent.name}。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: `❌ 该论坛频道不在允许审核范围内。\n\n**论坛信息：**\n• 服务器：${targetGuild.name}\n• 论坛：${targetChannel.parent.name}\n\n请联系管理员将该论坛频道添加到允许列表中。`
             });
         }
         
@@ -183,9 +178,8 @@ async function processReviewSubmission(interaction) {
                 threadAuthor = targetMessage.author;
             } catch (error) {
                 console.error('获取消息失败:', error);
-                return interaction.reply({ 
-                    content: '❌ 无法找到指定的消息，请检查链接是否正确。',
-                    flags: MessageFlags.Ephemeral
+                return interaction.editReply({ 
+                    content: '❌ 无法找到指定的消息，请检查链接是否正确。'
                 });
             }
         } else {
@@ -194,26 +188,23 @@ async function processReviewSubmission(interaction) {
                 const messages = await targetChannel.messages.fetch({ limit: 1 });
                 const firstMessage = messages.first();
                 if (!firstMessage) {
-                    return interaction.reply({ 
-                        content: '❌ 无法找到帖子的首条消息。',
-                        flags: MessageFlags.Ephemeral
+                    return interaction.editReply({ 
+                        content: '❌ 无法找到帖子的首条消息。'
                     });
                 }
                 threadAuthor = firstMessage.author;
             } catch (error) {
                 console.error('获取帖子首条消息失败:', error);
-                return interaction.reply({ 
-                    content: '❌ 无法获取帖子信息，请检查链接是否正确。',
-                    flags: MessageFlags.Ephemeral
+                return interaction.editReply({ 
+                    content: '❌ 无法获取帖子信息，请检查链接是否正确。'
                 });
             }
         }
         
         // 检查帖子作者是否为提交者
         if (threadAuthor.id !== interaction.user.id) {
-            return interaction.reply({ 
-                content: '❌ 您只能提交自己发表的帖子进行审核。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: '❌ 您只能提交自己发表的帖子进行审核。'
             });
         }
         
@@ -226,9 +217,8 @@ async function processReviewSubmission(interaction) {
         
         // 检查是否达到要求
         if (totalReactions < requiredReactions) {
-            return interaction.reply({ 
-                content: `❌ **审核未通过**\n\n您的作品当前反应数为 **${totalReactions}**，需要达到 **${requiredReactions}** 个反应才能通过审核。\n\n**作品信息：**\n• 作品：${postLink}\n\n请继续努力获取更多反应后再次提交。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: `❌ **审核未通过**\n\n您的帖子当前反应数为 **${totalReactions}**，需要达到 **${requiredReactions}** 个反应才能通过审核。\n\n**帖子信息：**\n• 服务器：${targetGuild.name}\n• 帖子：${targetChannel.name}\n• 链接：[点击查看](${postLink})\n\n请继续努力获取更多反应后再次提交。`
             });
         }
         
@@ -237,17 +227,15 @@ async function processReviewSubmission(interaction) {
         
         if (!rewardRole) {
             console.error('找不到奖励身份组:', reviewSettings.rewardRoleId);
-            return interaction.reply({ 
-                content: '❌ 系统配置错误：找不到奖励身份组。请联系管理员。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: '❌ 系统配置错误：找不到奖励身份组。请联系管理员。'
             });
         }
         
         // 检查用户是否已有该身份组
         if (interaction.member.roles.cache.has(rewardRole.id)) {
-            return interaction.reply({ 
-                content: `❌ 您已经拥有 ${rewardRole} 身份组了。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: `❌ 您已经拥有 ${rewardRole} 身份组了。`
             });
         }
         
@@ -257,16 +245,14 @@ async function processReviewSubmission(interaction) {
             
             console.log(`成功为用户 ${interaction.user.tag} 添加身份组 ${rewardRole.name}`);
             
-            await interaction.reply({ 
-                content: `✅ **审核通过！**\n\n🎉 恭喜您！您的作品已达到 **${totalReactions}** 个反应，成功通过审核。\n\n您已获得 ${rewardRole} 身份组！\n\n**作品信息：**\n• 服务器：${targetGuild.name}\n• 作品：${postLink}\n• 反应数：${totalReactions}/${requiredReactions}`,
-                flags: MessageFlags.Ephemeral
+            await interaction.editReply({ 
+                content: `✅ **审核通过！**\n\n🎉 恭喜您！您的帖子已达到 **${totalReactions}** 个反应，成功通过审核。\n\n您已获得 ${rewardRole} 身份组！\n\n**帖子信息：**\n• 服务器：${targetGuild.name}\n• 帖子：${targetChannel.name}\n• 反应数：${totalReactions}/${requiredReactions}\n• 帖子链接：[点击查看](${postLink})`
             });
             
         } catch (error) {
             console.error('添加身份组失败:', error);
-            return interaction.reply({ 
-                content: `❌ 审核通过，但添加身份组时出错。请联系管理员手动添加身份组。\n\n错误信息：${error.message}`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({ 
+                content: `❌ 审核通过，但添加身份组时出错。请联系管理员手动添加身份组。\n\n错误信息：${error.message}`
             });
         }
         
@@ -278,6 +264,10 @@ async function processReviewSubmission(interaction) {
                 await interaction.reply({ 
                     content: '❌ 处理您的审核提交时出现错误，请稍后重试。',
                     flags: MessageFlags.Ephemeral
+                });
+            } else {
+                await interaction.editReply({ 
+                    content: '❌ 处理您的审核提交时出现错误，请稍后重试。'
                 });
             }
         } catch (replyError) {
