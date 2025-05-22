@@ -15,6 +15,8 @@ const { startProposalChecker } = require('./services/proposalChecker');
 
 const pingCommand = require('./commands/ping');
 const setupFormCommand = require('./commands/setupForm');
+const deleteEntryCommand = require('./commands/deleteEntry');
+const withdrawProposalCommand = require('./commands/withdrawProposal');
 
 const client = new Client({ 
     intents: [
@@ -25,10 +27,9 @@ const client = new Client({
 client.commands = new Collection();
 
 client.commands.set(pingCommand.data.name, pingCommand);
-
 client.commands.set(setupFormCommand.data.name, setupFormCommand);
-
-// client.once(Events.ClientReady,clientReadyHandler); // only tragger once
+client.commands.set(deleteEntryCommand.data.name, deleteEntryCommand);
+client.commands.set(withdrawProposalCommand.data.name, withdrawProposalCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     // 调用ready处理程序

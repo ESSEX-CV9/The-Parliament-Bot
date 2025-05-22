@@ -52,21 +52,17 @@ async function processVote(interaction) {
             replyContent = '您的支持已记录！';
         }
         
-        // 更新按钮 - 包括支持按钮和撤回按钮
-        const updatedButtons = new ActionRowBuilder()
+        // 更新按钮 - 只有支持按钮
+        const updatedButton = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId(`support_${messageId}`)
                     .setLabel(`支持 (${messageData.currentVotes}/${messageData.requiredVotes})`)
-                    .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                    .setCustomId(`withdraw_${messageId}`)
-                    .setLabel('撤回提案')
-                    .setStyle(ButtonStyle.Danger)
+                    .setStyle(ButtonStyle.Primary)
             );
         
         await interaction.message.edit({
-            components: [updatedButtons]
+            components: [updatedButton]
         });
         
         // 更新数据库
@@ -90,19 +86,19 @@ async function processVote(interaction) {
                 const passedEmbed = new EmbedBuilder()
                     .setTitle(messageData.formData.title)
                     .setDescription(`提案人：<@${messageData.authorId}>\n\n此提案已经满足所需支持数，已创建议案讨论帖 ${forumPostResult.url}`)
-                    .setColor('#0099ff') 
+                    .setColor('#00FF00') // 绿色表示通过
                     .setFooter({ 
                         text: `提案ID ${messageData.proposalId} | 已通过`,
                         iconURL: interaction.guild.iconURL()
                     })
                     .setTimestamp();
                 
-                // 更新消息，表示已创立讨论帖
+                // 更新消息，表示已发布到论坛
                 const disabledButton = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
                             .setCustomId(`complete_${messageId}`)
-                            .setLabel(`已创立讨论帖 ✅`)
+                            .setLabel(`已发布到论坛 ✅`)
                             .setStyle(ButtonStyle.Success)
                             .setDisabled(true)
                     );
@@ -126,20 +122,16 @@ async function processVote(interaction) {
                 replyContent = '您的支持已记录，但发布到论坛时出现错误。请联系管理员。';
                 
                 // 如果创建论坛帖子失败，恢复按钮状态
-                const errorButtons = new ActionRowBuilder()
+                const errorButton = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
                             .setCustomId(`support_${messageId}`)
                             .setLabel(`支持 (${messageData.currentVotes}/${messageData.requiredVotes}) - 发布失败`)
-                            .setStyle(ButtonStyle.Danger),
-                        new ButtonBuilder()
-                            .setCustomId(`withdraw_${messageId}`)
-                            .setLabel('撤回提案')
                             .setStyle(ButtonStyle.Danger)
                     );
                 
                 await interaction.message.edit({
-                    components: [errorButtons]
+                    components: [errorButton]
                 });
             }
         }

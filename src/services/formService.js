@@ -54,20 +54,16 @@ async function processFormSubmission(interaction) {
     // 发送消息到目标频道
     const message = await targetChannel.send({
         embeds: [embed],
-        components: [] // 先不添加按钮
+        components: []
     });
 
-    // 创建按钮组件 - 包括支持按钮和撤回按钮
+    // 创建只有支持按钮的组件
     const buttonRow = new ActionRowBuilder()
         .addComponents(
             new ButtonBuilder()
                 .setCustomId(`support_${message.id}`)
                 .setLabel(`支持 (0/${settings.requiredVotes})`)
-                .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-                .setCustomId(`withdraw_${message.id}`)
-                .setLabel('撤回提案')
-                .setStyle(ButtonStyle.Danger)
+                .setStyle(ButtonStyle.Primary)
         );
 
     // 编辑消息添加按钮
