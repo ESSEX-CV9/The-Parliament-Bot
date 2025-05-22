@@ -10,7 +10,7 @@ if (!fs.existsSync(DATA_DIR)) {
 
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
-const CHECK_SETTINGS_FILE = path.join(DATA_DIR, 'checkSettings.json'); 
+const CHECK_SETTINGS_FILE = path.join(DATA_DIR, 'checkSettings.json');
 const REVIEW_SETTINGS_FILE = path.join(DATA_DIR, 'reviewSettings.json');
 const ALLOWED_SERVERS_FILE = path.join(DATA_DIR, 'allowedServers.json');
 
@@ -91,6 +91,46 @@ function writeCheckSettings(data) {
     }
 }
 
+// 读取审核设置数据
+function readReviewSettings() {
+    try {
+        const data = fs.readFileSync(REVIEW_SETTINGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取审核设置文件失败:', err);
+        return {};
+    }
+}
+
+// 写入审核设置数据
+function writeReviewSettings(data) {
+    try {
+        fs.writeFileSync(REVIEW_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入审核设置文件失败:', err);
+    }
+}
+
+// 读取允许服务器数据
+function readAllowedServers() {
+    try {
+        const data = fs.readFileSync(ALLOWED_SERVERS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取允许服务器文件失败:', err);
+        return {};
+    }
+}
+
+// 写入允许服务器数据
+function writeAllowedServers(data) {
+    try {
+        fs.writeFileSync(ALLOWED_SERVERS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入允许服务器文件失败:', err);
+    }
+}
+
 // 获取下一个提案ID
 function getNextId() {
     try {
@@ -116,7 +156,7 @@ function getNextId() {
     }
 }
 
-// 导出API函数
+// 保存设置
 async function saveSettings(guildId, settingsData) {
     const settings = readSettings();
     settings[guildId] = settingsData;
@@ -125,6 +165,7 @@ async function saveSettings(guildId, settingsData) {
     return settingsData;
 }
 
+// 获取设置
 async function getSettings(guildId) {
     const settings = readSettings();
     const result = settings[guildId];
@@ -132,6 +173,7 @@ async function getSettings(guildId) {
     return result;
 }
 
+// 保存消息
 async function saveMessage(messageData) {
     const messages = readMessages();
     messages[messageData.messageId] = messageData;
@@ -140,11 +182,13 @@ async function saveMessage(messageData) {
     return messageData;
 }
 
+// 获取消息
 async function getMessage(messageId) {
     const messages = readMessages();
     return messages[messageId];
 }
 
+// 更新消息
 async function updateMessage(messageId, updates) {
     const messages = readMessages();
     const message = messages[messageId];
@@ -184,31 +228,6 @@ async function getAllCheckChannelSettings() {
     return readCheckSettings();
 }
 
-// 初始化审核设置文件
-if (!fs.existsSync(REVIEW_SETTINGS_FILE)) {
-    fs.writeFileSync(REVIEW_SETTINGS_FILE, '{}', 'utf8');
-}
-
-// 读取审核设置数据
-function readReviewSettings() {
-    try {
-        const data = fs.readFileSync(REVIEW_SETTINGS_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        console.error('读取审核设置文件失败:', err);
-        return {};
-    }
-}
-
-// 写入审核设置数据
-function writeReviewSettings(data) {
-    try {
-        fs.writeFileSync(REVIEW_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
-    } catch (err) {
-        console.error('写入审核设置文件失败:', err);
-    }
-}
-
 // 保存审核设置
 async function saveReviewSettings(guildId, reviewSettings) {
     const settings = readReviewSettings();
@@ -226,30 +245,14 @@ async function getReviewSettings(guildId) {
     return result;
 }
 
-// 读取允许服务器数据
-function readAllowedServers() {
-    try {
-        const data = fs.readFileSync(ALLOWED_SERVERS_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        console.error('读取允许服务器文件失败:', err);
-        return {};
-    }
-}
-
-// 写入允许服务器数据
-function writeAllowedServers(data) {
-    try {
-        fs.writeFileSync(ALLOWED_SERVERS_FILE, JSON.stringify(data, null, 2), 'utf8');
-    } catch (err) {
-        console.error('写入允许服务器文件失败:', err);
-    }
-}
-
 // 获取服务器的允许服务器列表
 async function getAllowedServers(guildId) {
     const servers = readAllowedServers();
-    const result = servers[guildId] || [];
+    if (!servers[guildId]) {
+        return [];
+    }
+    // 返回服务器ID列表
+    const result = Object.keys(servers[guildId]);
     console.log(`获取允许服务器列表 - guildId: ${guildId}`, result);
     return result;
 }
@@ -258,11 +261,13 @@ async function getAllowedServers(guildId) {
 async function addAllowedServer(guildId, targetGuildId) {
     const servers = readAllowedServers();
     if (!servers[guildId]) {
-        servers[guildId] = [];
+        servers[guildId] = {};
     }
     
-    if (!servers[guildId].includes(targetGuildId)) {
-        servers[guildId].push(targetGuildId);
+    if (!servers[guildId][targetGuildId]) {
+        servers[guildId][targetGuildId] = {
+            allowedForums: []
+        };
         writeAllowedServers(servers);
         console.log(`成功添加允许服务器 - guildId: ${guildId}, targetGuildId: ${targetGuildId}`);
         return true;
@@ -275,26 +280,101 @@ async function addAllowedServer(guildId, targetGuildId) {
 // 移除允许的服务器
 async function removeAllowedServer(guildId, targetGuildId) {
     const servers = readAllowedServers();
-    if (!servers[guildId]) {
+    if (!servers[guildId] || !servers[guildId][targetGuildId]) {
         return false;
     }
     
-    const index = servers[guildId].indexOf(targetGuildId);
-    if (index > -1) {
-        servers[guildId].splice(index, 1);
-        writeAllowedServers(servers);
-        console.log(`成功移除允许服务器 - guildId: ${guildId}, targetGuildId: ${targetGuildId}`);
-        return true;
-    }
-    
-    console.log(`服务器不在允许列表中 - guildId: ${guildId}, targetGuildId: ${targetGuildId}`);
-    return false;
+    delete servers[guildId][targetGuildId];
+    writeAllowedServers(servers);
+    console.log(`成功移除允许服务器 - guildId: ${guildId}, targetGuildId: ${targetGuildId}`);
+    return true;
 }
 
 // 检查服务器是否在允许列表中
 async function isServerAllowed(guildId, targetGuildId) {
-    const allowedServers = await getAllowedServers(guildId);
-    return allowedServers.includes(targetGuildId);
+    const servers = readAllowedServers();
+    const allowed = !!(servers[guildId] && servers[guildId][targetGuildId]);
+    console.log(`检查服务器是否允许 - guildId: ${guildId}, targetGuildId: ${targetGuildId}, allowed: ${allowed}`);
+    return allowed;
+}
+
+// 获取服务器的允许论坛频道列表
+async function getAllowedForums(guildId, targetServerId) {
+    const servers = readAllowedServers();
+    if (!servers[guildId] || !servers[guildId][targetServerId]) {
+        return [];
+    }
+    const result = servers[guildId][targetServerId].allowedForums || [];
+    console.log(`获取允许论坛列表 - guildId: ${guildId}, targetServerId: ${targetServerId}`, result);
+    return result;
+}
+
+// 添加允许的论坛频道
+async function addAllowedForum(guildId, targetServerId, forumChannelId) {
+    const servers = readAllowedServers();
+    
+    // 确保数据结构存在
+    if (!servers[guildId]) {
+        servers[guildId] = {};
+    }
+    if (!servers[guildId][targetServerId]) {
+        servers[guildId][targetServerId] = { allowedForums: [] };
+    }
+    if (!servers[guildId][targetServerId].allowedForums) {
+        servers[guildId][targetServerId].allowedForums = [];
+    }
+    
+    // 检查是否已存在
+    if (!servers[guildId][targetServerId].allowedForums.includes(forumChannelId)) {
+        servers[guildId][targetServerId].allowedForums.push(forumChannelId);
+        writeAllowedServers(servers);
+        console.log(`成功添加允许论坛 - guildId: ${guildId}, targetServerId: ${targetServerId}, forumId: ${forumChannelId}`);
+        return true;
+    }
+    
+    console.log(`论坛已存在于允许列表中 - guildId: ${guildId}, targetServerId: ${targetServerId}, forumId: ${forumChannelId}`);
+    return false;
+}
+
+// 移除允许的论坛频道
+async function removeAllowedForum(guildId, targetServerId, forumChannelId) {
+    const servers = readAllowedServers();
+    
+    if (!servers[guildId] || !servers[guildId][targetServerId] || !servers[guildId][targetServerId].allowedForums) {
+        return false;
+    }
+    
+    const index = servers[guildId][targetServerId].allowedForums.indexOf(forumChannelId);
+    if (index > -1) {
+        servers[guildId][targetServerId].allowedForums.splice(index, 1);
+        writeAllowedServers(servers);
+        console.log(`成功移除允许论坛 - guildId: ${guildId}, targetServerId: ${targetServerId}, forumId: ${forumChannelId}`);
+        return true;
+    }
+    
+    console.log(`论坛不在允许列表中 - guildId: ${guildId}, targetServerId: ${targetServerId}, forumId: ${forumChannelId}`);
+    return false;
+}
+
+// 检查论坛频道是否在允许列表中
+async function isForumAllowed(guildId, targetServerId, forumChannelId) {
+    const allowedForums = await getAllowedForums(guildId, targetServerId);
+    const allowed = allowedForums.includes(forumChannelId);
+    console.log(`检查论坛是否允许 - guildId: ${guildId}, targetServerId: ${targetServerId}, forumId: ${forumChannelId}, allowed: ${allowed}`);
+    return allowed;
+}
+
+// 获取服务器的详细白名单信息（包括论坛）
+async function getServerWhitelistDetails(guildId, targetServerId) {
+    const servers = readAllowedServers();
+    if (!servers[guildId] || !servers[guildId][targetServerId]) {
+        return { allowed: false, allowedForums: [] };
+    }
+    
+    return {
+        allowed: true,
+        allowedForums: servers[guildId][targetServerId].allowedForums || []
+    };
 }
 
 module.exports = {
@@ -313,5 +393,10 @@ module.exports = {
     getAllowedServers,
     addAllowedServer,
     removeAllowedServer,
-    isServerAllowed
+    isServerAllowed,
+    getAllowedForums,
+    addAllowedForum,
+    removeAllowedForum,
+    isForumAllowed,
+    getServerWhitelistDetails
 };

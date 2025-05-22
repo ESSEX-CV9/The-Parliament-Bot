@@ -1,6 +1,6 @@
 // src/services/reviewService.js
 const { MessageFlags, ChannelType } = require('discord.js');
-const { getReviewSettings, isServerAllowed } = require('../utils/database');
+const { getReviewSettings, isServerAllowed, isForumAllowed } = require('../utils/database');
 
 /**
  * 解析Discord帖子链接
@@ -126,7 +126,7 @@ async function processReviewSubmission(interaction) {
         if (!isAllowed) {
             return interaction.reply({ 
                 content: '❌ 目前机器人只能审核当前服务器的帖子。',
-                // content: '❌ 该服务器的帖子不在允许审核范围内。请联系管理员将该服务器添加到允许列表中。',
+                // content: '❌ 该服务器的帖子不在允许审核范围内。',
                 flags: MessageFlags.Ephemeral
             });
         }
@@ -159,6 +159,17 @@ async function processReviewSubmission(interaction) {
         if (!isForumThread(targetChannel)) {
             return interaction.reply({ 
                 content: '❌ 指定的链接不是论坛帖子。只能审核论坛帖子。',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // 检查论坛频道是否在允许列表中
+        const forumChannelId = targetChannel.parent.id; // 获取父论坛频道ID
+        const forumAllowed = await isForumAllowed(interaction.guild.id, linkData.guildId, forumChannelId);
+
+        if (!forumAllowed) {
+            return interaction.reply({ 
+                content: `❌ 该频道不在允许审核范围内。\n\n**频道信息：**\n• 服务器：${targetGuild.name}\n• 频道：${targetChannel.parent.name}。`,
                 flags: MessageFlags.Ephemeral
             });
         }

@@ -21,7 +21,9 @@ const setCheckChannelCommand = require('./commands/setCheckChannel');
 const setupReviewCommand = require('./commands/setupReview');
 const addAllowPreviewServerCommand = require('./commands/addAllowPreviewServer');
 const removeAllowPreviewServerCommand = require('./commands/removeAllowPreviewServer');
-const deleteReviewEntryCommand = require('./commands/deleteReviewEntry'); 
+const deleteReviewEntryCommand = require('./commands/deleteReviewEntry');
+const addAllowedForumCommand = require('./commands/addAllowedForum'); 
+const removeAllowedForumCommand = require('./commands/removeAllowedForum');
 
 const client = new Client({ 
     intents: [
@@ -39,7 +41,9 @@ client.commands.set(setCheckChannelCommand.data.name, setCheckChannelCommand);
 client.commands.set(setupReviewCommand.data.name, setupReviewCommand);
 client.commands.set(addAllowPreviewServerCommand.data.name, addAllowPreviewServerCommand);
 client.commands.set(removeAllowPreviewServerCommand.data.name, removeAllowPreviewServerCommand);
-client.commands.set(deleteReviewEntryCommand.data.name, deleteReviewEntryCommand); 
+client.commands.set(deleteReviewEntryCommand.data.name, deleteReviewEntryCommand);
+client.commands.set(addAllowedForumCommand.data.name, addAllowedForumCommand);
+client.commands.set(removeAllowedForumCommand.data.name, removeAllowedForumCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     // 调用ready处理程序
