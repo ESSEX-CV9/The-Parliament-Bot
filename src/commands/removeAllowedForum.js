@@ -35,21 +35,22 @@ async function execute(interaction) {
             });
         }
 
+        // 立即defer以防止超时
+        await interaction.deferReply({ ephemeral: true });
+
         const targetServerId = interaction.options.getString('服务器id').trim();
         const forumChannelId = interaction.options.getString('论坛频道id').trim();
         
         // 验证ID格式
         if (!/^\d{17,19}$/.test(targetServerId)) {
-            return interaction.reply({
-                content: '❌ 无效的服务器ID格式。服务器ID应该是17-19位的数字。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 无效的服务器ID格式。服务器ID应该是17-19位的数字。'
             });
         }
         
         if (!/^\d{17,19}$/.test(forumChannelId)) {
-            return interaction.reply({
-                content: '❌ 无效的频道ID格式。频道ID应该是17-19位的数字。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 无效的频道ID格式。频道ID应该是17-19位的数字。'
             });
         }
         
@@ -59,28 +60,32 @@ async function execute(interaction) {
         const removed = await removeAllowedForum(interaction.guild.id, targetServerId, forumChannelId);
         
         if (!removed) {
-            return interaction.reply({
-                content: `❌ 论坛频道 \`${forumChannelId}\` 不在服务器 \`${targetServerId}\` 的允许列表中。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 论坛频道 \`${forumChannelId}\` 不在服务器 \`${targetServerId}\` 的允许列表中。`
             });
         }
         
         // 获取更新后的允许论坛列表
         const allowedForums = await getAllowedForums(interaction.guild.id, targetServerId);
         
-        await interaction.reply({
-            content: `✅ **成功移除允许论坛频道！**\n\n**移除的论坛：**\n• 服务器ID: \`${targetServerId}\`\n• 频道ID: \`${forumChannelId}\`\n\n**该服务器剩余允许的论坛总数：** ${allowedForums.length}`,
-            flags: MessageFlags.Ephemeral
+        await interaction.editReply({
+            content: `✅ **成功移除允许论坛频道！**\n\n**移除的论坛：**\n• 服务器ID: \`${targetServerId}\`\n• 频道ID: \`${forumChannelId}\`\n\n**该服务器剩余允许的论坛总数：** ${allowedForums.length}`
         });
         
         console.log(`成功移除允许论坛: 服务器=${targetServerId}, 论坛=${forumChannelId}, 操作者=${interaction.user.tag}`);
         
     } catch (error) {
         console.error('移除允许论坛时出错:', error);
-        await interaction.reply({
-            content: `❌ 移除允许论坛时出错：${error.message}`,
-            flags: MessageFlags.Ephemeral
-        });
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+                content: `❌ 移除允许论坛时出错：${error.message}`,
+                flags: MessageFlags.Ephemeral
+            });
+        } else {
+            await interaction.editReply({
+                content: `❌ 移除允许论坛时出错：${error.message}`
+            });
+        }
     }
 }
 

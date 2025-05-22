@@ -35,11 +35,13 @@ async function execute(interaction) {
             });
         }
 
+        // 立即defer以防止超时
+        await interaction.deferReply({ ephemeral: true });
+
         // 检查当前频道是否存在且机器人有权限
         if (!interaction.channel) {
-            return interaction.reply({
-                content: '❌ 无法访问当前频道，请确保机器人有适当的频道权限。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 无法访问当前频道，请确保机器人有适当的频道权限。'
             });
         }
 
@@ -48,16 +50,14 @@ async function execute(interaction) {
         const channelPermissions = interaction.channel.permissionsFor(botMember);
         
         if (!channelPermissions || !channelPermissions.has('SendMessages')) {
-            return interaction.reply({
-                content: '❌ 机器人在当前频道没有发送消息的权限，请检查频道权限设置。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 机器人在当前频道没有发送消息的权限，请检查频道权限设置。'
             });
         }
 
         if (!channelPermissions.has('EmbedLinks')) {
-            return interaction.reply({
-                content: '❌ 机器人在当前频道没有嵌入链接的权限，请检查频道权限设置。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 机器人在当前频道没有嵌入链接的权限，请检查频道权限设置。'
             });
         }
         
@@ -65,25 +65,22 @@ async function execute(interaction) {
         const rewardRole = interaction.options.getRole('奖励身份组');
         
         if (requiredReactions < 1) {
-            return interaction.reply({
-                content: '❌ 所需反应数必须大于0。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 所需反应数必须大于0。'
             });
         }
 
         // 检查机器人是否有管理身份组权限
         if (!botMember.permissions.has('ManageRoles')) {
-            return interaction.reply({
-                content: '❌ 机器人没有管理身份组的权限，无法为用户添加身份组。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 机器人没有管理身份组的权限，无法为用户添加身份组。'
             });
         }
 
         // 检查机器人的身份组是否高于奖励身份组
         if (rewardRole.position >= botMember.roles.highest.position) {
-            return interaction.reply({
-                content: `❌ 机器人的身份组位置不够高，无法分配 ${rewardRole} 身份组。请将机器人的身份组移动到目标身份组之上。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 机器人的身份组位置不够高，无法分配 ${rewardRole} 身份组。请将机器人的身份组移动到目标身份组之上。`
             });
         }
         
@@ -126,15 +123,13 @@ async function execute(interaction) {
             });
         } catch (sendError) {
             console.error('发送审核入口消息失败:', sendError);
-            return interaction.reply({
-                content: `❌ 发送审核入口消息失败，请检查机器人权限。错误信息：${sendError.message}`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 发送审核入口消息失败，请检查机器人权限。错误信息：${sendError.message}`
             });
         }
         
-        await interaction.reply({ 
-            content: `✅ **审核入口设置完成！**\n\n**配置信息：**\n• **当前频道：** ${interaction.channel}\n• **所需反应数：** ${requiredReactions}\n• **奖励身份组：** ${rewardRole}\n• **入口消息ID：** \`${message.id}\`\n\n用户现在可以点击按钮提交作品的帖子链接进行审核。`,
-            flags: MessageFlags.Ephemeral
+        await interaction.editReply({ 
+            content: `✅ **审核入口设置完成！**\n\n**配置信息：**\n• **当前频道：** ${interaction.channel}\n• **所需反应数：** ${requiredReactions}\n• **奖励身份组：** ${rewardRole}\n• **入口消息ID：** \`${message.id}\`\n\n用户现在可以点击按钮提交作品的帖子链接进行审核。`
         });
         
         console.log(`审核入口设置完成 - 消息ID: ${message.id}, 操作者: ${interaction.user.tag}`);

@@ -126,7 +126,7 @@ async function processReviewSubmission(interaction) {
         const isAllowed = await isServerAllowed(interaction.guild.id, linkData.guildId);
         if (!isAllowed) {
             return interaction.editReply({ 
-                content: '❌ 该服务器的帖子不在允许审核范围内。请联系管理员将该服务器添加到允许列表中。'
+                content: '❌ 目前机器人只能审核当前服务器的帖子。'
             });
         }
         

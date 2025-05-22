@@ -35,14 +35,16 @@ async function execute(interaction) {
             });
         }
 
+        // 立即defer以防止超时
+        await interaction.deferReply({ ephemeral: true });
+
         const targetChannel = interaction.options.getChannel('频道');
         const enabled = interaction.options.getBoolean('启用') ?? true;
         
         // 验证频道类型
         if (targetChannel.type !== 0) { // 0 = GUILD_TEXT
-            return interaction.reply({
-                content: '❌ 目标频道必须是文字频道。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 目标频道必须是文字频道。'
             });
         }
         
@@ -51,16 +53,14 @@ async function execute(interaction) {
         const channelPermissions = targetChannel.permissionsFor(botMember);
         
         if (!channelPermissions || !channelPermissions.has('SendMessages')) {
-            return interaction.reply({
-                content: `❌ 机器人在目标频道 ${targetChannel} 没有发送消息的权限。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 机器人在目标频道 ${targetChannel} 没有发送消息的权限。`
             });
         }
 
         if (!channelPermissions.has('EmbedLinks')) {
-            return interaction.reply({
-                content: `❌ 机器人在目标频道 ${targetChannel} 没有嵌入链接的权限。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 机器人在目标频道 ${targetChannel} 没有嵌入链接的权限。`
             });
         }
         
@@ -87,16 +87,14 @@ async function execute(interaction) {
                 content: `📊 **过期提案检查报告频道设置完成**\n\n由 <@${interaction.user.id}> 设置\n设置时间: <t:${Math.floor(Date.now() / 1000)}:f>\n\n此频道将接收定期的过期提案检查报告。`
             });
             
-            await interaction.reply({ 
-                content: `✅ **检查报告频道设置完成！**\n\n**配置信息：**\n• **报告频道：** ${targetChannel}\n• **状态：** ${enabled ? '✅ 启用' : '❌ 禁用'}\n• **测试消息ID：** \`${testMessage.id}\`\n\n系统现在会将过期提案检查报告发送到指定频道。`,
-                flags: MessageFlags.Ephemeral
+            await interaction.editReply({ 
+                content: `✅ **检查报告频道设置完成！**\n\n**配置信息：**\n• **报告频道：** ${targetChannel}\n• **状态：** ${enabled ? '✅ 启用' : '❌ 禁用'}\n• **测试消息ID：** \`${testMessage.id}\`\n\n系统现在会将过期提案检查报告发送到指定频道。`
             });
             
         } catch (sendError) {
             console.error('发送测试消息失败:', sendError);
-            return interaction.reply({
-                content: `❌ 设置保存成功，但发送测试消息失败。请检查机器人权限。错误信息：${sendError.message}`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 设置保存成功，但发送测试消息失败。请检查机器人权限。错误信息：${sendError.message}`
             });
         }
         

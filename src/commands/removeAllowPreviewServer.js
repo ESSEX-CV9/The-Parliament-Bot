@@ -31,13 +31,15 @@ async function execute(interaction) {
             });
         }
 
+        // 立即defer以防止超时
+        await interaction.deferReply({ ephemeral: true });
+
         const targetGuildId = interaction.options.getString('服务器id').trim();
         
         // 验证服务器ID格式
         if (!/^\d{17,19}$/.test(targetGuildId)) {
-            return interaction.reply({
-                content: '❌ 无效的服务器ID格式。服务器ID应该是17-19位的数字。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 无效的服务器ID格式。服务器ID应该是17-19位的数字。'
             });
         }
         
@@ -47,28 +49,32 @@ async function execute(interaction) {
         const removed = await removeAllowedServer(interaction.guild.id, targetGuildId);
         
         if (!removed) {
-            return interaction.reply({
-                content: `❌ 服务器 \`${targetGuildId}\` 不在允许列表中。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 服务器 \`${targetGuildId}\` 不在允许列表中。`
             });
         }
         
         // 获取更新后的允许列表
         const allowedServers = await getAllowedServers(interaction.guild.id);
         
-        await interaction.reply({
-            content: `✅ **成功移除允许服务器！**\n\n**移除的服务器ID：** \`${targetGuildId}\`\n**当前允许的服务器总数：** ${allowedServers.length}`,
-            flags: MessageFlags.Ephemeral
+        await interaction.editReply({
+            content: `✅ **成功移除允许服务器！**\n\n**移除的服务器ID：** \`${targetGuildId}\`\n**当前允许的服务器总数：** ${allowedServers.length}`
         });
         
         console.log(`成功移除允许服务器: ${targetGuildId}, 操作者: ${interaction.user.tag}`);
         
     } catch (error) {
         console.error('移除允许服务器时出错:', error);
-        await interaction.reply({
-            content: `❌ 移除允许服务器时出错：${error.message}`,
-            flags: MessageFlags.Ephemeral
-        });
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+                content: `❌ 移除允许服务器时出错：${error.message}`,
+                flags: MessageFlags.Ephemeral
+            });
+        } else {
+            await interaction.editReply({
+                content: `❌ 移除允许服务器时出错：${error.message}`
+            });
+        }
     }
 }
 

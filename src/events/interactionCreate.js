@@ -38,8 +38,10 @@ async function interactionCreateHandler(interaction) {
         // 处理模态窗口提交
         if (interaction.isModalSubmit()) {
             if (interaction.customId === 'form_submission') {
+                // 表单提交处理
                 await processFormSubmission(interaction);
             } else if (interaction.customId === 'review_submission') { 
+                // 审核提交处理
                 await processReviewSubmission(interaction);
             }
             return;
@@ -51,6 +53,10 @@ async function interactionCreateHandler(interaction) {
                 await interaction.reply({ 
                     content: '处理您的请求时出现错误。', 
                     flags: MessageFlags.Ephemeral
+                });
+            } else if (interaction.deferred) {
+                await interaction.editReply({
+                    content: '处理您的请求时出现错误。'
                 });
             }
         } catch (replyError) {

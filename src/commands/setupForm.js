@@ -39,11 +39,13 @@ async function execute(interaction) {
             });
         }
 
+        // 立即defer以防止超时
+        await interaction.deferReply({ ephemeral: true });
+
         // 检查当前频道是否存在且机器人有权限
         if (!interaction.channel) {
-            return interaction.reply({
-                content: '❌ 无法访问当前频道，请确保机器人有适当的频道权限。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 无法访问当前频道，请确保机器人有适当的频道权限。'
             });
         }
 
@@ -52,16 +54,14 @@ async function execute(interaction) {
         const channelPermissions = interaction.channel.permissionsFor(botMember);
         
         if (!channelPermissions || !channelPermissions.has('SendMessages')) {
-            return interaction.reply({
-                content: '❌ 机器人在当前频道没有发送消息的权限，请检查频道权限设置。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 机器人在当前频道没有发送消息的权限，请检查频道权限设置。'
             });
         }
 
         if (!channelPermissions.has('EmbedLinks')) {
-            return interaction.reply({
-                content: '❌ 机器人在当前频道没有嵌入链接的权限，请检查频道权限设置。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 机器人在当前频道没有嵌入链接的权限，请检查频道权限设置。'
             });
         }
         
@@ -71,41 +71,36 @@ async function execute(interaction) {
         
         // 验证频道类型
         if (targetChannel.type !== 0) { // 0 = GUILD_TEXT
-            return interaction.reply({
-                content: '❌ 目标频道必须是文字频道。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 目标频道必须是文字频道。'
             });
         }
         
         if (forumChannel.type !== 15) { // 15 = GUILD_FORUM
-            return interaction.reply({
-                content: '❌ 论坛频道必须是论坛类型频道。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 论坛频道必须是论坛类型频道。'
             });
         }
         
         if (requiredVotes < 1) {
-            return interaction.reply({
-                content: '❌ 所需支持数必须大于0。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 所需支持数必须大于0。'
             });
         }
 
         // 检查机器人在目标频道的权限
         const targetChannelPermissions = targetChannel.permissionsFor(botMember);
         if (!targetChannelPermissions || !targetChannelPermissions.has('SendMessages')) {
-            return interaction.reply({
-                content: `❌ 机器人在目标频道 ${targetChannel} 没有发送消息的权限。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 机器人在目标频道 ${targetChannel} 没有发送消息的权限。`
             });
         }
 
         // 检查机器人在论坛频道的权限
         const forumChannelPermissions = forumChannel.permissionsFor(botMember);
         if (!forumChannelPermissions || !forumChannelPermissions.has('CreatePublicThreads')) {
-            return interaction.reply({
-                content: `❌ 机器人在论坛频道 ${forumChannel} 没有创建公共帖子的权限。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 机器人在论坛频道 ${forumChannel} 没有创建公共帖子的权限。`
             });
         }
         
@@ -154,15 +149,13 @@ async function execute(interaction) {
             });
         } catch (sendError) {
             console.error('发送表单入口消息失败:', sendError);
-            return interaction.reply({
-                content: `❌ 发送表单入口消息失败，请检查机器人权限。错误信息：${sendError.message}`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 发送表单入口消息失败，请检查机器人权限。错误信息：${sendError.message}`
             });
         }
         
-        await interaction.reply({ 
-            content: `✅ **表单设置完成！**\n\n**配置信息：**\n• **当前频道：** ${interaction.channel}\n• **提交目标频道：** ${targetChannel}\n• **所需支持数：** ${requiredVotes}\n• **论坛频道：** ${forumChannel}\n• **入口消息ID：** \`${message.id}\`\n\n用户现在可以点击按钮填写表单。`,
-            flags: MessageFlags.Ephemeral
+        await interaction.editReply({ 
+            content: `✅ **表单设置完成！**\n\n**配置信息：**\n• **当前频道：** ${interaction.channel}\n• **提交目标频道：** ${targetChannel}\n• **所需支持数：** ${requiredVotes}\n• **论坛频道：** ${forumChannel}\n• **入口消息ID：** \`${message.id}\`\n\n用户现在可以点击按钮填写表单。`
         });
         
         console.log(`表单设置完成 - 消息ID: ${message.id}, 操作者: ${interaction.user.tag}`);

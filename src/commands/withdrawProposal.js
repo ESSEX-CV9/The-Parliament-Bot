@@ -30,6 +30,9 @@ async function execute(interaction) {
             });
         }
         
+        // 立即defer以防止超时
+        await interaction.deferReply({ ephemeral: true });
+        
         const proposalId = interaction.options.getInteger('提案id');
         const reason = interaction.options.getString('理由');
         
@@ -52,24 +55,21 @@ async function execute(interaction) {
         }
         
         if (!targetMessage) {
-            return interaction.reply({
-                content: `❌ 找不到提案ID为 **${proposalId}** 的议案。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 找不到提案ID为 **${proposalId}** 的议案。`
             });
         }
         
         // 检查提案状态
         if (targetMessage.status === 'withdrawn') {
-            return interaction.reply({
-                content: `❌ 提案ID **${proposalId}** 已经被撤回。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 提案ID **${proposalId}** 已经被撤回。`
             });
         }
         
         if (targetMessage.status === 'posted') {
-            return interaction.reply({
-                content: `❌ 提案ID **${proposalId}** 已经发布到论坛，无法撤回。`,
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: `❌ 提案ID **${proposalId}** 已经发布到论坛，无法撤回。`
             });
         }
         
@@ -115,9 +115,8 @@ async function execute(interaction) {
             
             console.log(`成功撤回提案ID ${proposalId}, 操作者: ${interaction.user.tag}`);
             
-            await interaction.reply({
-                content: `✅ 提案ID **${proposalId}** 已成功撤回。`,
-                flags: MessageFlags.Ephemeral
+            await interaction.editReply({
+                content: `✅ 提案ID **${proposalId}** 已成功撤回。`
             });
             
         } catch (messageError) {
@@ -131,18 +130,23 @@ async function execute(interaction) {
                 withdrawnAt: new Date().toISOString()
             });
             
-            await interaction.reply({
-                content: `⚠️ 提案ID **${proposalId}** 已在数据库中标记为撤回，但更新Discord消息时出现错误。`,
-                flags: MessageFlags.Ephemeral
+            await interaction.editReply({
+                content: `⚠️ 提案ID **${proposalId}** 已在数据库中标记为撤回，但更新Discord消息时出现错误。`
             });
         }
         
     } catch (error) {
         console.error('撤回提案时出错:', error);
-        await interaction.reply({
-            content: '❌ 撤回提案时出现错误，请查看控制台日志。',
-            flags: MessageFlags.Ephemeral
-        });
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+                content: '❌ 撤回提案时出现错误，请查看控制台日志。',
+                flags: MessageFlags.Ephemeral
+            });
+        } else {
+            await interaction.editReply({
+                content: '❌ 撤回提案时出现错误，请查看控制台日志。'
+            });
+        }
     }
 }
 
