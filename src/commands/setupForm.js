@@ -1,6 +1,7 @@
 // src/commands/setupForm.js
-const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { saveSettings } = require('../utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('setupform')
@@ -16,27 +17,50 @@ const data = new SlashCommandBuilder()
     .addChannelOption(option => 
         option.setName('论坛频道')
             .setDescription('达到支持数后发布到的论坛频道')
-            .setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
-
-// 配置允许使用此指令的身份组名称（可以根据需要修改）
-const ALLOWED_ROLE_NAMES = [
-    '管理员',
-    '议案管理员',
-    '版主',
-    'Admin',
-    'Moderator'
-    // 在这里添加更多允许的身份组名称
-];
+            .setRequired(true));
 
 async function execute(interaction) {
     try {
+        // 检查是否在服务器中使用
+        if (!interaction.guild) {
+            return interaction.reply({
+                content: '❌ 此指令只能在服务器中使用，不能在私信中使用。',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
         // 检查用户权限
-        const hasPermission = checkUserPermission(interaction.member);
+        const hasPermission = checkAdminPermission(interaction.member);
         
         if (!hasPermission) {
             return interaction.reply({
-                content: '您没有权限使用此指令。需要管理员权限或特定身份组权限。',
+                content: getPermissionDeniedMessage(),
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // 检查当前频道是否存在且机器人有权限
+        if (!interaction.channel) {
+            return interaction.reply({
+                content: '❌ 无法访问当前频道，请确保机器人有适当的频道权限。',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // 检查机器人在当前频道的权限
+        const botMember = interaction.guild.members.me;
+        const channelPermissions = interaction.channel.permissionsFor(botMember);
+        
+        if (!channelPermissions || !channelPermissions.has('SendMessages')) {
+            return interaction.reply({
+                content: '❌ 机器人在当前频道没有发送消息的权限，请检查频道权限设置。',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        if (!channelPermissions.has('EmbedLinks')) {
+            return interaction.reply({
+                content: '❌ 机器人在当前频道没有嵌入链接的权限，请检查频道权限设置。',
                 flags: MessageFlags.Ephemeral
             });
         }
@@ -48,27 +72,46 @@ async function execute(interaction) {
         // 验证频道类型
         if (targetChannel.type !== 0) { // 0 = GUILD_TEXT
             return interaction.reply({
-                content: '目标频道必须是文字频道。',
+                content: '❌ 目标频道必须是文字频道。',
                 flags: MessageFlags.Ephemeral
             });
         }
         
         if (forumChannel.type !== 15) { // 15 = GUILD_FORUM
             return interaction.reply({
-                content: '论坛频道必须是论坛类型频道。',
+                content: '❌ 论坛频道必须是论坛类型频道。',
                 flags: MessageFlags.Ephemeral
             });
         }
         
         if (requiredVotes < 1) {
             return interaction.reply({
-                content: '所需支持数必须大于0。',
+                content: '❌ 所需支持数必须大于0。',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // 检查机器人在目标频道的权限
+        const targetChannelPermissions = targetChannel.permissionsFor(botMember);
+        if (!targetChannelPermissions || !targetChannelPermissions.has('SendMessages')) {
+            return interaction.reply({
+                content: `❌ 机器人在目标频道 ${targetChannel} 没有发送消息的权限。`,
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // 检查机器人在论坛频道的权限
+        const forumChannelPermissions = forumChannel.permissionsFor(botMember);
+        if (!forumChannelPermissions || !forumChannelPermissions.has('CreatePublicThreads')) {
+            return interaction.reply({
+                content: `❌ 机器人在论坛频道 ${forumChannel} 没有创建公共帖子的权限。`,
                 flags: MessageFlags.Ephemeral
             });
         }
         
         console.log('开始设置表单...');
         console.log('Guild ID:', interaction.guild.id);
+        console.log('Current Channel:', interaction.channel.name, interaction.channel.id);
         console.log('Target Channel:', targetChannel.name, targetChannel.id);
         console.log('Required Votes:', requiredVotes);
         console.log('Forum Channel:', forumChannel.name, forumChannel.id);
@@ -90,86 +133,62 @@ async function execute(interaction) {
         const savedSettings = await require('../utils/database').getSettings(interaction.guild.id);
         console.log('验证保存的设置:', savedSettings);
         
-        // 创建表单入口按钮（只保留填写表单按钮）
-        const message = await interaction.channel.send({
-            content: `📝议案预审核提交入口\n请点击下方的按钮，并按照议案表格的格式填写内容。\n\n**表单包含以下字段：**\n• 议案标题：简洁明了，不超过30字\n• 提案原因：说明提出此动议的原因\n• 议案动议：详细说明您的议案内容\n• 执行方案：说明如何落实此动议\n• 投票时间：建议的投票持续时间\n\n提交后，议案需要获得 **${requiredVotes}** 个支持才能进入讨论阶段。\n\n*如需删除此入口，请使用 \`/deleteentry\` 指令*\n*如需撤回议案，请使用 \`/withdrawproposal\` 指令*`,
-            components: [
-                {
-                    type: 1, // ACTION_ROW
-                    components: [
-                        {
-                            type: 2, // BUTTON
-                            style: 1, // PRIMARY
-                            label: '填写表单',
-                            custom_id: 'open_form'
-                        }
-                    ]
-                }
-            ]
-        });
+        // 创建表单入口按钮
+        let message;
+        try {
+            message = await interaction.channel.send({
+                content: `📝 **议案预审核提交入口**\n请点击下方的按钮，并按照议案表格的格式填写内容。\n\n**表单包含以下字段：**\n• **议案标题**：简洁明了，不超过30字\n• **提案原因**：说明提出此动议的原因\n• **议案动议**：详细说明您的议案内容\n• **执行方案**：说明如何落实此动议\n• **投票时间**：建议的投票持续时间\n\n提交后，议案需要获得 **${requiredVotes}** 个支持才能进入讨论阶段。`,
+                components: [
+                    {
+                        type: 1, // ACTION_ROW
+                        components: [
+                            {
+                                type: 2, // BUTTON
+                                style: 1, // PRIMARY
+                                label: '📝 填写表单',
+                                custom_id: 'open_form'
+                            }
+                        ]
+                    }
+                ]
+            });
+        } catch (sendError) {
+            console.error('发送表单入口消息失败:', sendError);
+            return interaction.reply({
+                content: `❌ 发送表单入口消息失败，请检查机器人权限。错误信息：${sendError.message}`,
+                flags: MessageFlags.Ephemeral
+            });
+        }
         
         await interaction.reply({ 
-            content: `✅ 表单设置完成！\n\n**配置信息：**\n• 提交目标频道：${targetChannel}\n• 所需支持数：${requiredVotes}\n• 论坛频道：${forumChannel}\n• 入口消息ID：\`${message.id}\`\n\n用户现在可以点击按钮填写表单。`,
+            content: `✅ **表单设置完成！**\n\n**配置信息：**\n• **当前频道：** ${interaction.channel}\n• **提交目标频道：** ${targetChannel}\n• **所需支持数：** ${requiredVotes}\n• **论坛频道：** ${forumChannel}\n• **入口消息ID：** \`${message.id}\`\n\n用户现在可以点击按钮填写表单。`,
             flags: MessageFlags.Ephemeral
         });
+        
+        console.log(`表单设置完成 - 消息ID: ${message.id}, 操作者: ${interaction.user.tag}`);
+        
     } catch (error) {
         console.error('设置表单时出错:', error);
-        await interaction.reply({
-            content: '设置表单时出错，请查看控制台日志。',
-            flags: MessageFlags.Ephemeral
-        });
+        console.error('错误堆栈:', error.stack);
+        
+        try {
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: `❌ 设置表单时出错：${error.message}\n请查看控制台获取详细信息。`,
+                    flags: MessageFlags.Ephemeral
+                });
+            } else {
+                await interaction.editReply({
+                    content: `❌ 设置表单时出错：${error.message}\n请查看控制台获取详细信息。`
+                });
+            }
+        } catch (replyError) {
+            console.error('回复错误信息失败:', replyError);
+        }
     }
-}
-
-/**
- * 检查用户是否有权限使用此指令
- * @param {GuildMember} member - 服务器成员对象
- * @returns {boolean} 是否有权限
- */
-function checkUserPermission(member) {
-    // 检查是否有管理员权限
-    if (member.permissions.has(PermissionFlagsBits.Administrator)) {
-        return true;
-    }
-    
-    // 检查是否有管理服务器权限
-    if (member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        return true;
-    }
-    
-    // 检查是否有管理频道权限
-    if (member.permissions.has(PermissionFlagsBits.ManageChannels)) {
-        return true;
-    }
-    
-    // 检查是否拥有允许的身份组
-    const hasAllowedRole = member.roles.cache.some(role => 
-        ALLOWED_ROLE_NAMES.includes(role.name)
-    );
-    
-    if (hasAllowedRole) {
-        return true;
-    }
-    
-    // 检查是否是服务器所有者
-    if (member.guild.ownerId === member.user.id) {
-        return true;
-    }
-    
-    return false;
-}
-
-/**
- * 获取允许的身份组列表（用于其他文件调用）
- * @returns {string[]} 允许的身份组名称数组
- */
-function getAllowedRoles() {
-    return [...ALLOWED_ROLE_NAMES];
 }
 
 module.exports = {
     data,
     execute,
-    getAllowedRoles,
-    checkUserPermission
 };

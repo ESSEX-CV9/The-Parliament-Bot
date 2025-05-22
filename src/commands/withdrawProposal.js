@@ -1,6 +1,7 @@
 // src/commands/withdrawProposal.js
 const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getAllMessages, updateMessage } = require('../utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('withdrawproposal')
@@ -15,14 +16,24 @@ const data = new SlashCommandBuilder()
             .setDescription('撤回理由')
             .setRequired(true)
             .setMaxLength(500))
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+    // .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
 async function execute(interaction) {
     try {
+        // 检查用户权限
+        const hasPermission = checkAdminPermission(interaction.member);
+        
+        if (!hasPermission) {
+            return interaction.reply({
+                content: getPermissionDeniedMessage(),
+                flags: MessageFlags.Ephemeral
+            });
+        }
+        
         const proposalId = interaction.options.getInteger('提案id');
         const reason = interaction.options.getString('理由');
         
-        console.log(`尝试撤回提案ID: ${proposalId}, 理由: ${reason}`);
+        console.log(`用户 ${interaction.user.tag} 尝试撤回提案ID: ${proposalId}, 理由: ${reason}`);
         
         // 获取所有消息
         const allMessages = await getAllMessages();
@@ -42,7 +53,7 @@ async function execute(interaction) {
         
         if (!targetMessage) {
             return interaction.reply({
-                content: `找不到提案ID为 ${proposalId} 的议案。`,
+                content: `❌ 找不到提案ID为 **${proposalId}** 的议案。`,
                 flags: MessageFlags.Ephemeral
             });
         }
@@ -50,14 +61,14 @@ async function execute(interaction) {
         // 检查提案状态
         if (targetMessage.status === 'withdrawn') {
             return interaction.reply({
-                content: `提案ID ${proposalId} 已经被撤回。`,
+                content: `❌ 提案ID **${proposalId}** 已经被撤回。`,
                 flags: MessageFlags.Ephemeral
             });
         }
         
         if (targetMessage.status === 'posted') {
             return interaction.reply({
-                content: `提案ID ${proposalId} 已经发布到论坛，无法撤回。`,
+                content: `❌ 提案ID **${proposalId}** 已经发布到论坛，无法撤回。`,
                 flags: MessageFlags.Ephemeral
             });
         }
@@ -69,8 +80,8 @@ async function execute(interaction) {
             
             // 创建撤回后的嵌入消息
             const withdrawnEmbed = new EmbedBuilder()
-                .setTitle(targetMessage.formData.title)
-                .setDescription(`提案人：<@${targetMessage.authorId}>\n\n此提案被管理员<@${interaction.user.id}>撤回，理由：${reason}`)
+                .setTitle(`❌ ${targetMessage.formData.title}`)
+                .setDescription(`**提案人：** <@${targetMessage.authorId}>\n\n**撤回信息：**\n此提案被管理员 <@${interaction.user.id}> 撤回\n\n**撤回理由：**\n${reason}`)
                 .setColor('#FF0000') // 红色表示撤回
                 .setFooter({ 
                     text: `提案ID ${targetMessage.proposalId} | 已撤回`,
@@ -83,7 +94,7 @@ async function execute(interaction) {
                 .addComponents(
                     new ButtonBuilder()
                         .setCustomId(`withdrawn_${targetMessageId}`)
-                        .setLabel('已撤回')
+                        .setLabel('❌ 已撤回')
                         .setStyle(ButtonStyle.Secondary)
                         .setDisabled(true)
                 );
@@ -102,10 +113,10 @@ async function execute(interaction) {
                 withdrawnAt: new Date().toISOString()
             });
             
-            console.log(`成功撤回提案ID ${proposalId}`);
+            console.log(`成功撤回提案ID ${proposalId}, 操作者: ${interaction.user.tag}`);
             
             await interaction.reply({
-                content: `提案ID ${proposalId} 已成功撤回。`,
+                content: `✅ 提案ID **${proposalId}** 已成功撤回。`,
                 flags: MessageFlags.Ephemeral
             });
             
@@ -121,7 +132,7 @@ async function execute(interaction) {
             });
             
             await interaction.reply({
-                content: `提案ID ${proposalId} 已在数据库中标记为撤回，但更新Discord消息时出现错误。`,
+                content: `⚠️ 提案ID **${proposalId}** 已在数据库中标记为撤回，但更新Discord消息时出现错误。`,
                 flags: MessageFlags.Ephemeral
             });
         }
@@ -129,7 +140,7 @@ async function execute(interaction) {
     } catch (error) {
         console.error('撤回提案时出错:', error);
         await interaction.reply({
-            content: '撤回提案时出现错误，请查看控制台日志。',
+            content: '❌ 撤回提案时出现错误，请查看控制台日志。',
             flags: MessageFlags.Ephemeral
         });
     }

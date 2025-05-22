@@ -17,6 +17,7 @@ const pingCommand = require('./commands/ping');
 const setupFormCommand = require('./commands/setupForm');
 const deleteEntryCommand = require('./commands/deleteEntry');
 const withdrawProposalCommand = require('./commands/withdrawProposal');
+// const debugPermissionsCommand = require('./commands/debugPermissions');
 
 const client = new Client({ 
     intents: [
@@ -30,6 +31,7 @@ client.commands.set(pingCommand.data.name, pingCommand);
 client.commands.set(setupFormCommand.data.name, setupFormCommand);
 client.commands.set(deleteEntryCommand.data.name, deleteEntryCommand);
 client.commands.set(withdrawProposalCommand.data.name, withdrawProposalCommand);
+// client.commands.set(debugPermissionsCommand.data.name, debugPermissionsCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     // 调用ready处理程序
