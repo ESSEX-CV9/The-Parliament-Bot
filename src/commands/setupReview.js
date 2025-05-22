@@ -109,7 +109,7 @@ async function execute(interaction) {
         let message;
         try {
             message = await interaction.channel.send({
-                content: `🔍 **帖子审核提交入口**\n请点击下方按钮提交您的帖子链接进行审核。\n\n**审核要求：**\n• 提交帖子链接\n• 帖子需要达到 **${requiredReactions}** 个反应\n• 审核通过后将获得 ${rewardRole} 身份组\n\n**注意事项：**\n• 请确保帖子链接正确且可访问\n• 只有达到反应数要求的帖子才能通过审核\n• 每个用户每次只能提交一个帖子`,
+                content: `🔍 **作品审核提交入口**\n请点击下方按钮提交您的作品链接进行审核。\n\n**审核要求：**\n• 提交作品链接\n• 作品需要达到 **${requiredReactions}** 个反应\n• 审核通过后将获得 ${rewardRole} 身份组\n\n**注意事项：**\n• 请确保作品帖子链接正确且可访问\n• 只有达到反应数要求的作品才能通过审核\n• 每个用户每次只能提交一个作品`,
                 components: [
                     {
                         type: 1, // ACTION_ROW
@@ -133,7 +133,7 @@ async function execute(interaction) {
         }
         
         await interaction.reply({ 
-            content: `✅ **审核入口设置完成！**\n\n**配置信息：**\n• **当前频道：** ${interaction.channel}\n• **所需反应数：** ${requiredReactions}\n• **奖励身份组：** ${rewardRole}\n• **入口消息ID：** \`${message.id}\`\n\n用户现在可以点击按钮提交帖子进行审核。`,
+            content: `✅ **审核入口设置完成！**\n\n**配置信息：**\n• **当前频道：** ${interaction.channel}\n• **所需反应数：** ${requiredReactions}\n• **奖励身份组：** ${rewardRole}\n• **入口消息ID：** \`${message.id}\`\n\n用户现在可以点击按钮提交作品的帖子链接进行审核。`,
             flags: MessageFlags.Ephemeral
         });
         
