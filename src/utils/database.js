@@ -13,6 +13,9 @@ const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
 const CHECK_SETTINGS_FILE = path.join(DATA_DIR, 'checkSettings.json');
 const REVIEW_SETTINGS_FILE = path.join(DATA_DIR, 'reviewSettings.json');
 const ALLOWED_SERVERS_FILE = path.join(DATA_DIR, 'allowedServers.json');
+const COURT_SETTINGS_FILE = path.join(DATA_DIR, 'courtSettings.json');
+const COURT_APPLICATIONS_FILE = path.join(DATA_DIR, 'courtApplications.json');
+const COURT_VOTES_FILE = path.join(DATA_DIR, 'courtVotes.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -29,6 +32,15 @@ if (!fs.existsSync(REVIEW_SETTINGS_FILE)) {
 }
 if (!fs.existsSync(ALLOWED_SERVERS_FILE)) {
     fs.writeFileSync(ALLOWED_SERVERS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(COURT_SETTINGS_FILE)) {
+    fs.writeFileSync(COURT_SETTINGS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(COURT_APPLICATIONS_FILE)) {
+    fs.writeFileSync(COURT_APPLICATIONS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(COURT_VOTES_FILE)) {
+    fs.writeFileSync(COURT_VOTES_FILE, '{}', 'utf8');
 }
 
 // 读取设置数据
@@ -377,6 +389,169 @@ async function getServerWhitelistDetails(guildId, targetServerId) {
     };
 }
 
+// 法庭设置相关函数
+function readCourtSettings() {
+    try {
+        const data = fs.readFileSync(COURT_SETTINGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取法庭设置文件失败:', err);
+        return {};
+    }
+}
+
+function writeCourtSettings(data) {
+    try {
+        fs.writeFileSync(COURT_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入法庭设置文件失败:', err);
+    }
+}
+
+// 法庭申请相关函数
+function readCourtApplications() {
+    try {
+        const data = fs.readFileSync(COURT_APPLICATIONS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取法庭申请文件失败:', err);
+        return {};
+    }
+}
+
+function writeCourtApplications(data) {
+    try {
+        fs.writeFileSync(COURT_APPLICATIONS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入法庭申请文件失败:', err);
+    }
+}
+
+// 法庭投票相关函数
+function readCourtVotes() {
+    try {
+        const data = fs.readFileSync(COURT_VOTES_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取法庭投票文件失败:', err);
+        return {};
+    }
+}
+
+function writeCourtVotes(data) {
+    try {
+        fs.writeFileSync(COURT_VOTES_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入法庭投票文件失败:', err);
+    }
+}
+
+// 保存法庭设置
+async function saveCourtSettings(guildId, courtSettings) {
+    const settings = readCourtSettings();
+    settings[guildId] = courtSettings;
+    writeCourtSettings(settings);
+    console.log(`成功保存法庭设置 - guildId: ${guildId}`, courtSettings);
+    return courtSettings;
+}
+
+// 获取法庭设置
+async function getCourtSettings(guildId) {
+    const settings = readCourtSettings();
+    const result = settings[guildId];
+    console.log(`获取法庭设置 - guildId: ${guildId}`, result);
+    return result;
+}
+
+// 获取下一个法庭申请ID
+function getNextCourtId() {
+    try {
+        const applications = readCourtApplications();
+        
+        let maxId = 0;
+        for (const applicationId in applications) {
+            const application = applications[applicationId];
+            if (application.courtId && !isNaN(parseInt(application.courtId))) {
+                const courtId = parseInt(application.courtId);
+                if (courtId > maxId) {
+                    maxId = courtId;
+                }
+            }
+        }
+        
+        return maxId > 0 ? maxId + 1 : 1;
+    } catch (err) {
+        console.error('获取下一个法庭ID失败:', err);
+        return 1;
+    }
+}
+
+// 保存法庭申请
+async function saveCourtApplication(applicationData) {
+    const applications = readCourtApplications();
+    applications[applicationData.messageId] = applicationData;
+    writeCourtApplications(applications);
+    console.log(`成功保存法庭申请 - messageId: ${applicationData.messageId}`);
+    return applicationData;
+}
+
+// 获取法庭申请
+async function getCourtApplication(messageId) {
+    const applications = readCourtApplications();
+    return applications[messageId];
+}
+
+// 更新法庭申请
+async function updateCourtApplication(messageId, updates) {
+    const applications = readCourtApplications();
+    const application = applications[messageId];
+    if (application) {
+        const updated = { ...application, ...updates };
+        applications[messageId] = updated;
+        writeCourtApplications(applications);
+        return updated;
+    }
+    return null;
+}
+
+// 获取所有法庭申请
+async function getAllCourtApplications() {
+    return readCourtApplications();
+}
+
+// 保存法庭投票
+async function saveCourtVote(voteData) {
+    const votes = readCourtVotes();
+    votes[voteData.threadId] = voteData;
+    writeCourtVotes(votes);
+    console.log(`成功保存法庭投票 - threadId: ${voteData.threadId}`);
+    return voteData;
+}
+
+// 获取法庭投票
+async function getCourtVote(threadId) {
+    const votes = readCourtVotes();
+    return votes[threadId];
+}
+
+// 更新法庭投票
+async function updateCourtVote(threadId, updates) {
+    const votes = readCourtVotes();
+    const vote = votes[threadId];
+    if (vote) {
+        const updated = { ...vote, ...updates };
+        votes[threadId] = updated;
+        writeCourtVotes(votes);
+        return updated;
+    }
+    return null;
+}
+
+// 获取所有法庭投票
+async function getAllCourtVotes() {
+    return readCourtVotes();
+}
+
 module.exports = {
     saveSettings,
     getSettings,
@@ -385,6 +560,8 @@ module.exports = {
     updateMessage,
     getAllMessages,
     getNextId,
+
+    // 审核相关导出
     saveCheckChannelSettings,
     getCheckChannelSettings,
     getAllCheckChannelSettings,
@@ -398,5 +575,18 @@ module.exports = {
     addAllowedForum,
     removeAllowedForum,
     isForumAllowed,
-    getServerWhitelistDetails
+    getServerWhitelistDetails,
+
+    // 法庭相关导出
+    saveCourtSettings,
+    getCourtSettings,
+    getNextCourtId,
+    saveCourtApplication,
+    getCourtApplication,
+    updateCourtApplication,
+    getAllCourtApplications,
+    saveCourtVote,
+    getCourtVote,
+    updateCourtVote,
+    getAllCourtVotes 
 };

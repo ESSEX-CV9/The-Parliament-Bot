@@ -1,6 +1,7 @@
 // src/services/proposalChecker.js
 const { getMessage, updateMessage, getAllMessages, getAllCheckChannelSettings } = require('../utils/database');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { getCheckIntervals } = require('../config/timeconfig');
 
 async function checkExpiredProposals(client) {
     try {
@@ -234,10 +235,10 @@ function startProposalChecker(client) {
     // 立即进行一次检查
     checkExpiredProposals(client);
     
-    // 设置定时检查
+    const intervals = getCheckIntervals();
     setInterval(() => {
         checkExpiredProposals(client);
-    }, 20 * 60 * 1000); // 每20分钟检查一次
+    }, intervals.proposalCheck);
 }
 
 module.exports = {

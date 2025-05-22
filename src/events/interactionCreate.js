@@ -5,6 +5,9 @@ const { createReviewModal } = require('../components/reviewModal');
 const { processFormSubmission } = require('../services/formService');
 const { processReviewSubmission } = require('../services/reviewService'); 
 const { processVote } = require('../services/voteTracker');
+// 新增法庭相关处理
+const { processCourtSupport } = require('../services/courtVoteTracker');
+const { processCourtVote } = require('../services/courtVotingSystem');
 
 async function interactionCreateHandler(interaction) {
     try {
@@ -29,8 +32,15 @@ async function interactionCreateHandler(interaction) {
                 const modal = createReviewModal();
                 await interaction.showModal(modal);
             } else if (interaction.customId.startsWith('support_')) {
-                // 处理支持按钮
+                // 处理支持按钮（原有的提案系统）
                 await processVote(interaction);
+            } else if (interaction.customId.startsWith('court_support_')) {
+                // 处理法庭申请支持按钮
+                await processCourtSupport(interaction);
+            } else if (interaction.customId.startsWith('court_vote_support_') || 
+                       interaction.customId.startsWith('court_vote_oppose_')) {
+                // 处理法庭投票按钮
+                await processCourtVote(interaction);
             }
             return;
         }

@@ -2,6 +2,7 @@
 const { MessageFlags } = require('discord.js');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getSettings, saveMessage, getNextId } = require('../utils/database');
+const { getProposalDeadline } = require('../config/timeconfig');
 
 async function processFormSubmission(interaction) {
     // 立即defer以防止超时
@@ -35,8 +36,7 @@ async function processFormSubmission(interaction) {
         }
         
         // 计算截止日期（24小时后）
-        const deadlineDate = new Date();
-        deadlineDate.setHours(deadlineDate.getHours() + 24);
+        const deadlineDate = getProposalDeadline();
         const deadlineTimestamp = Math.floor(deadlineDate.getTime() / 1000);
         
         // 获取下一个顺序ID
