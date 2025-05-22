@@ -11,6 +11,7 @@ if (!fs.existsSync(DATA_DIR)) {
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
 const CHECK_SETTINGS_FILE = path.join(DATA_DIR, 'checkSettings.json'); 
+const REVIEW_SETTINGS_FILE = path.join(DATA_DIR, 'reviewSettings.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -21,6 +22,9 @@ if (!fs.existsSync(MESSAGES_FILE)) {
 }
 if (!fs.existsSync(CHECK_SETTINGS_FILE)) {
     fs.writeFileSync(CHECK_SETTINGS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(REVIEW_SETTINGS_FILE)) {
+    fs.writeFileSync(REVIEW_SETTINGS_FILE, '{}', 'utf8');
 }
 
 // 读取设置数据
@@ -176,6 +180,48 @@ async function getAllCheckChannelSettings() {
     return readCheckSettings();
 }
 
+// 初始化审核设置文件
+if (!fs.existsSync(REVIEW_SETTINGS_FILE)) {
+    fs.writeFileSync(REVIEW_SETTINGS_FILE, '{}', 'utf8');
+}
+
+// 读取审核设置数据
+function readReviewSettings() {
+    try {
+        const data = fs.readFileSync(REVIEW_SETTINGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取审核设置文件失败:', err);
+        return {};
+    }
+}
+
+// 写入审核设置数据
+function writeReviewSettings(data) {
+    try {
+        fs.writeFileSync(REVIEW_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入审核设置文件失败:', err);
+    }
+}
+
+// 保存审核设置
+async function saveReviewSettings(guildId, reviewSettings) {
+    const settings = readReviewSettings();
+    settings[guildId] = reviewSettings;
+    writeReviewSettings(settings);
+    console.log(`成功保存审核设置 - guildId: ${guildId}`, reviewSettings);
+    return reviewSettings;
+}
+
+// 获取审核设置
+async function getReviewSettings(guildId) {
+    const settings = readReviewSettings();
+    const result = settings[guildId];
+    console.log(`获取审核设置 - guildId: ${guildId}`, result);
+    return result;
+}
+
 module.exports = {
     saveSettings,
     getSettings,
@@ -186,5 +232,7 @@ module.exports = {
     getNextId,
     saveCheckChannelSettings,
     getCheckChannelSettings,
-    getAllCheckChannelSettings
+    getAllCheckChannelSettings,
+    saveReviewSettings,
+    getReviewSettings
 };

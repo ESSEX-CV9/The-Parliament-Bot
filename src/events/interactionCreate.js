@@ -1,7 +1,9 @@
 // src/events/interactionCreate.js
 const { PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { createFormModal } = require('../components/formModal');
+const { createReviewModal } = require('../components/reviewModal'); 
 const { processFormSubmission } = require('../services/formService');
+const { processReviewSubmission } = require('../services/reviewService'); 
 const { processVote } = require('../services/voteTracker');
 
 async function interactionCreateHandler(interaction) {
@@ -22,6 +24,10 @@ async function interactionCreateHandler(interaction) {
                 // 打开表单模态窗口
                 const modal = createFormModal();
                 await interaction.showModal(modal);
+            } else if (interaction.customId === 'open_review_form') { 
+                // 打开审核表单模态窗口
+                const modal = createReviewModal();
+                await interaction.showModal(modal);
             } else if (interaction.customId.startsWith('support_')) {
                 // 处理支持按钮
                 await processVote(interaction);
@@ -33,6 +39,8 @@ async function interactionCreateHandler(interaction) {
         if (interaction.isModalSubmit()) {
             if (interaction.customId === 'form_submission') {
                 await processFormSubmission(interaction);
+            } else if (interaction.customId === 'review_submission') { 
+                await processReviewSubmission(interaction);
             }
             return;
         }
