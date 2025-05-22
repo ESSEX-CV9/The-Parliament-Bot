@@ -17,6 +17,7 @@ const pingCommand = require('./commands/ping');
 const setupFormCommand = require('./commands/setupForm');
 const deleteEntryCommand = require('./commands/deleteEntry');
 const withdrawProposalCommand = require('./commands/withdrawProposal');
+const setCheckChannelCommand = require('./commands/setCheckChannel'); // 新增
 // const debugPermissionsCommand = require('./commands/debugPermissions');
 
 const client = new Client({ 
@@ -31,6 +32,7 @@ client.commands.set(pingCommand.data.name, pingCommand);
 client.commands.set(setupFormCommand.data.name, setupFormCommand);
 client.commands.set(deleteEntryCommand.data.name, deleteEntryCommand);
 client.commands.set(withdrawProposalCommand.data.name, withdrawProposalCommand);
+client.commands.set(setCheckChannelCommand.data.name, setCheckChannelCommand); // 新增
 // client.commands.set(debugPermissionsCommand.data.name, debugPermissionsCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {

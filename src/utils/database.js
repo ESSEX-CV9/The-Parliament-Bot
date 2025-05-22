@@ -10,6 +10,7 @@ if (!fs.existsSync(DATA_DIR)) {
 
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
+const CHECK_SETTINGS_FILE = path.join(DATA_DIR, 'checkSettings.json'); 
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -17,6 +18,9 @@ if (!fs.existsSync(SETTINGS_FILE)) {
 }
 if (!fs.existsSync(MESSAGES_FILE)) {
     fs.writeFileSync(MESSAGES_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(CHECK_SETTINGS_FILE)) {
+    fs.writeFileSync(CHECK_SETTINGS_FILE, '{}', 'utf8');
 }
 
 // 读取设置数据
@@ -56,6 +60,26 @@ function writeMessages(data) {
         fs.writeFileSync(MESSAGES_FILE, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) {
         console.error('写入消息文件失败:', err);
+    }
+}
+
+// 读取检查设置数据
+function readCheckSettings() {
+    try {
+        const data = fs.readFileSync(CHECK_SETTINGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取检查设置文件失败:', err);
+        return {};
+    }
+}
+
+// 写入检查设置数据
+function writeCheckSettings(data) {
+    try {
+        fs.writeFileSync(CHECK_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入检查设置文件失败:', err);
     }
 }
 
@@ -130,6 +154,28 @@ async function getAllMessages() {
     return readMessages();
 }
 
+// 保存检查频道设置
+async function saveCheckChannelSettings(guildId, checkSettings) {
+    const settings = readCheckSettings();
+    settings[guildId] = checkSettings;
+    writeCheckSettings(settings);
+    console.log(`成功保存检查设置 - guildId: ${guildId}`, checkSettings);
+    return checkSettings;
+}
+
+// 获取检查频道设置
+async function getCheckChannelSettings(guildId) {
+    const settings = readCheckSettings();
+    const result = settings[guildId];
+    console.log(`获取检查设置 - guildId: ${guildId}`, result);
+    return result;
+}
+
+// 获取所有检查频道设置
+async function getAllCheckChannelSettings() {
+    return readCheckSettings();
+}
+
 module.exports = {
     saveSettings,
     getSettings,
@@ -137,5 +183,8 @@ module.exports = {
     getMessage,
     updateMessage,
     getAllMessages,
-    getNextId  
+    getNextId,
+    saveCheckChannelSettings,
+    getCheckChannelSettings,
+    getAllCheckChannelSettings
 };
