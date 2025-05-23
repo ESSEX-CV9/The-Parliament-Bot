@@ -7,7 +7,7 @@
 - /setupForm 设置提案表单提交入口
 - /deleteEntry 删除提案表单提交入口
 - /withdrawProposal 撤回提案
-- /setCheckChannel 设置检查评定
+- /setCheckChannel 设置检查信息回传频道
 
 ### 自动审核功能相关指令
 
