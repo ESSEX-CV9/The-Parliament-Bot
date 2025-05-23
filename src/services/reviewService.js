@@ -183,24 +183,48 @@ async function processReviewSubmission(interaction) {
                 });
             }
         } else {
-            // 如果没有消息ID，获取帖子的第一条消息作者
+            // 如果没有消息ID，获取帖子的原始作者
             try {
-                const messages = await targetChannel.messages.fetch({ limit: 1 });
-                const firstMessage = messages.first();
-                if (!firstMessage) {
-                    return interaction.editReply({ 
-                        content: '❌ 无法找到帖子的首条消息。'
+                // 方法1：尝试获取论坛帖子的 starterMessage（原始消息）
+                if (targetChannel.starterMessage) {
+                    threadAuthor = targetChannel.starterMessage.author;
+                    console.log(`通过starterMessage获取作者: ${threadAuthor.tag}`);
+                } else {
+                    // 方法2：获取最早的消息（按时间升序）
+                    const messages = await targetChannel.messages.fetch({ 
+                        limit: 250,  // 获取更多消息以确保找到最早的
+                        cache: false 
                     });
+                    
+                    if (messages.size === 0) {
+                        return interaction.editReply({ 
+                            content: '❌ 无法找到帖子中的任何消息。'
+                        });
+                    }
+                    
+                    // 按创建时间排序，获取最早的消息
+                    const sortedMessages = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+                    const firstMessage = sortedMessages.first();
+                    
+                    if (!firstMessage) {
+                        return interaction.editReply({ 
+                            content: '❌ 无法找到帖子的首条消息。'
+                        });
+                    }
+                    
+                    threadAuthor = firstMessage.author;
+                    console.log(`通过最早消息获取作者: ${threadAuthor.tag}, 消息创建时间: ${firstMessage.createdAt}`);
                 }
-                threadAuthor = firstMessage.author;
             } catch (error) {
-                console.error('获取帖子首条消息失败:', error);
+                console.error('获取帖子作者失败:', error);
                 return interaction.editReply({ 
-                    content: '❌ 无法获取帖子信息，请检查链接是否正确。'
+                    content: '❌ 无法获取帖子作者信息，请检查链接是否正确。'
                 });
             }
         }
-        
+
+        console.log(`帖子作者: ${threadAuthor.tag} (${threadAuthor.id}), 提交者: ${interaction.user.tag} (${interaction.user.id})`);
+
         // 检查帖子作者是否为提交者
         if (threadAuthor.id !== interaction.user.id) {
             return interaction.editReply({ 
