@@ -125,6 +125,76 @@ async function getThreadFirstMessageReactions(thread) {
     }
 }
 
+/**
+ * 获取论坛帖子的作者（分批处理以避免API限制）
+ * @param {ThreadChannel} channel - 论坛帖子频道
+ * @returns {User|null} 帖子作者
+ */
+async function getThreadAuthor(channel) {
+    try {
+        let oldestMessage = null;
+        let oldestTimestamp = Date.now();
+        let lastMessageId = null;
+        let hasMoreMessages = true;
+        let fetchCount = 0;
+        const maxFetches = 5; // 最多获取5批消息，避免无限循环
+        
+        while (hasMoreMessages && fetchCount < maxFetches) {
+            const fetchOptions = {
+                limit: 100, // Discord API 最大限制
+                cache: false
+            };
+            
+            // 如果不是第一次获取，设置 before 参数
+            if (lastMessageId) {
+                fetchOptions.before = lastMessageId;
+            }
+            
+            console.log(`第 ${fetchCount + 1} 次获取消息，选项:`, fetchOptions);
+            
+            const messages = await channel.messages.fetch(fetchOptions);
+            
+            if (messages.size === 0) {
+                hasMoreMessages = false;
+                break;
+            }
+            
+            // 找到这批消息中最早的
+            messages.forEach(message => {
+                if (message.createdTimestamp < oldestTimestamp) {
+                    oldestTimestamp = message.createdTimestamp;
+                    oldestMessage = message;
+                }
+            });
+            
+            // 设置下次获取的起点
+            const messagesArray = Array.from(messages.values());
+            lastMessageId = messagesArray[messagesArray.length - 1].id;
+            
+            // 如果这批消息少于100条，说明没有更多消息了
+            if (messages.size < 100) {
+                hasMoreMessages = false;
+            }
+            
+            fetchCount++;
+            
+            console.log(`获取了 ${messages.size} 条消息，当前最早消息时间: ${new Date(oldestTimestamp).toISOString()}`);
+        }
+        
+        if (oldestMessage) {
+            console.log(`找到最早消息作者: ${oldestMessage.author.tag}, 创建时间: ${oldestMessage.createdAt}`);
+            return oldestMessage.author;
+        }
+        
+        console.log('未找到任何消息');
+        return null;
+        
+    } catch (error) {
+        console.error('获取帖子作者时出错:', error);
+        return null;
+    }
+}
+
 async function processReviewSubmission(interaction) {
     try {
         // 立即defer回复以避免超时
@@ -221,30 +291,14 @@ async function processReviewSubmission(interaction) {
                     threadAuthor = targetChannel.starterMessage.author;
                     console.log(`通过starterMessage获取作者: ${threadAuthor.tag}`);
                 } else {
-                    // 方法2：获取最早的消息（按时间升序）
-                    const messages = await targetChannel.messages.fetch({ 
-                        limit: 250,  // 获取更多消息以确保找到最早的
-                        cache: false 
-                    });
+                    // 方法2：分批获取消息以找到最早的消息
+                    threadAuthor = await getThreadAuthor(targetChannel);
                     
-                    if (messages.size === 0) {
+                    if (!threadAuthor) {
                         return interaction.editReply({ 
-                            content: '❌ 无法找到帖子中的任何消息。'
+                            content: '❌ 无法找到帖子的作者信息。'
                         });
                     }
-                    
-                    // 按创建时间排序，获取最早的消息
-                    const sortedMessages = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-                    const firstMessage = sortedMessages.first();
-                    
-                    if (!firstMessage) {
-                        return interaction.editReply({ 
-                            content: '❌ 无法找到帖子的首条消息。'
-                        });
-                    }
-                    
-                    threadAuthor = firstMessage.author;
-                    console.log(`通过最早消息获取作者: ${threadAuthor.tag}, 消息创建时间: ${firstMessage.createdAt}`);
                 }
             } catch (error) {
                 console.error('获取帖子作者失败:', error);
@@ -337,5 +391,6 @@ module.exports = {
     getTotalReactions,
     getThreadTotalReactions,
     getThreadFirstMessageReactions,
-    isForumThread
+    isForumThread,
+    getThreadAuthor
 };
