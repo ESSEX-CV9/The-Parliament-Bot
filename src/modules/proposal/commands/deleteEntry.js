@@ -1,6 +1,6 @@
 // src/commands/deleteEntry.js
 const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
-const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('deleteentry')

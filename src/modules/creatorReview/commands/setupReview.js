@@ -1,7 +1,7 @@
 // src/commands/setupReview.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { saveReviewSettings } = require('../utils/database');
-const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
+const { saveReviewSettings } = require('../../../core/utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('setupreview')

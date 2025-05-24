@@ -1,4 +1,4 @@
-// src/config/timeConfig.js
+// src/core/config/timeConfig.js
 // 时间配置文件 - 方便测试时快速调整时间
 
 // 是否为测试模式（true = 测试模式，时间大幅缩短；false = 生产模式，正常时间）

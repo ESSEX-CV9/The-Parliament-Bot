@@ -1,6 +1,6 @@
 // src/services/courtVoteTracker.js
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { getCourtApplication, updateCourtApplication } = require('../utils/database');
+const { getCourtApplication, updateCourtApplication } = require('../../../core/utils/database');
 const { createCourtForum } = require('./courtForumPoster');
 
 async function processCourtSupport(interaction) {

@@ -1,13 +1,13 @@
-// src/events/interactionCreate.js
+// src/core/events/interactionCreate.js
 const { PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { createFormModal } = require('../../modules/proposal/components/formModal');
 const { createReviewModal } = require('../../modules/creatorReview/components/reviewModal'); 
 const { processFormSubmission } = require('../../modules/proposal/services/formService');
 const { processReviewSubmission } = require('../../modules/creatorReview/services/reviewService'); 
 const { processVote } = require('../../modules/proposal/services/voteTracker');
-// 新增法庭相关处理
-const { processCourtSupport } = require('../../services/courtVoteTracker');
-const { processCourtVote } = require('../../services/courtVotingSystem');
+// 法庭相关处理
+const { processCourtSupport } = require('../../modules/court/services/courtVoteTracker');
+const { processCourtVote } = require('../../modules/court/services/courtVotingSystem');
 
 async function interactionCreateHandler(interaction) {
     try {

@@ -1,7 +1,7 @@
 // src/commands/removeAllowedForum.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { removeAllowedForum, getAllowedForums } = require('../utils/database');
-const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
+const { removeAllowedForum, getAllowedForums } = require('../../../core/utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('removeallowedforum')

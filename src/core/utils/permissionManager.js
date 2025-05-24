@@ -1,4 +1,4 @@
-// src/utils/permissionManager.js
+// src/core/utils/permissionManager.js
 const { PermissionFlagsBits } = require('discord.js');
 
 // 配置允许使用管理指令的身份组名称

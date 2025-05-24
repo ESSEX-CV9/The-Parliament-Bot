@@ -1,7 +1,7 @@
 // src/commands/setCheckChannel.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { saveCheckChannelSettings, getCheckChannelSettings } = require('../utils/database');
-const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
+const { saveCheckChannelSettings, getCheckChannelSettings } = require('../../core/utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('setcheckchannel')

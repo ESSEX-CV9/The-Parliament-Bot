@@ -1,6 +1,6 @@
 // src/services/voteTracker.js
 const { MessageFlags, ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = require('discord.js');
-const { getMessage, updateMessage } = require('../utils/database');
+const { getMessage, updateMessage } = require('../../../core/utils/database');
 const { createForumPost } = require('./forumPoster');
 
 async function processVote(interaction) {

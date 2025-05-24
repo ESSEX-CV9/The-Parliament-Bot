@@ -1,7 +1,7 @@
 // src/services/courtService.js
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { saveCourtApplication, getNextCourtId } = require('../utils/database');
-const { getCourtApplicationDeadline } = require('../config/timeconfig');
+const { saveCourtApplication, getNextCourtId } = require('../../../core/utils/database');
+const { getCourtApplicationDeadline } = require('../../../core/config/timeconfig');
 
 
 async function processCourtApplication(interaction, applicationData, courtSettings) {

@@ -1,7 +1,7 @@
 // src/commands/setupForm.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { saveSettings } = require('../utils/database');
-const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
+const { saveSettings } = require('../../../core/utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('setupform')

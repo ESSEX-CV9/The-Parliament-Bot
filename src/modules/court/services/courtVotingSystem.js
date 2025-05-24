@@ -1,6 +1,6 @@
 // src/services/courtVotingSystem.js
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { getCourtVote, updateCourtVote } = require('../utils/database');
+const { getCourtVote, updateCourtVote } = require('../../../core/utils/database');
 
 async function processCourtVote(interaction) {
     try {

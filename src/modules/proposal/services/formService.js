@@ -1,8 +1,8 @@
 // src/services/formService.js
 const { MessageFlags } = require('discord.js');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { getSettings, saveMessage, getNextId } = require('../utils/database');
-const { getProposalDeadline } = require('../config/timeconfig');
+const { getSettings, saveMessage, getNextId } = require('../../../core/utils/database');
+const { getProposalDeadline } = require('../../../core/config/timeconfig');
 
 async function processFormSubmission(interaction) {
     // 立即defer以防止超时

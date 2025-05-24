@@ -1,7 +1,7 @@
 // src/commands/addAllowedForum.js
 const { SlashCommandBuilder, MessageFlags, ChannelType } = require('discord.js');
-const { addAllowedForum, isServerAllowed, getAllowedForums } = require('../utils/database');
-const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
+const { addAllowedForum, isServerAllowed, getAllowedForums } = require('../../../core/utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('addallowedforum')

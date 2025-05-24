@@ -1,9 +1,9 @@
-// src/utils/database.js
+// src/core/utils/database.js
 const fs = require('fs');
 const path = require('path');
 
 // 确保数据目录存在
-const DATA_DIR = path.join(__dirname, '../../data');
+const DATA_DIR = path.join(__dirname, '../../../data');
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
 }

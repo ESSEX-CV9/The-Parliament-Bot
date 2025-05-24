@@ -1,5 +1,5 @@
 // src/services/forumPoster.js
-const { updateMessage } = require('../utils/database');
+const { updateMessage } = require('../../../core/utils/database');
 
 async function createForumPost(client, messageData) {
     try {

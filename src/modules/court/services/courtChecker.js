@@ -1,8 +1,8 @@
 // src/services/courtChecker.js
-const { getAllCourtVotes, updateCourtVote } = require('../utils/database');
+const { getAllCourtVotes, updateCourtVote } = require('../../../core/utils/database');
 const { finalizeVote, updateVoteDisplay } = require('./courtVotingSystem');
 const { startCourtApplicationChecker } = require('./courtApplicationChecker');
-const { getCheckIntervals } = require('../config/timeconfig');
+const { getCheckIntervals } = require('../../../core/config/timeconfig');
 
 async function checkCourtVotes(client) {
     try {

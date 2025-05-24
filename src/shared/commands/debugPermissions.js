@@ -1,6 +1,6 @@
 // src/commands/debugPermissions.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { getUserPermissionDetails, getAllowedRoles } = require('../utils/permissionManager');
+const { getUserPermissionDetails, getAllowedRoles } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('debugpermissions')

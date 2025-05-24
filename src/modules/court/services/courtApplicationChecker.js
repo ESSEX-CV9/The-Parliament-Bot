@@ -1,7 +1,7 @@
 // src/services/courtApplicationChecker.js
-const { getAllCourtApplications, updateCourtApplication } = require('../utils/database');
+const { getAllCourtApplications, updateCourtApplication } = require('../../../core/utils/database');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { getCheckIntervals } = require('../config/timeconfig');
+const { getCheckIntervals } = require('../../../core/config/timeconfig');
 
 async function checkExpiredCourtApplications(client) {
     try {

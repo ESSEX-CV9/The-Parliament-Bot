@@ -1,7 +1,7 @@
 // src/commands/addAllowPreviewServer.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { addAllowedServer, getAllowedServers } = require('../utils/database');
-const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
+const { addAllowedServer, getAllowedServers } = require('../../../core/utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('addallowpreviewserver')

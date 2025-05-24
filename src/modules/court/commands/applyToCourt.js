@@ -1,6 +1,6 @@
 // src/commands/applyToCourt.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { getCourtSettings } = require('../utils/database');
+const { getCourtSettings } = require('../../../core/utils/database');
 const { processCourtApplication } = require('../services/courtService');
 
 const data = new SlashCommandBuilder()

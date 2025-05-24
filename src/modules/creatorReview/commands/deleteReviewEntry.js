@@ -1,6 +1,6 @@
 // src/commands/deleteReviewEntry.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('deletereviewentry')
