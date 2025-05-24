@@ -94,6 +94,37 @@ async function getThreadTotalReactions(thread) {
     }
 }
 
+/**
+ * 获取帖子首楼的反应数
+ * @param {ThreadChannel} thread - 论坛帖子频道
+ * @returns {number} 首楼反应数
+ */
+async function getThreadFirstMessageReactions(thread) {
+    try {
+        // 获取帖子的起始消息（首楼）
+        const starterMessage = await thread.fetchStarterMessage();
+        
+        if (!starterMessage) {
+            console.log(`帖子 ${thread.name} 中没有找到起始消息`);
+            return 0;
+        }
+        
+        // 计算首楼的反应数
+        let totalReactions = 0;
+        if (starterMessage.reactions && starterMessage.reactions.cache) {
+            starterMessage.reactions.cache.forEach(reaction => {
+                totalReactions += reaction.count;
+            });
+        }
+        
+        console.log(`帖子 ${thread.name} 首楼反应数: ${totalReactions}`);
+        return totalReactions;
+    } catch (error) {
+        console.error('获取帖子首楼反应数失败:', error);
+        return 0;
+    }
+}
+
 async function processReviewSubmission(interaction) {
     try {
         // 立即defer回复以避免超时
@@ -233,7 +264,7 @@ async function processReviewSubmission(interaction) {
         }
         
         // 计算总反应数
-        const totalReactions = await getThreadTotalReactions(targetChannel);
+        const totalReactions = await getThreadFirstMessageReactions(targetChannel);
         const requiredReactions = reviewSettings.requiredReactions;
         
         console.log(`帖子反应统计: 当前=${totalReactions}, 需要=${requiredReactions}`);
@@ -305,5 +336,6 @@ module.exports = {
     parseDiscordLink,
     getTotalReactions,
     getThreadTotalReactions,
+    getThreadFirstMessageReactions,
     isForumThread
 };
