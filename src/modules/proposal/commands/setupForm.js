@@ -1,4 +1,4 @@
-// src/commands/setupForm.js
+// src\modules\proposal\commands\setupForm.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { saveSettings } = require('../../../core/utils/database');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');

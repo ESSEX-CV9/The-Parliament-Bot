@@ -1,4 +1,4 @@
-// src/commands/ping.js - ping指令
+// src\shared\commands\ping.js
 
 const { SlashCommandBuilder} = require('discord.js');
 

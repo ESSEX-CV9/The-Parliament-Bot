@@ -1,4 +1,4 @@
-// src/core/events/clientReady.js
+// src\core\events\clientReady.js
 
 const { 
     REST, 

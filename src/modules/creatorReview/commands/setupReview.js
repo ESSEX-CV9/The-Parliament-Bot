@@ -1,4 +1,4 @@
-// src/commands/setupReview.js
+// src\modules\creatorReview\commands\setupReview.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { saveReviewSettings } = require('../../../core/utils/database');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');

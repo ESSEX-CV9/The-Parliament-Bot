@@ -1,4 +1,4 @@
-// src/commands/setAllowCourtRole.js
+// src\modules\court\commands\setAllowCourtRole.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { saveCourtSettings, getCourtSettings } = require('../../../core/utils/database');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');

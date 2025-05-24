@@ -1,4 +1,4 @@
-// src/services/courtChecker.js
+// src\modules\court\services\courtChecker.js
 const { getAllCourtVotes, updateCourtVote } = require('../../../core/utils/database');
 const { finalizeVote, updateVoteDisplay } = require('./courtVotingSystem');
 const { startCourtApplicationChecker } = require('./courtApplicationChecker');

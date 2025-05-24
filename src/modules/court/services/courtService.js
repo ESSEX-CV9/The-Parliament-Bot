@@ -1,4 +1,4 @@
-// src/services/courtService.js
+// src\modules\court\services\courtService.js
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { saveCourtApplication, getNextCourtId } = require('../../../core/utils/database');
 const { getCourtApplicationDeadline } = require('../../../core/config/timeconfig');

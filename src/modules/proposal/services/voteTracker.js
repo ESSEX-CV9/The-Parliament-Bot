@@ -1,4 +1,4 @@
-// src/services/voteTracker.js
+// src\modules\proposal\services\voteTracker.js
 const { MessageFlags, ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = require('discord.js');
 const { getMessage, updateMessage } = require('../../../core/utils/database');
 const { createForumPost } = require('./forumPoster');

@@ -1,4 +1,4 @@
-// src/components/formModal.js
+// src\modules\proposal\components\formModal.js
 const { 
     ModalBuilder, 
     TextInputBuilder, 

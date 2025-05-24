@@ -1,4 +1,4 @@
-// src/commands/deleteReviewEntry.js
+// src\modules\creatorReview\commands\deleteReviewEntry.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 

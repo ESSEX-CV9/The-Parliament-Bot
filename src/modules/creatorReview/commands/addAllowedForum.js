@@ -1,4 +1,4 @@
-// src/commands/addAllowedForum.js
+// src\modules\creatorReview\commands\addAllowedForum.js
 const { SlashCommandBuilder, MessageFlags, ChannelType } = require('discord.js');
 const { addAllowedForum, isServerAllowed, getAllowedForums } = require('../../../core/utils/database');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');

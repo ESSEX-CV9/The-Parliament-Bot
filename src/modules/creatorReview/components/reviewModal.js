@@ -1,4 +1,4 @@
-// src/components/reviewModal.js
+// src\modules\creatorReview\components\reviewModal.js
 const { 
     ModalBuilder, 
     TextInputBuilder, 

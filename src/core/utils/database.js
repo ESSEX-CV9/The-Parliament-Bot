@@ -1,4 +1,4 @@
-// src/core/utils/database.js
+// src\core\utils\database.js
 const fs = require('fs');
 const path = require('path');
 

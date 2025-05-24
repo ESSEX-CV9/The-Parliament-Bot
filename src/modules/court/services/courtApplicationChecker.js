@@ -1,4 +1,4 @@
-// src/services/courtApplicationChecker.js
+// src\modules\court\services\courtApplicationChecker.js
 const { getAllCourtApplications, updateCourtApplication } = require('../../../core/utils/database');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getCheckIntervals } = require('../../../core/config/timeconfig');

@@ -1,4 +1,4 @@
-// src/services/reviewService.js
+// src\modules\creatorReview\services\reviewService.js
 const { MessageFlags, ChannelType } = require('discord.js');
 const { getReviewSettings, isServerAllowed, isForumAllowed } = require('../../../core/utils/database');
 

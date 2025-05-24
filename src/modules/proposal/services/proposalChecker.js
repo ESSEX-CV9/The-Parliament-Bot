@@ -1,4 +1,4 @@
-// src/services/proposalChecker.js
+// src\modules\proposal\services\proposalChecker.js
 const { getMessage, updateMessage, getAllMessages, getAllCheckChannelSettings } = require('../../../core/utils/database');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getCheckIntervals } = require('../../../core/config/timeconfig');

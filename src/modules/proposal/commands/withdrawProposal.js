@@ -1,4 +1,4 @@
-// src/commands/withdrawProposal.js
+// src\modules\proposal\commands\withdrawProposal.js
 const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getAllMessages, updateMessage } = require('../../../core/utils/database');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');

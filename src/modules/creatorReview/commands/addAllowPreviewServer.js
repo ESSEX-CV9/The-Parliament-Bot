@@ -1,4 +1,4 @@
-// src/commands/addAllowPreviewServer.js
+// src\modules\creatorReview\commands\addAllowPreviewServer.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { addAllowedServer, getAllowedServers } = require('../../../core/utils/database');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');

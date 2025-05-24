@@ -1,4 +1,4 @@
-// src/commands/removeAllowedForum.js
+// src\modules\creatorReview\commands\removeAllowedForum.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { removeAllowedForum, getAllowedForums } = require('../../../core/utils/database');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');

@@ -1,4 +1,4 @@
-// src/core/events/interactionCreate.js
+// src\core\events\interactionCreate.js
 const { PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { createFormModal } = require('../../modules/proposal/components/formModal');
 const { createReviewModal } = require('../../modules/creatorReview/components/reviewModal'); 

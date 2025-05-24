@@ -1,4 +1,4 @@
-// src/services/courtForumPoster.js
+// src\modules\court\services\courtForumPoster.js
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { saveCourtVote } = require('../../../core/utils/database');
 const { getCourtVoteEndTime, getCourtVotePublicTime } = require('../../../core/config/timeconfig');

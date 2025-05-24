@@ -1,4 +1,4 @@
-// src/commands/applyToCourt.js
+// src\modules\court\commands\applyToCourt.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getCourtSettings } = require('../../../core/utils/database');
 const { processCourtApplication } = require('../services/courtService');

@@ -1,4 +1,4 @@
-// src/services/courtVotingSystem.js
+// src\modules\court\services\courtVotingSystem.js
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getCourtVote, updateCourtVote } = require('../../../core/utils/database');
 

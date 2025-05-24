@@ -1,4 +1,4 @@
-// src/commands/deleteEntry.js
+// src\modules\proposal\commands\deleteEntry.js
 const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
