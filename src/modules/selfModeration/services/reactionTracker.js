@@ -1,5 +1,6 @@
 // src\modules\selfModeration\services\reactionTracker.js
 const { updateSelfModerationVote } = require('../../../core/utils/database');
+const { DELETE_THRESHOLD, MUTE_DURATIONS } = require('../../../core/config/timeconfig');
 
 /**
  * 获取目标消息的💩反应数量
@@ -74,9 +75,6 @@ async function updateVoteReactionCount(guildId, targetMessageId, type, newCount)
  * @returns {object} {reached: boolean, threshold: number, action: string}
  */
 function checkReactionThreshold(reactionCount, type) {
-    const DELETE_THRESHOLD = 20;
-    const MUTE_BASE_THRESHOLD = 20;
-    
     if (type === 'delete') {
         return {
             reached: reactionCount >= DELETE_THRESHOLD,
@@ -84,6 +82,8 @@ function checkReactionThreshold(reactionCount, type) {
             action: '删除消息'
         };
     } else if (type === 'mute') {
+        // 使用禁言的最低阈值
+        const MUTE_BASE_THRESHOLD = MUTE_DURATIONS.LEVEL_1.threshold;
         return {
             reached: reactionCount >= MUTE_BASE_THRESHOLD,
             threshold: MUTE_BASE_THRESHOLD,

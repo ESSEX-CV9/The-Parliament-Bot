@@ -46,8 +46,8 @@ const PRODUCTION_CONFIG = {
 
 // 禁言时长配置（分钟）
 const MUTE_DURATIONS = {
-    LEVEL_1: { threshold: 1, duration: 20 },   // 20个💩 -> 20分钟
-    LEVEL_2: { threshold: 2, duration: 30 },   // 40个💩 -> 30分钟  
+    LEVEL_1: { threshold: 20, duration: 15 },   // 20个💩 -> 20分钟
+    LEVEL_2: { threshold: 40, duration: 30 },   // 40个💩 -> 30分钟  
     LEVEL_3: { threshold: 60, duration: 60 },   // 60个💩 -> 1小时
     LEVEL_4: { threshold: 80, duration: 180 },  // 80个💩 -> 3小时
     LEVEL_5: { threshold: 100, duration: 360 }  // 100个💩 -> 6小时
