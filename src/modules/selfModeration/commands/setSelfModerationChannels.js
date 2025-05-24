@@ -110,11 +110,12 @@ async function handleAddChannel(interaction) {
                 guildId: interaction.guild.id,
                 deleteRoles: [],
                 muteRoles: [],
-                allowedChannels: []
+                allowedChannels: [],
+                channelsRestricted: false  // 新增标志位
             };
         }
         
-        // 确保 allowedChannels 数组存在
+        // 确保相关属性存在
         if (!settings.allowedChannels) {
             settings.allowedChannels = [];
         }
@@ -126,8 +127,9 @@ async function handleAddChannel(interaction) {
             });
         }
         
-        // 添加频道
+        // 添加频道并启用频道限制
         settings.allowedChannels.push(channel.id);
+        settings.channelsRestricted = true;  // 启用频道限制
         await saveSelfModerationSettings(interaction.guild.id, settings);
         
         const channelTypeDesc = getChannelTypeDescription(channel);
@@ -151,9 +153,9 @@ async function handleRemoveChannel(interaction) {
         
         // 获取当前设置
         const settings = await getSelfModerationSettings(interaction.guild.id);
-        if (!settings || !settings.allowedChannels) {
+        if (!settings || !settings.channelsRestricted || !settings.allowedChannels) {
             return interaction.editReply({
-                content: '❌ 当前没有设置允许的频道列表。'
+                content: '❌ 当前没有启用频道限制或设置允许的频道列表。'
             });
         }
         
@@ -190,11 +192,15 @@ async function handleViewChannels(interaction) {
         
         let response = '**📋 自助管理允许频道列表**\n\n';
         
-        if (!settings || !settings.allowedChannels || settings.allowedChannels.length === 0) {
-            response += '❌ 未设置允许的频道，**所有频道**都可以使用自助管理功能。\n\n';
+        if (!settings || !settings.channelsRestricted) {
+            response += '❌ 未启用频道限制，**所有频道**都可以使用自助管理功能。\n\n';
             response += '💡 **提示：** 使用 `/设置自助管理频道 添加` 来限制只有特定频道可以使用此功能。';
+        } else if (!settings.allowedChannels || settings.allowedChannels.length === 0) {
+            response += '🔒 **已启用频道限制，但允许列表为空**\n\n';
+            response += '❌ 当前**所有频道都不能**使用自助管理功能。\n\n';
+            response += '💡 **提示：** 使用 `/设置自助管理频道 添加` 来添加允许使用的频道，或使用 `/设置自助管理频道 重置` 来允许所有频道使用。';
         } else {
-            response += '以下频道允许使用自助管理功能：\n\n';
+            response += '🔒 **已启用频道限制**，以下频道允许使用自助管理功能：\n\n';
             
             for (const channelId of settings.allowedChannels) {
                 try {
@@ -232,18 +238,20 @@ async function handleClearChannels(interaction) {
                 guildId: interaction.guild.id,
                 deleteRoles: [],
                 muteRoles: [],
-                allowedChannels: []
+                allowedChannels: [],
+                channelsRestricted: false
             };
         }
         
-        // 清空允许的频道列表
+        // 清空允许的频道列表并启用频道限制
         settings.allowedChannels = [];
+        settings.channelsRestricted = true;  // 启用频道限制，但列表为空
         await saveSelfModerationSettings(interaction.guild.id, settings);
         
-        console.log(`${interaction.user.tag} 清空了自助管理允许频道列表`);
+        console.log(`${interaction.user.tag} 清空了自助管理允许频道列表（禁止所有频道）`);
         
         await interaction.editReply({
-            content: '✅ 已清空自助管理允许频道列表。现在**所有频道**都可以使用自助管理功能。'
+            content: '✅ 已清空自助管理允许频道列表。现在**所有频道都不能**使用自助管理功能。\n\n💡 使用 `/设置自助管理频道 添加` 来添加允许使用的频道，或使用 `/设置自助管理频道 重置` 来重新允许所有频道使用。'
         });
         
     } catch (error) {

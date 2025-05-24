@@ -9,10 +9,16 @@
  */
 async function validateChannel(channelId, settings, channel = null) {
     try {
-        // 如果没有设置允许的频道，默认允许所有频道
-        if (!settings || !settings.allowedChannels || settings.allowedChannels.length === 0) {
-            console.log('未配置允许的频道，默认允许所有频道');
+        // 如果没有设置或者没有启用频道限制，默认允许所有频道
+        if (!settings || !settings.channelsRestricted) {
+            console.log('未启用频道限制，默认允许所有频道');
             return true;
+        }
+        
+        // 如果启用了频道限制但允许列表为空，禁止所有频道
+        if (!settings.allowedChannels || settings.allowedChannels.length === 0) {
+            console.log('已启用频道限制但允许列表为空，禁止所有频道');
+            return false;
         }
         
         // 检查当前频道是否在允许列表中
