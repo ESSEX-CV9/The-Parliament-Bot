@@ -1,6 +1,6 @@
 // src/services/reviewService.js
 const { MessageFlags, ChannelType } = require('discord.js');
-const { getReviewSettings, isServerAllowed, isForumAllowed } = require('../utils/database');
+const { getReviewSettings, isServerAllowed, isForumAllowed } = require('../../../core/utils/database');
 
 /**
  * 解析Discord帖子链接

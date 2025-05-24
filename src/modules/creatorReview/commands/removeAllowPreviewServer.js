@@ -1,7 +1,7 @@
 // src/commands/removeAllowPreviewServer.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { removeAllowedServer, getAllowedServers } = require('../utils/database');
-const { checkAdminPermission, getPermissionDeniedMessage } = require('../utils/permissionManager');
+const { removeAllowedServer, getAllowedServers } = require('../../../core/utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
     .setName('removeallowpreviewserver')
@@ -20,6 +20,7 @@ async function execute(interaction) {
                 flags: MessageFlags.Ephemeral
             });
         }
+
 
         // 检查用户权限
         const hasPermission = checkAdminPermission(interaction.member);

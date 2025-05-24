@@ -11,24 +11,24 @@ const  {
 
 const { clientReadyHandler } = require('./events/clientReady')
 const { interactionCreateHandler } = require('./events/interactionCreate')
-const { startProposalChecker } = require('./services/proposalChecker');
-const { startCourtChecker } = require('./services/courtChecker');
+const { startProposalChecker } = require('../modules/proposal/services/proposalChecker');
+const { startCourtChecker } = require('../services/courtChecker');
 const { printTimeConfig } = require('./config/timeconfig');
 
-const pingCommand = require('./commands/ping');
-const setupFormCommand = require('./commands/setupForm');
-const deleteEntryCommand = require('./commands/deleteEntry');
-const withdrawProposalCommand = require('./commands/withdrawProposal');
-const setCheckChannelCommand = require('./commands/setCheckChannel');
-const setupReviewCommand = require('./commands/setupReview');
-const addAllowPreviewServerCommand = require('./commands/addAllowPreviewServer');
-const removeAllowPreviewServerCommand = require('./commands/removeAllowPreviewServer');
-const deleteReviewEntryCommand = require('./commands/deleteReviewEntry');
-const addAllowedForumCommand = require('./commands/addAllowedForum'); 
-const removeAllowedForumCommand = require('./commands/removeAllowedForum');
+const pingCommand = require('../shared/commands/ping');
+const setupFormCommand = require('../modules/proposal/commands/setupForm');
+const deleteEntryCommand = require('../modules/proposal/commands/deleteEntry');
+const withdrawProposalCommand = require('../modules/proposal/commands/withdrawProposal');
+const setCheckChannelCommand = require('../shared/commands/setCheckChannel');
+const setupReviewCommand = require('../modules/creatorReview/commands/setupReview');
+const addAllowPreviewServerCommand = require('../modules/creatorReview/commands/addAllowPreviewServer');
+const removeAllowPreviewServerCommand = require('../modules/creatorReview/commands/removeAllowPreviewServer');
+const deleteReviewEntryCommand = require('../modules/creatorReview/commands/deleteReviewEntry');
+const addAllowedForumCommand = require('../modules/creatorReview/commands/addAllowedForum'); 
+const removeAllowedForumCommand = require('../modules/creatorReview/commands/removeAllowedForum');
 // 法庭相关命令
-const setAllowCourtRoleCommand = require('./commands/setAllowCourtRole');
-const applyToCourtCommand = require('./commands/applyToCourt');
+const setAllowCourtRoleCommand = require('../shared/commands/setAllowCourtRole');
+const applyToCourtCommand = require('../shared/commands/applyToCourt');
 
 const client = new Client({ 
     intents: [
