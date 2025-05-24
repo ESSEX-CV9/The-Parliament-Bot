@@ -31,7 +31,7 @@ const data = new SlashCommandBuilder()
     .addSubcommand(subcommand =>
         subcommand
             .setName('清空')
-            .setDescription('清空所有设置（允许所有频道使用）'));
+            .setDescription('清空所有设置的频道（禁止所有频道使用）'));
 
 async function execute(interaction) {
     try {
@@ -251,7 +251,7 @@ async function handleClearChannels(interaction) {
         console.log(`${interaction.user.tag} 清空了自助管理允许频道列表（禁止所有频道）`);
         
         await interaction.editReply({
-            content: '✅ 已清空自助管理允许频道列表。现在**所有频道都不能**使用自助管理功能。\n\n💡 使用 `/设置自助管理频道 添加` 来添加允许使用的频道，或使用 `/设置自助管理频道 重置` 来重新允许所有频道使用。'
+            content: '✅ 已清空自助管理允许频道列表。现在**所有频道都不能**使用自助管理功能。'
         });
         
     } catch (error) {
