@@ -3,3 +3,4 @@ data/
 .env
 src/commands/debugPermissions.js
 .vscode/settings.json
+必读-项目文件结构.md

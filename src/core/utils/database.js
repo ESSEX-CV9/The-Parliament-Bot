@@ -16,6 +16,8 @@ const ALLOWED_SERVERS_FILE = path.join(DATA_DIR, 'allowedServers.json');
 const COURT_SETTINGS_FILE = path.join(DATA_DIR, 'courtSettings.json');
 const COURT_APPLICATIONS_FILE = path.join(DATA_DIR, 'courtApplications.json');
 const COURT_VOTES_FILE = path.join(DATA_DIR, 'courtVotes.json');
+const SELF_MODERATION_SETTINGS_FILE = path.join(DATA_DIR, 'selfModerationSettings.json');
+const SELF_MODERATION_VOTES_FILE = path.join(DATA_DIR, 'selfModerationVotes.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -41,6 +43,13 @@ if (!fs.existsSync(COURT_APPLICATIONS_FILE)) {
 }
 if (!fs.existsSync(COURT_VOTES_FILE)) {
     fs.writeFileSync(COURT_VOTES_FILE, '{}', 'utf8');
+}
+
+if (!fs.existsSync(SELF_MODERATION_SETTINGS_FILE)) {
+    fs.writeFileSync(SELF_MODERATION_SETTINGS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(SELF_MODERATION_VOTES_FILE)) {
+    fs.writeFileSync(SELF_MODERATION_VOTES_FILE, '{}', 'utf8');
 }
 
 // 读取设置数据
@@ -547,6 +556,110 @@ async function updateCourtVote(threadId, updates) {
     return null;
 }
 
+// 自助管理设置相关函数
+function readSelfModerationSettings() {
+    try {
+        const data = fs.readFileSync(SELF_MODERATION_SETTINGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取自助管理设置文件失败:', err);
+        return {};
+    }
+}
+
+function writeSelfModerationSettings(data) {
+    try {
+        fs.writeFileSync(SELF_MODERATION_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入自助管理设置文件失败:', err);
+    }
+}
+
+// 自助管理投票相关函数
+function readSelfModerationVotes() {
+    try {
+        const data = fs.readFileSync(SELF_MODERATION_VOTES_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取自助管理投票文件失败:', err);
+        return {};
+    }
+}
+
+function writeSelfModerationVotes(data) {
+    try {
+        fs.writeFileSync(SELF_MODERATION_VOTES_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入自助管理投票文件失败:', err);
+    }
+}
+
+// 保存自助管理设置
+async function saveSelfModerationSettings(guildId, settings) {
+    const allSettings = readSelfModerationSettings();
+    allSettings[guildId] = settings;
+    writeSelfModerationSettings(allSettings);
+    console.log(`成功保存自助管理设置 - guildId: ${guildId}`, settings);
+    return settings;
+}
+
+// 获取自助管理设置
+async function getSelfModerationSettings(guildId) {
+    const allSettings = readSelfModerationSettings();
+    const result = allSettings[guildId];
+    console.log(`获取自助管理设置 - guildId: ${guildId}`, result);
+    return result;
+}
+
+// 保存自助管理投票
+async function saveSelfModerationVote(voteData) {
+    const votes = readSelfModerationVotes();
+    const voteKey = `${voteData.guildId}_${voteData.targetMessageId}_${voteData.type}`;
+    votes[voteKey] = voteData;
+    writeSelfModerationVotes(votes);
+    console.log(`成功保存自助管理投票 - voteKey: ${voteKey}`);
+    return voteData;
+}
+
+// 获取自助管理投票
+async function getSelfModerationVote(guildId, targetMessageId, type) {
+    const votes = readSelfModerationVotes();
+    const voteKey = `${guildId}_${targetMessageId}_${type}`;
+    return votes[voteKey];
+}
+
+// 更新自助管理投票
+async function updateSelfModerationVote(guildId, targetMessageId, type, updates) {
+    const votes = readSelfModerationVotes();
+    const voteKey = `${guildId}_${targetMessageId}_${type}`;
+    const vote = votes[voteKey];
+    if (vote) {
+        const updated = { ...vote, ...updates };
+        votes[voteKey] = updated;
+        writeSelfModerationVotes(votes);
+        return updated;
+    }
+    return null;
+}
+
+// 获取所有自助管理投票
+async function getAllSelfModerationVotes() {
+    return readSelfModerationVotes();
+}
+
+// 删除自助管理投票
+async function deleteSelfModerationVote(guildId, targetMessageId, type) {
+    const votes = readSelfModerationVotes();
+    const voteKey = `${guildId}_${targetMessageId}_${type}`;
+    if (votes[voteKey]) {
+        delete votes[voteKey];
+        writeSelfModerationVotes(votes);
+        console.log(`成功删除自助管理投票 - voteKey: ${voteKey}`);
+        return true;
+    }
+    return false;
+}
+
 // 获取所有法庭投票
 async function getAllCourtVotes() {
     return readCourtVotes();
@@ -588,5 +701,14 @@ module.exports = {
     saveCourtVote,
     getCourtVote,
     updateCourtVote,
-    getAllCourtVotes 
+    getAllCourtVotes,
+    
+    // 自助管理相关导出
+    saveSelfModerationSettings,
+    getSelfModerationSettings,
+    saveSelfModerationVote,
+    getSelfModerationVote,
+    updateSelfModerationVote,
+    getAllSelfModerationVotes,
+    deleteSelfModerationVote
 };

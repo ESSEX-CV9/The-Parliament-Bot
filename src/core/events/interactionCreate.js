@@ -8,6 +8,8 @@ const { processVote } = require('../../modules/proposal/services/voteTracker');
 // 法庭相关处理
 const { processCourtSupport } = require('../../modules/court/services/courtVoteTracker');
 const { processCourtVote } = require('../../modules/court/services/courtVotingSystem');
+// 自助管理相关处理
+const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
 
 async function interactionCreateHandler(interaction) {
     try {
@@ -41,6 +43,9 @@ async function interactionCreateHandler(interaction) {
                        interaction.customId.startsWith('court_vote_oppose_')) {
                 // 处理法庭投票按钮
                 await processCourtVote(interaction);
+            } else if (interaction.customId.startsWith('selfmod_')) {
+                // 处理自助管理按钮
+                await processSelfModerationInteraction(interaction);
             }
             return;
         }
@@ -53,6 +58,9 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId === 'review_submission') { 
                 // 审核提交处理
                 await processReviewSubmission(interaction);
+            } else if (interaction.customId.startsWith('selfmod_modal_')) {
+                // 自助管理模态窗口提交处理
+                await processSelfModerationInteraction(interaction);
             }
             return;
         }

@@ -12,6 +12,7 @@ const { clientReadyHandler } = require('./events/clientReady')
 const { interactionCreateHandler } = require('./events/interactionCreate')
 const { startProposalChecker } = require('../modules/proposal/services/proposalChecker');
 const { startCourtChecker } = require('../modules/court/services/courtChecker');
+const { startSelfModerationChecker } = require('../modules/selfModeration/services/moderationChecker');
 const { printTimeConfig } = require('./config/timeconfig');
 
 // 导入命令
@@ -36,9 +37,17 @@ const removeAllowedForumCommand = require('../modules/creatorReview/commands/rem
 const setAllowCourtRoleCommand = require('../modules/court/commands/setAllowCourtRole');
 const applyToCourtCommand = require('../modules/court/commands/applyToCourt');
 
+// 自助管理系统命令
+const deleteShitMessageCommand = require('../modules/selfModeration/commands/deleteShitMessage');
+const muteShitUserCommand = require('../modules/selfModeration/commands/muteShitUser');
+const setSelfModerationRolesCommand = require('../modules/selfModeration/commands/setSelfModerationRoles');
+const setSelfModerationChannelsCommand = require('../modules/selfModeration/commands/setSelfModerationChannels');
+
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageReactions, // 需要这个intent来监控reaction
     ]
 });
 
@@ -66,6 +75,12 @@ client.commands.set(removeAllowedForumCommand.data.name, removeAllowedForumComma
 client.commands.set(setAllowCourtRoleCommand.data.name, setAllowCourtRoleCommand);
 client.commands.set(applyToCourtCommand.data.name, applyToCourtCommand);
 
+// 自助管理系统命令
+client.commands.set(deleteShitMessageCommand.data.name, deleteShitMessageCommand);
+client.commands.set(muteShitUserCommand.data.name, muteShitUserCommand);
+client.commands.set(setSelfModerationRolesCommand.data.name, setSelfModerationRolesCommand);
+client.commands.set(setSelfModerationChannelsCommand.data.name, setSelfModerationChannelsCommand);
+
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
     printTimeConfig();
@@ -75,6 +90,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     
     startCourtChecker(readyClient);
     console.log('✅ 法庭系统检查器已启动');
+    
+    startSelfModerationChecker(readyClient);
+    console.log('✅ 自助管理检查器已启动');
     
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
 })

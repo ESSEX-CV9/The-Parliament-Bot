@@ -222,6 +222,116 @@ function getUserPermissionDetails(member) {
     }
 }
 
+/**
+ * 检查用户是否有权限使用自助管理功能
+ * @param {GuildMember} member - 服务器成员对象
+ * @param {string} type - 权限类型 ('delete' 或 'mute')
+ * @param {object} settings - 自助管理设置
+ * @returns {boolean} 是否有权限
+ */
+function checkSelfModerationPermission(member, type, settings) {
+    try {
+        console.log(`\n=== 自助管理权限检查开始 ===`);
+        console.log(`用户: ${member.user.tag} (${member.user.id})`);
+        console.log(`权限类型: ${type}`);
+        console.log(`服务器: ${member.guild.name} (${member.guild.id})`);
+        
+        // 安全检查
+        if (!member || !member.user || !member.guild || !member.roles || !settings) {
+            console.log(`❌ 参数不完整`);
+            console.log(`=== 自助管理权限检查结束 ===\n`);
+            return false;
+        }
+        
+        // 如果没有配置特定权限，使用管理员权限
+        let allowedRoles = [];
+        if (type === 'delete' && settings.deleteRoles) {
+            allowedRoles = settings.deleteRoles;
+        } else if (type === 'mute' && settings.muteRoles) {
+            allowedRoles = settings.muteRoles;
+        }
+        
+        // 如果没有配置特定权限，回退到管理员权限检查
+        if (!allowedRoles || allowedRoles.length === 0) {
+            console.log(`未配置${type}权限，使用管理员权限检查`);
+            const hasAdminPermission = checkAdminPermission(member);
+            console.log(`=== 自助管理权限检查结束 ===\n`);
+            return hasAdminPermission;
+        }
+        
+        // 检查是否是服务器所有者
+        if (member.guild.ownerId === member.user.id) {
+            console.log(`✅ 自助管理权限检查 - 服务器所有者: ${member.user.tag}`);
+            console.log(`=== 自助管理权限检查结束 ===\n`);
+            return true;
+        }
+        
+        // 检查是否拥有指定的身份组
+        const userRoleIds = [];
+        if (member.roles.cache) {
+            member.roles.cache.forEach(role => {
+                userRoleIds.push(role.id);
+            });
+        }
+        
+        console.log(`用户身份组ID:`, userRoleIds);
+        console.log(`允许的身份组ID:`, allowedRoles);
+        
+        // 检查是否有匹配的身份组
+        const hasMatchingRole = allowedRoles.some(roleId => userRoleIds.includes(roleId));
+        
+        if (hasMatchingRole) {
+            console.log(`✅ 自助管理权限检查 - 拥有${type}权限: ${member.user.tag}`);
+            console.log(`=== 自助管理权限检查结束 ===\n`);
+            return true;
+        }
+        
+        console.log(`❌ 自助管理权限检查 - ${type}权限不足: ${member.user.tag}`);
+        console.log(`=== 自助管理权限检查结束 ===\n`);
+        return false;
+        
+    } catch (error) {
+        console.error('自助管理权限检查过程中出错:', error);
+        console.log(`=== 自助管理权限检查结束（出错） ===\n`);
+        return false;
+    }
+}
+
+/**
+ * 检查频道是否允许使用自助管理功能
+ * @param {string} channelId - 频道ID
+ * @param {object} settings - 自助管理设置
+ * @returns {boolean} 是否允许
+ */
+function checkSelfModerationChannelPermission(channelId, settings) {
+    try {
+        console.log(`检查频道权限: ${channelId}`);
+        
+        if (!settings || !settings.allowedChannels) {
+            console.log(`未配置允许的频道，默认允许`);
+            return true;
+        }
+        
+        const allowed = settings.allowedChannels.includes(channelId);
+        console.log(`频道${channelId}是否允许使用自助管理: ${allowed}`);
+        return allowed;
+        
+    } catch (error) {
+        console.error('检查频道权限时出错:', error);
+        return false;
+    }
+}
+
+/**
+ * 获取自助管理权限不足时的错误消息
+ * @param {string} type - 权限类型
+ * @returns {string} 错误消息
+ */
+function getSelfModerationPermissionDeniedMessage(type) {
+    const actionName = type === 'delete' ? '删除搬屎消息' : '禁言搬屎用户';
+    return `❌ **权限不足**\n\n您没有权限使用 \`/${actionName}\` 指令。`;
+}
+
 // 启动时打印配置信息
 console.log(`\n=== 权限管理模块已加载 ===`);
 console.log(`允许的身份组:`, ALLOWED_ROLE_NAMES);
@@ -237,5 +347,10 @@ module.exports = {
     removeAllowedRole,
     getUserPermissionDetails,
     ALLOWED_ROLE_NAMES,
-    ALLOWED_PERMISSIONS
+    ALLOWED_PERMISSIONS,
+
+    // 自助管理权限相关导出
+    checkSelfModerationPermission,
+    checkSelfModerationChannelPermission,
+    getSelfModerationPermissionDeniedMessage
 };

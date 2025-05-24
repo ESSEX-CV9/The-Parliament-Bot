@@ -2,7 +2,7 @@
 // 时间配置文件 - 方便测试时快速调整时间
 
 // 是否为测试模式（true = 测试模式，时间大幅缩短；false = 生产模式，正常时间）
-const TEST_MODE = false; // 改为 false 可切换到测试模式
+const TEST_MODE = true; // 改为 false 可切换到测试模式
 
 // 测试模式下的时间设置（以分钟为单位，方便测试）
 const TEST_CONFIG = {
@@ -18,6 +18,10 @@ const TEST_CONFIG = {
     COURT_VOTE_DURATION_MINUTES: 1,         // 投票持续时间：5分钟
     COURT_VOTE_PUBLIC_DELAY_MINUTES: 1,     // 公开票数延迟：2分钟
     COURT_VOTE_CHECK_INTERVAL_MINUTES: 0.5, // 投票检查间隔：30秒
+
+    // 自助管理系统
+    SELF_MODERATION_VOTE_DURATION_MINUTES: 2,    // 投票持续时间：2分钟（测试）
+    SELF_MODERATION_CHECK_INTERVAL_MINUTES: 0.5, // 检查间隔：30秒
 };
 
 // 生产模式下的时间设置（以小时/天为单位，正常使用）
@@ -34,7 +38,23 @@ const PRODUCTION_CONFIG = {
     COURT_VOTE_DURATION_HOURS: 24,          // 投票持续时间：24小时
     COURT_VOTE_PUBLIC_DELAY_HOURS: 12,      // 公开票数延迟：12小时
     COURT_VOTE_CHECK_INTERVAL_MINUTES: 5,   // 投票检查间隔：5分钟
+
+    // 自助管理系统
+    SELF_MODERATION_VOTE_DURATION_MINUTES: 30,   // 投票持续时间：30分钟
+    SELF_MODERATION_CHECK_INTERVAL_MINUTES: 1,   // 检查间隔：1分钟
 };
+
+// 禁言时长配置（分钟）
+const MUTE_DURATIONS = {
+    LEVEL_1: { threshold: 1, duration: 20 },   // 20个💩 -> 20分钟
+    LEVEL_2: { threshold: 2, duration: 30 },   // 40个💩 -> 30分钟  
+    LEVEL_3: { threshold: 60, duration: 60 },   // 60个💩 -> 1小时
+    LEVEL_4: { threshold: 80, duration: 180 },  // 80个💩 -> 3小时
+    LEVEL_5: { threshold: 100, duration: 360 }  // 100个💩 -> 6小时
+};
+
+// 删除消息阈值
+const DELETE_THRESHOLD = 20; // 20个💩删除消息
 
 // 获取当前配置
 function getTimeConfig() {
@@ -97,6 +117,16 @@ function getCourtVotePublicTime() {
     return publicTime;
 }
 
+// 获取自助管理投票结束时间
+function getSelfModerationVoteEndTime() {
+    const config = getTimeConfig();
+    const endTime = new Date();
+    
+    endTime.setMinutes(endTime.getMinutes() + config.SELF_MODERATION_VOTE_DURATION_MINUTES);
+    
+    return endTime;
+}
+
 // 获取检查间隔（毫秒）
 function getCheckIntervals() {
     const config = getTimeConfig();
@@ -105,6 +135,7 @@ function getCheckIntervals() {
         proposalCheck: config.PROPOSAL_CHECK_INTERVAL_MINUTES * 60 * 1000,
         courtApplicationCheck: config.COURT_APPLICATION_CHECK_INTERVAL_MINUTES * 60 * 1000,
         courtVoteCheck: config.COURT_VOTE_CHECK_INTERVAL_MINUTES * 60 * 1000,
+        selfModerationCheck: config.SELF_MODERATION_CHECK_INTERVAL_MINUTES * 60 * 1000,
     };
 }
 
@@ -120,13 +151,15 @@ function printTimeConfig() {
         console.log(`🏛️ 法庭申请截止时间: ${config.COURT_APPLICATION_DEADLINE_MINUTES} 分钟`);
         console.log(`🗳️ 法庭投票时间: ${config.COURT_VOTE_DURATION_MINUTES} 分钟`);
         console.log(`👁️ 票数公开延迟: ${config.COURT_VOTE_PUBLIC_DELAY_MINUTES} 分钟`);
-        console.log(`⏰ 检查间隔: 提案=${config.PROPOSAL_CHECK_INTERVAL_MINUTES}分钟, 申请=${config.COURT_APPLICATION_CHECK_INTERVAL_MINUTES}分钟, 投票=${config.COURT_VOTE_CHECK_INTERVAL_MINUTES}分钟`);
+        console.log(`🛡️ 自助管理投票时间: ${config.SELF_MODERATION_VOTE_DURATION_MINUTES} 分钟`);
+        console.log(`⏰ 检查间隔: 提案=${config.PROPOSAL_CHECK_INTERVAL_MINUTES}分钟, 申请=${config.COURT_APPLICATION_CHECK_INTERVAL_MINUTES}分钟, 投票=${config.COURT_VOTE_CHECK_INTERVAL_MINUTES}分钟, 自助管理=${config.SELF_MODERATION_CHECK_INTERVAL_MINUTES}分钟`);
     } else {
         console.log(`📝 提案截止时间: ${config.PROPOSAL_DEADLINE_HOURS} 小时`);
         console.log(`🏛️ 法庭申请截止时间: ${config.COURT_APPLICATION_DEADLINE_HOURS} 小时`);
         console.log(`🗳️ 法庭投票时间: ${config.COURT_VOTE_DURATION_HOURS} 小时`);
         console.log(`👁️ 票数公开延迟: ${config.COURT_VOTE_PUBLIC_DELAY_HOURS} 小时`);
-        console.log(`⏰ 检查间隔: 提案=${config.PROPOSAL_CHECK_INTERVAL_MINUTES}分钟, 申请=${config.COURT_APPLICATION_CHECK_INTERVAL_MINUTES}分钟, 投票=${config.COURT_VOTE_CHECK_INTERVAL_MINUTES}分钟`);
+        console.log(`🛡️ 自助管理投票时间: ${config.SELF_MODERATION_VOTE_DURATION_MINUTES} 分钟`);
+        console.log(`⏰ 检查间隔: 提案=${config.PROPOSAL_CHECK_INTERVAL_MINUTES}分钟, 申请=${config.COURT_APPLICATION_CHECK_INTERVAL_MINUTES}分钟, 投票=${config.COURT_VOTE_CHECK_INTERVAL_MINUTES}分钟, 自助管理=${config.SELF_MODERATION_CHECK_INTERVAL_MINUTES}分钟`);
     }
     
     console.log(`===============================\n`);
@@ -139,6 +172,9 @@ module.exports = {
     getCourtApplicationDeadline,
     getCourtVoteEndTime,
     getCourtVotePublicTime,
+    getSelfModerationVoteEndTime,
     getCheckIntervals,
-    printTimeConfig
+    printTimeConfig,
+    MUTE_DURATIONS,
+    DELETE_THRESHOLD
 };
