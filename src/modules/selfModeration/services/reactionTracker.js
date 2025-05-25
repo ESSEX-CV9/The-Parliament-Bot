@@ -26,11 +26,23 @@ async function getShitReactionCount(client, guildId, channelId, messageId) {
             return 0;
         }
         
-        // 查找⚠️反应
-        const shitReaction = message.reactions.cache.find(reaction => reaction.emoji.name === '⚠️');
+        // 查找⚠️反应 - 使用多种方式识别
+        const shitReaction = message.reactions.cache.find(reaction => {
+            // 尝试多种方式识别警告emoji
+            return reaction.emoji.name === '⚠️' || 
+                   reaction.emoji.name === '⚠' ||
+                   reaction.emoji.name === 'warning' ||
+                   reaction.emoji.name === ':warning:' ||
+                   reaction.emoji.unicode === '⚠️';
+        });
         
         if (!shitReaction) {
             console.log(`消息 ${messageId} 没有⚠️反应`);
+            console.log('可用的反应:', message.reactions.cache.map(r => ({
+                name: r.emoji.name,
+                unicode: r.emoji.unicode,
+                id: r.emoji.id
+            })));
             return 0;
         }
         
