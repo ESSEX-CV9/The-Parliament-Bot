@@ -556,6 +556,11 @@ async function updateCourtVote(threadId, updates) {
     return null;
 }
 
+// 获取所有法庭投票
+async function getAllCourtVotes() {
+    return readCourtVotes();
+}
+
 // 自助管理设置相关函数
 function readSelfModerationSettings() {
     try {
@@ -660,10 +665,140 @@ async function deleteSelfModerationVote(guildId, targetMessageId, type) {
     return false;
 }
 
-// 获取所有法庭投票
-async function getAllCourtVotes() {
-    return readCourtVotes();
+// 保存服务器的全局冷却时间设置
+async function saveSelfModerationGlobalCooldown(guildId, type, cooldownMinutes) {
+    const settings = readSelfModerationSettings();
+    if (!settings[guildId]) {
+        settings[guildId] = {
+            guildId,
+            deleteRoles: [],
+            muteRoles: [],
+            allowedChannels: []
+        };
+    }
+    
+    if (type === 'delete') {
+        settings[guildId].deleteCooldownMinutes = cooldownMinutes;
+    } else if (type === 'mute') {
+        settings[guildId].muteCooldownMinutes = cooldownMinutes;
+    }
+    
+    settings[guildId].updatedAt = new Date().toISOString();
+    writeSelfModerationSettings(settings);
+    
+    console.log(`成功保存全局冷却时间 - 服务器: ${guildId}, 类型: ${type}, 冷却: ${cooldownMinutes}分钟`);
+    return settings[guildId];
 }
+
+// 获取服务器的全局冷却时间设置
+async function getSelfModerationGlobalCooldown(guildId, type) {
+    const settings = readSelfModerationSettings();
+    if (!settings[guildId]) {
+        return 0; // 默认无冷却
+    }
+    
+    if (type === 'delete') {
+        return settings[guildId].deleteCooldownMinutes || 0;
+    } else if (type === 'mute') {
+        return settings[guildId].muteCooldownMinutes || 0;
+    }
+    
+    return 0;
+}
+
+// 保存用户最后使用时间（简化版）
+async function updateUserLastUsage(guildId, userId, type) {
+    const votes = readSelfModerationVotes();
+    const usageKey = `usage_${guildId}_${userId}_${type}`;
+    
+    votes[usageKey] = {
+        guildId,
+        userId,
+        type,
+        lastUsed: new Date().toISOString()
+    };
+    
+    writeSelfModerationVotes(votes);
+    return votes[usageKey];
+}
+
+// 获取用户最后使用时间
+async function getUserLastUsage(guildId, userId, type) {
+    const votes = readSelfModerationVotes();
+    const usageKey = `usage_${guildId}_${userId}_${type}`;
+    return votes[usageKey];
+}
+
+// 检查用户是否在冷却期内（基于全局设置）
+async function checkUserGlobalCooldown(guildId, userId, type) {
+    // 获取全局冷却设置
+    const globalCooldownMinutes = await getSelfModerationGlobalCooldown(guildId, type);
+    
+    if (globalCooldownMinutes <= 0) {
+        return { inCooldown: false, remainingMinutes: 0, cooldownMinutes: 0 };
+    }
+    
+    // 获取用户最后使用时间
+    const usageData = await getUserLastUsage(guildId, userId, type);
+    
+    if (!usageData || !usageData.lastUsed) {
+        return { inCooldown: false, remainingMinutes: 0, cooldownMinutes: globalCooldownMinutes };
+    }
+    
+    const lastUsed = new Date(usageData.lastUsed);
+    const now = new Date();
+    const elapsedMinutes = Math.floor((now - lastUsed) / (1000 * 60));
+    const remainingMinutes = Math.max(0, globalCooldownMinutes - elapsedMinutes);
+    
+    return {
+        inCooldown: remainingMinutes > 0,
+        remainingMinutes,
+        cooldownMinutes: globalCooldownMinutes
+    };
+}
+
+// 保存消息时间限制设置
+async function saveMessageTimeLimit(guildId, limitHours) {
+    const settings = readSelfModerationSettings();
+    if (!settings[guildId]) {
+        settings[guildId] = {};
+    }
+    
+    settings[guildId].messageTimeLimitHours = limitHours;
+    settings[guildId].updatedAt = new Date().toISOString();
+    
+    writeSelfModerationSettings(settings);
+    console.log(`成功保存消息时间限制 - 服务器: ${guildId}, 限制: ${limitHours}小时`);
+}
+
+// 获取消息时间限制设置
+async function getMessageTimeLimit(guildId) {
+    const settings = readSelfModerationSettings();
+    if (settings[guildId] && settings[guildId].messageTimeLimitHours !== undefined) {
+        return settings[guildId].messageTimeLimitHours;
+    }
+    return null; // 没有限制
+}
+
+// 检查消息是否在时间限制内
+async function checkMessageTimeLimit(guildId, messageTimestamp) {
+    const limitHours = await getMessageTimeLimit(guildId);
+    
+    if (limitHours === null || limitHours <= 0) {
+        return { withinLimit: true, limitHours: null };
+    }
+    
+    const messageTime = new Date(messageTimestamp);
+    const now = new Date();
+    const elapsedHours = (now - messageTime) / (1000 * 60 * 60);
+    
+    return {
+        withinLimit: elapsedHours <= limitHours,
+        limitHours,
+        elapsedHours: Math.floor(elapsedHours)
+    };
+}
+
 
 module.exports = {
     saveSettings,
@@ -710,5 +845,15 @@ module.exports = {
     getSelfModerationVote,
     updateSelfModerationVote,
     getAllSelfModerationVotes,
-    deleteSelfModerationVote
+    deleteSelfModerationVote,
+    // 冷却时间相关导出
+    saveSelfModerationGlobalCooldown,
+    getSelfModerationGlobalCooldown,
+    updateUserLastUsage,
+    getUserLastUsage,
+    checkUserGlobalCooldown,
+    // 消息时间限制相关导出
+    saveMessageTimeLimit,
+    getMessageTimeLimit,
+    checkMessageTimeLimit
 };

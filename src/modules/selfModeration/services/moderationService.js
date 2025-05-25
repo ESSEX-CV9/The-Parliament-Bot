@@ -1,6 +1,6 @@
 // src\modules\selfModeration\services\moderationService.js
 const { EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
-const { getSelfModerationSettings } = require('../../../core/utils/database');
+const { getSelfModerationSettings,checkMessageTimeLimit } = require('../../../core/utils/database');
 const { checkSelfModerationPermission, checkSelfModerationChannelPermission, getSelfModerationPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 const { parseMessageUrl, isMessageFromSameGuild, formatMessageLink } = require('../utils/messageParser');
 const { validateChannel, checkBotPermissions } = require('../utils/channelValidator');
@@ -208,6 +208,21 @@ async function validateTargetMessage(client, parsed) {
         // 检查消息是否是机器人发送的
         if (message.author.bot) {
             return { success: false, error: '不能对机器人发送的消息执行自助管理操作。' };
+        }
+        
+        // 检查消息时间限制
+        const timeLimitCheck = await checkMessageTimeLimit(guildId, message.createdTimestamp);
+        if (!timeLimitCheck.withinLimit) {
+            const days = Math.floor(timeLimitCheck.limitHours / 24);
+            const hours = timeLimitCheck.limitHours % 24;
+            let limitText = '';
+            if (days > 0) limitText += `${days}天`;
+            if (hours > 0) limitText += `${hours}小时`;
+            
+            return { 
+                success: false, 
+                error: `该消息发送时间超过了限制（${timeLimitCheck.elapsedHours}小时前），只能对过去${limitText}内的消息进行投票。` 
+            };
         }
         
         return {

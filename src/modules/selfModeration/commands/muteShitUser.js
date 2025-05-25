@@ -1,6 +1,6 @@
 // src\modules\selfModeration\commands\muteShitUser.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { getSelfModerationSettings } = require('../../../core/utils/database');
+const { getSelfModerationSettings, checkUserGlobalCooldown, updateUserLastUsage } = require('../../../core/utils/database');
 const { checkSelfModerationPermission, checkSelfModerationChannelPermission, getSelfModerationPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 const { validateChannel } = require('../utils/channelValidator');
 const { processMessageUrlSubmission } = require('../services/moderationService');
@@ -42,6 +42,20 @@ async function execute(interaction) {
             });
         }
 
+        // 检查全局冷却时间
+        const cooldownCheck = await checkUserGlobalCooldown(interaction.guild.id, interaction.user.id, 'mute');
+        if (cooldownCheck.inCooldown) {
+            const hours = Math.floor(cooldownCheck.remainingMinutes / 60);
+            const minutes = cooldownCheck.remainingMinutes % 60;
+            let timeText = '';
+            if (hours > 0) timeText += `${hours}小时`;
+            if (minutes > 0) timeText += `${minutes}分钟`;
+            
+            return interaction.editReply({
+                content: `❌ 您的禁言用户功能正在冷却中，请等待 **${timeText}** 后再试。`
+            });
+        }
+
         // 检查频道权限
         const channelAllowed = await validateChannel(interaction.channel.id, settings, interaction.channel);
         if (!channelAllowed) {
@@ -57,6 +71,9 @@ async function execute(interaction) {
 
         // 调用通用的消息处理函数
         await processMessageUrlSubmission(interaction, 'mute', messageUrl);
+        
+        // 更新用户最后使用时间（在成功处理后）
+        await updateUserLastUsage(interaction.guild.id, interaction.user.id, 'mute');
         
     } catch (error) {
         console.error('执行禁言搬屎用户指令时出错:', error);

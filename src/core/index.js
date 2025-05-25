@@ -42,6 +42,9 @@ const deleteShitMessageCommand = require('../modules/selfModeration/commands/del
 const muteShitUserCommand = require('../modules/selfModeration/commands/muteShitUser');
 const setSelfModerationRolesCommand = require('../modules/selfModeration/commands/setSelfModerationRoles');
 const setSelfModerationChannelsCommand = require('../modules/selfModeration/commands/setSelfModerationChannels');
+const setSelfModerationCooldownCommand = require('../modules/selfModeration/commands/setSelfModerationCooldown');
+const setMessageTimeLimitCommand = require('../modules/selfModeration/commands/setMessageTimeLimit');
+const checkMyCooldownCommand = require('../modules/selfModeration/commands/checkMyCooldown');
 
 const client = new Client({ 
     intents: [
@@ -80,6 +83,9 @@ client.commands.set(deleteShitMessageCommand.data.name, deleteShitMessageCommand
 client.commands.set(muteShitUserCommand.data.name, muteShitUserCommand);
 client.commands.set(setSelfModerationRolesCommand.data.name, setSelfModerationRolesCommand);
 client.commands.set(setSelfModerationChannelsCommand.data.name, setSelfModerationChannelsCommand);
+client.commands.set(setSelfModerationCooldownCommand.data.name, setSelfModerationCooldownCommand);
+client.commands.set(setMessageTimeLimitCommand.data.name, setMessageTimeLimitCommand);
+client.commands.set(checkMyCooldownCommand.data.name, checkMyCooldownCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
