@@ -114,11 +114,11 @@ async function processMessageUrlSubmission(interaction, type, messageUrl) {
             });
         }
         
-        // 检查频道权限
-        const channelAllowed = checkSelfModerationChannelPermission(interaction.channel.id, settings);
-        if (!channelAllowed) {
+        // 检查当前频道权限（用户使用指令的频道）
+        const currentChannelAllowed = await validateChannel(interaction.channel.id, settings, interaction.channel);
+        if (!currentChannelAllowed) {
             return interaction.editReply({
-                content: '❌ 此频道不允许使用自助管理功能。'
+                content: '❌ 此频道不允许使用自助管理功能。请在管理员设置的允许频道中使用此指令。'
             });
         }
         
@@ -142,6 +142,36 @@ async function processMessageUrlSubmission(interaction, type, messageUrl) {
         if (!messageInfo.success) {
             return interaction.editReply({
                 content: `❌ ${messageInfo.error}`
+            });
+        }
+        
+        // 🔥 检查目标消息所在的频道是否也被授权
+        const targetChannelAllowed = await validateChannel(parsed.channelId, settings, messageInfo.channel);
+        if (!targetChannelAllowed) {
+            // 获取频道名称用于更友好的错误提示
+            let channelMention = `<#${parsed.channelId}>`;
+            let channelTypeDesc = '频道';
+            
+            try {
+                const targetChannel = messageInfo.channel;
+                if (targetChannel) {
+                    channelMention = targetChannel.toString();
+                    
+                    // 获取频道类型描述
+                    const { getChannelTypeDescription } = require('../utils/channelValidator');
+                    channelTypeDesc = getChannelTypeDescription(targetChannel);
+                }
+            } catch (error) {
+                console.error('获取目标频道信息时出错:', error);
+            }
+            
+            let errorMessage = `❌ 目标消息所在的${channelTypeDesc} ${channelMention} 不允许使用自助管理功能。\n\n`;
+            errorMessage += `**权限要求：**\n`;
+            errorMessage += `• 使用指令的频道必须被授权 ✅\n`;
+            errorMessage += `• 目标消息所在的频道也必须被授权 ❌\n\n`;
+            
+            return interaction.editReply({
+                content: errorMessage
             });
         }
         

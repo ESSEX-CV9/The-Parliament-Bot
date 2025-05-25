@@ -53,6 +53,37 @@ async function executeMuteUser(client, voteData) {
         if (!channel) {
             throw new Error(`找不到频道: ${targetChannelId}`);
         }
+
+        // 检查频道类型是否支持权限覆盖
+        if (!channel.permissionOverwrites) {
+            // 如果是论坛帖子，尝试获取父频道
+            if (channel.isThread() && channel.parent) {
+                const parentChannel = channel.parent;
+                if (parentChannel.permissionOverwrites) {
+                    // 在父频道设置权限
+                    await parentChannel.permissionOverwrites.create(member, {
+                        SendMessages: false,
+                        AddReactions: false,
+                        CreatePublicThreads: false,
+                        CreatePrivateThreads: false,
+                        SendMessagesInThreads: false
+                    });
+                } else {
+                    throw new Error(`父频道也不支持权限覆盖: ${parentChannel.type}`);
+                }
+            } else {
+                throw new Error(`频道类型不支持权限覆盖: ${channel.type}`);
+            }
+        } else {
+            // 普通频道的权限设置
+            await channel.permissionOverwrites.create(member, {
+                SendMessages: false,
+                AddReactions: false,
+                CreatePublicThreads: false,
+                CreatePrivateThreads: false,
+                SendMessagesInThreads: false
+            });
+        }
         
         // 执行频道级禁言（修改权限）
         const muteEndTime = new Date();

@@ -56,9 +56,9 @@ async function execute(interaction) {
             });
         }
 
-        // 检查频道权限
-        const channelAllowed = await validateChannel(interaction.channel.id, settings, interaction.channel);
-        if (!channelAllowed) {
+        // 检查当前频道权限（用户使用指令的频道）
+        const currentChannelAllowed = await validateChannel(interaction.channel.id, settings, interaction.channel);
+        if (!currentChannelAllowed) {
             return interaction.editReply({
                 content: '❌ 此频道不允许使用自助管理功能。请在管理员设置的允许频道中使用此指令。'
             });
