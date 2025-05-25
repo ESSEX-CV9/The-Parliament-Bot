@@ -151,21 +151,21 @@ async function sendPunishmentNotification(client, vote, result) {
         if (type === 'delete' && result.success) {
             embed = new EmbedBuilder()
                 .setTitle('🗑️ 搬屎消息已删除')
-                .setDescription(`由于💩反应数量达到 **${currentReactionCount}** 个，以下消息已被删除：\n\n**原消息链接：** ${targetMessageUrl}\n**消息作者：** <@${result.messageInfo.authorId}>\n**执行时间：** <t:${Math.floor(Date.now() / 1000)}:f>`)
+                .setDescription(`由于⚠️反应数量达到 **${currentReactionCount}** 个，以下消息已被删除：\n\n**原消息链接：** ${targetMessageUrl}\n**消息作者：** <@${result.messageInfo.authorId}>\n**执行时间：** <t:${Math.floor(Date.now() / 1000)}:f>`)
                 .setColor('#FF0000')
                 .setTimestamp();
         } else if (type === 'mute' && result.success) {
             if (result.alreadyMuted) {
                 embed = new EmbedBuilder()
                     .setTitle('🔇 用户已处于禁言状态')
-                    .setDescription(`<@${result.userId}> 已经被禁言，当前禁言时长：**${result.currentDuration}**\n\n💩反应数量：${currentReactionCount}`)
+                    .setDescription(`<@${result.userId}> 已经被禁言，当前禁言时长：**${result.currentDuration}**\n\n⚠️反应数量：${currentReactionCount}`)
                     .setColor('#FFA500')
                     .setTimestamp();
             } else {
                 const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
                 embed = new EmbedBuilder()
                     .setTitle('🔇 搬屎用户已被禁言')
-                    .setDescription(`由于💩反应数量达到 **${currentReactionCount}** 个，<@${result.userId}> 已在此频道被禁言：\n\n**禁言时长：** ${result.additionalDuration}\n**总禁言时长：** ${result.totalDuration}\n**解禁时间：** <t:${endTimestamp}:f>\n**目标消息：** ${targetMessageUrl}`)
+                    .setDescription(`由于⚠️反应数量达到 **${currentReactionCount}** 个，<@${result.userId}> 已在此频道被禁言：\n\n**禁言时长：** ${result.additionalDuration}\n**总禁言时长：** ${result.totalDuration}\n**解禁时间：** <t:${endTimestamp}:f>\n**目标消息：** ${targetMessageUrl}`)
                     .setColor('#FF8C00')
                     .setTimestamp();
             }
@@ -201,7 +201,7 @@ async function sendVoteExpiredNotification(client, vote) {
         
         const embed = new EmbedBuilder()
             .setTitle('⏰ 投票时间已结束')
-            .setDescription(`**${actionName}**投票已结束\n\n**目标消息：** ${targetMessageUrl}\n**最终💩数量：** ${currentReactionCount}\n**所需数量：** ${thresholdCheck.threshold}\n\n${currentReactionCount >= thresholdCheck.threshold ? '✅ 已达到执行条件并执行' : '❌ 未达到执行条件'}`)
+            .setDescription(`**${actionName}**投票已结束\n\n**目标消息：** ${targetMessageUrl}\n**最终⚠️数量：** ${currentReactionCount}\n**所需数量：** ${thresholdCheck.threshold}\n\n${currentReactionCount >= thresholdCheck.threshold ? '✅ 已达到执行条件并执行' : '❌ 未达到执行条件'}`)
             .setColor(currentReactionCount >= thresholdCheck.threshold ? '#00FF00' : '#808080')
             .setTimestamp();
         

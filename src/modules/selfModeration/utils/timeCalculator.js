@@ -2,8 +2,8 @@
 const { MUTE_DURATIONS } = require('../../../core/config/timeconfig');
 
 /**
- * 根据💩数量计算禁言时长
- * @param {number} reactionCount - 💩反应数量
+ * 根据⚠️数量计算禁言时长
+ * @param {number} reactionCount - ⚠️反应数量
  * @returns {object} {level: number, duration: number, threshold: number}
  */
 function calculateMuteDuration(reactionCount) {
@@ -31,7 +31,7 @@ function calculateMuteDuration(reactionCount) {
 
 /**
  * 计算需要增加的禁言时间（考虑已经执行的禁言）
- * @param {number} newReactionCount - 新的💩反应数量
+ * @param {number} newReactionCount - 新的⚠️反应数量
  * @param {number} currentMuteDuration - 当前已执行的禁言时长（分钟）
  * @returns {object} {additionalDuration: number, totalDuration: number, newLevel: string}
  */
@@ -90,7 +90,7 @@ function formatDuration(minutes) {
 function getMuteLevelsDescription() {
     const levels = Object.entries(MUTE_DURATIONS);
     return levels.map(([level, config]) => 
-        `${config.threshold}个💩 → ${formatDuration(config.duration)}`
+        `${config.threshold}个⚠️ → ${formatDuration(config.duration)}`
     ).join('\n');
 }
 

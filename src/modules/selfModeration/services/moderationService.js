@@ -238,7 +238,7 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         const actionName = type === 'delete' ? '删除搬屎消息' : '禁言搬屎用户';
         const endTimestamp = Math.floor(new Date(endTime).getTime() / 1000);
         
-        // 获取当前💩反应数量
+        // 获取当前⚠️反应数量
         const initialReactionCount = await getShitReactionCount(
             interaction.client,
             voteData.guildId,
@@ -248,11 +248,11 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         
         const embed = new EmbedBuilder()
             .setTitle(`🗳️ ${actionName}投票已启动`)
-            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加💩反应来表达支持。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${messageInfo.message.author.id}>\n**发起人：** <@${voteData.initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前💩数量：** ${initialReactionCount}\n**执行条件：** ${type === 'delete' ? '20个💩删除消息' : '20个💩开始禁言'}`)
+            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加⚠️反应来表达支持。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${messageInfo.message.author.id}>\n**发起人：** <@${voteData.initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前⚠️数量：** ${initialReactionCount}\n**执行条件：** ${type === 'delete' ? '20个⚠️删除消息' : '20个⚠️开始禁言'}`)
             .setColor('#FFA500')
             .setTimestamp()
             .setFooter({
-                text: '💩反应数量会实时检查，达到条件后会自动执行相应操作'
+                text: '⚠️反应数量会实时检查，达到条件后会自动执行相应操作'
             });
         
         // 检查是否有冲突的投票

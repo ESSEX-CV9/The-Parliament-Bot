@@ -3,12 +3,12 @@ const { updateSelfModerationVote } = require('../../../core/utils/database');
 const { DELETE_THRESHOLD, MUTE_DURATIONS } = require('../../../core/config/timeconfig');
 
 /**
- * 获取目标消息的💩反应数量
+ * 获取目标消息的⚠️反应数量
  * @param {Client} client - Discord客户端
  * @param {string} guildId - 服务器ID
  * @param {string} channelId - 频道ID
  * @param {string} messageId - 消息ID
- * @returns {number} 💩反应数量
+ * @returns {number} ⚠️反应数量
  */
 async function getShitReactionCount(client, guildId, channelId, messageId) {
     try {
@@ -26,20 +26,20 @@ async function getShitReactionCount(client, guildId, channelId, messageId) {
             return 0;
         }
         
-        // 查找💩反应
-        const shitReaction = message.reactions.cache.find(reaction => reaction.emoji.name === '💩');
+        // 查找⚠️反应
+        const shitReaction = message.reactions.cache.find(reaction => reaction.emoji.name === '⚠️');
         
         if (!shitReaction) {
-            console.log(`消息 ${messageId} 没有💩反应`);
+            console.log(`消息 ${messageId} 没有⚠️反应`);
             return 0;
         }
         
         const count = shitReaction.count;
-        console.log(`消息 ${messageId} 的💩反应数量: ${count}`);
+        console.log(`消息 ${messageId} 的⚠️反应数量: ${count}`);
         return count;
         
     } catch (error) {
-        console.error('获取💩反应数量时出错:', error);
+        console.error('获取⚠️反应数量时出错:', error);
         return 0;
     }
 }
@@ -143,11 +143,11 @@ async function batchCheckReactions(client, votes) {
  */
 function getReactionChangeDescription(oldCount, newCount) {
     if (newCount > oldCount) {
-        return `💩反应增加了 ${newCount - oldCount} 个 (${oldCount} → ${newCount})`;
+        return `⚠️反应增加了 ${newCount - oldCount} 个 (${oldCount} → ${newCount})`;
     } else if (newCount < oldCount) {
-        return `💩反应减少了 ${oldCount - newCount} 个 (${oldCount} → ${newCount})`;
+        return `⚠️反应减少了 ${oldCount - newCount} 个 (${oldCount} → ${newCount})`;
     } else {
-        return `💩反应数量没有变化 (${newCount})`;
+        return `⚠️反应数量没有变化 (${newCount})`;
     }
 }
 

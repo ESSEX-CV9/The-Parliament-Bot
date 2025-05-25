@@ -109,7 +109,7 @@ function getVoteStatusDescription(voteData) {
             return `⏰ ${actionName}投票已完成但未达到执行条件`;
         }
     } else if (status === 'active') {
-        return `🗳️ ${actionName}投票进行中 (当前💩数量: ${currentReactionCount})`;
+        return `🗳️ ${actionName}投票进行中 (当前⚠️数量: ${currentReactionCount})`;
     } else {
         return `❓ 投票状态未知`;
     }
