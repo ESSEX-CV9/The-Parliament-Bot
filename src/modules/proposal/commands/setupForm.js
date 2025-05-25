@@ -125,7 +125,7 @@ async function execute(interaction) {
         await saveSettings(interaction.guild.id, settings);
         
         // 检查设置是否成功保存
-        const savedSettings = await require('../utils/database').getSettings(interaction.guild.id);
+        const savedSettings = await require('../../../core/utils/database').getSettings(interaction.guild.id);
         console.log('验证保存的设置:', savedSettings);
         
         // 创建表单入口按钮
