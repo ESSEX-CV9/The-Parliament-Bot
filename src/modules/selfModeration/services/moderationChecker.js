@@ -119,7 +119,7 @@ async function handleExpiredVote(client, vote) {
         });
         
         // 发送投票结束通知
-        await sendVoteExpiredNotification(client, vote);
+        // await sendVoteExpiredNotification(client, vote); // 重新启用时，取消注释这行：
         
         // 如果是禁言投票且已执行过禁言，需要删除用户消息
         if (type === 'mute' && executed) {
