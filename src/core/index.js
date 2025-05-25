@@ -25,6 +25,7 @@ const setupFormCommand = require('../modules/proposal/commands/setupForm');
 const deleteEntryCommand = require('../modules/proposal/commands/deleteEntry');
 const withdrawProposalCommand = require('../modules/proposal/commands/withdrawProposal');
 const setFormPermissionsCommand = require('../modules/proposal/commands/setFormPermissions');
+const setSupportPermissionsCommand = require('../modules/proposal/commands/setSupportPermissions');
 
 // 审核系统命令
 const setupReviewCommand = require('../modules/creatorReview/commands/setupReview');
@@ -67,6 +68,7 @@ client.commands.set(setupFormCommand.data.name, setupFormCommand);
 client.commands.set(deleteEntryCommand.data.name, deleteEntryCommand);
 client.commands.set(withdrawProposalCommand.data.name, withdrawProposalCommand);
 client.commands.set(setFormPermissionsCommand.data.name, setFormPermissionsCommand);
+client.commands.set(setSupportPermissionsCommand.data.name, setSupportPermissionsCommand);
 
 // 审核系统命令
 client.commands.set(setupReviewCommand.data.name, setupReviewCommand);

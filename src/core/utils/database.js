@@ -132,6 +132,26 @@ async function getFormPermissionSettings(guildId) {
     return result;
 }
 
+// 保存支持按钮权限设置
+async function saveSupportPermissionSettings(guildId, permissionSettings) {
+    const settings = readSettings();
+    if (!settings[guildId]) {
+        settings[guildId] = {};
+    }
+    settings[guildId].supportPermissions = permissionSettings;
+    writeSettings(settings);
+    console.log(`成功保存支持按钮权限设置 - guildId: ${guildId}`, permissionSettings);
+    return permissionSettings;
+}
+
+// 获取支持按钮权限设置
+async function getSupportPermissionSettings(guildId) {
+    const settings = readSettings();
+    const result = settings[guildId]?.supportPermissions;
+    console.log(`获取支持按钮权限设置 - guildId: ${guildId}`, result);
+    return result;
+}
+
 // 读取审核设置数据
 function readReviewSettings() {
     try {
@@ -830,6 +850,8 @@ module.exports = {
     getNextId,
     saveFormPermissionSettings,
     getFormPermissionSettings,
+    saveSupportPermissionSettings,
+    getSupportPermissionSettings,
 
     // 审核相关导出
     saveCheckChannelSettings,

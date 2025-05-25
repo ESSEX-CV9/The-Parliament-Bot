@@ -2,16 +2,42 @@
 const { MessageFlags, ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = require('discord.js');
 const { getMessage, updateMessage } = require('../../../core/utils/database');
 const { createForumPost } = require('./forumPoster');
+const { checkSupportPermission, getSupportPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
+const { getSupportPermissionSettings } = require('../../../core/utils/database');
 
 async function processVote(interaction) {
     try {
         // 立即回复延迟消息，防止交互超时
         await interaction.deferReply({ ephemeral: true });
         
+        // 检查支持按钮使用权限
+        const supportPermissionSettings = await getSupportPermissionSettings(interaction.guild.id);
+        const hasSupportPermission = checkSupportPermission(interaction.member, supportPermissionSettings);
+        
+        if (!hasSupportPermission) {
+            // 获取身份组名称用于错误消息
+            let allowedRoleNames = [];
+            if (supportPermissionSettings && supportPermissionSettings.allowedRoles) {
+                for (const roleId of supportPermissionSettings.allowedRoles) {
+                    try {
+                        const role = await interaction.guild.roles.fetch(roleId);
+                        if (role) allowedRoleNames.push(role.name);
+                    } catch (error) {
+                        // 忽略错误，继续处理其他身份组
+                    }
+                }
+            }
+            
+            return interaction.editReply({
+                content: getSupportPermissionDeniedMessage(allowedRoleNames)
+            });
+        }
+        
         // 从按钮ID中提取消息ID
         const messageId = interaction.customId.replace('support_', '');
         console.log(`处理投票: 按钮ID=${interaction.customId}, 提取的消息ID=${messageId}`);
         
+        // ... 继续原有的投票处理逻辑（保持不变）
         // 从数据库获取消息数据
         const messageData = await getMessage(messageId);
         console.log(`查询消息数据: ID=${messageId}, 结果=`, messageData);
