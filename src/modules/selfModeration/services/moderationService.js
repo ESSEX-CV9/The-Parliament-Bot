@@ -246,7 +246,7 @@ async function validateTargetMessage(client, parsed) {
 async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
     try {
         const { voteData, isNewVote } = voteResult;
-        const { type, targetMessageUrl, endTime, currentReactionCount } = voteData;
+        const { type, targetMessageUrl, endTime, currentReactionCount, initiatorId, targetUserId } = voteData;
         
         if (!isNewVote) return; // 如果不是新投票，不发送通知
         
@@ -263,7 +263,7 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         
         const embed = new EmbedBuilder()
             .setTitle(`🗳️ ${actionName}投票已启动`)
-            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加⚠️反应来表达支持，**或者直接对本消息添加⚠️反应**。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${messageInfo.message.author.id}>\n**发起人：** <@${voteData.initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前⚠️数量：** ${initialReactionCount}\n**执行条件：** ${type === 'delete' ? '20个⚠️删除消息' : '20个⚠️开始禁言'}`)
+            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加⚠️反应来表达支持，**或者直接对本消息添加⚠️反应**。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${targetUserId}>\n**发起人：** <@${initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前⚠️数量：** ${initialReactionCount}\n**执行条件：** ${type === 'delete' ? '20个⚠️删除消息' : '20个⚠️开始禁言'}`)
             .setColor('#FFA500')
             .setTimestamp()
             .setFooter({
@@ -296,7 +296,8 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         const { updateSelfModerationVote } = require('../../../core/utils/database');
         await updateSelfModerationVote(voteData.guildId, voteData.targetMessageId, type, {
             voteAnnouncementMessageId: announcementMessage.id,
-            voteAnnouncementChannelId: interaction.channel.id
+            voteAnnouncementChannelId: interaction.channel.id,
+            targetUserId: targetUserId // 确保保存目标用户ID
         });
         
         console.log(`投票公告已发送，消息ID: ${announcementMessage.id}`);
