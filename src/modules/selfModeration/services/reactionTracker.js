@@ -3,6 +3,31 @@ const { updateSelfModerationVote } = require('../../../core/utils/database');
 const { DELETE_THRESHOLD, MUTE_DURATIONS } = require('../../../core/config/timeconfig');
 
 /**
+ * 检查消息是否存在
+ * @param {Client} client - Discord客户端
+ * @param {string} channelId - 频道ID
+ * @param {string} messageId - 消息ID
+ * @returns {boolean} 消息是否存在
+ */
+async function checkMessageExists(client, channelId, messageId) {
+    try {
+        const channel = await client.channels.fetch(channelId);
+        if (!channel) {
+            console.log(`频道 ${channelId} 不存在`);
+            return false;
+        }
+        
+        const message = await channel.messages.fetch(messageId);
+        return !!message;
+        
+    } catch (error) {
+        // 如果获取消息失败，通常意味着消息已被删除
+        console.log(`消息 ${messageId} 不存在或无法访问: ${error.message}`);
+        return false;
+    }
+}
+
+/**
  * 获取消息的⚠️反应用户列表
  * @param {Client} client - Discord客户端
  * @param {string} channelId - 频道ID
@@ -60,7 +85,7 @@ async function getShitReactionUsers(client, channelId, messageId) {
  * 获取目标消息和投票公告的⚠️反应数量（去重后）
  * @param {Client} client - Discord客户端
  * @param {object} voteData - 投票数据
- * @returns {object} {uniqueUsers: Set, totalCount: number}
+ * @returns {object} {uniqueUsers: Set, totalCount: number, targetMessageExists: boolean}
  */
 async function getDeduplicatedReactionCount(client, voteData) {
     try {
@@ -69,22 +94,30 @@ async function getDeduplicatedReactionCount(client, voteData) {
             targetChannelId, 
             targetMessageId, 
             voteAnnouncementChannelId, 
-            voteAnnouncementMessageId 
+            voteAnnouncementMessageId,
+            type
         } = voteData;
         
-        // 获取目标消息的反应用户
-        const targetUsers = await getShitReactionUsers(client, targetChannelId, targetMessageId);
-        console.log(`目标消息反应用户: ${targetUsers.size}`);
+        // 检查目标消息是否存在
+        const targetMessageExists = await checkMessageExists(client, targetChannelId, targetMessageId);
+        console.log(`目标消息 ${targetMessageId} 是否存在: ${targetMessageExists}`);
         
-        // 合并用户集合（Set会自动去重）
-        const allUsers = new Set(targetUsers);
+        // 初始化用户集合
+        const allUsers = new Set();
         
-        // 如果有投票公告消息，也获取其反应用户
+        // 如果目标消息存在，获取其反应用户
+        if (targetMessageExists) {
+            const targetUsers = await getShitReactionUsers(client, targetChannelId, targetMessageId);
+            console.log(`目标消息反应用户: ${targetUsers.size}`);
+            targetUsers.forEach(userId => allUsers.add(userId));
+        } else {
+            console.log(`目标消息不存在，跳过目标消息反应统计`);
+        }
+        
+        // 获取投票公告的反应用户（投票公告应该始终存在）
         if (voteAnnouncementMessageId && voteAnnouncementChannelId) {
             const announcementUsers = await getShitReactionUsers(client, voteAnnouncementChannelId, voteAnnouncementMessageId);
             console.log(`投票公告反应用户: ${announcementUsers.size}`);
-            
-            // 合并到总集合中（自动去重）
             announcementUsers.forEach(userId => allUsers.add(userId));
         }
         
@@ -92,14 +125,16 @@ async function getDeduplicatedReactionCount(client, voteData) {
         
         return {
             uniqueUsers: allUsers,
-            totalCount: allUsers.size
+            totalCount: allUsers.size,
+            targetMessageExists
         };
         
     } catch (error) {
         console.error('获取去重后反应数量时出错:', error);
         return {
             uniqueUsers: new Set(),
-            totalCount: 0
+            totalCount: 0,
+            targetMessageExists: false
         };
     }
 }
@@ -122,6 +157,7 @@ async function getShitReactionCount(client, guildId, channelId, messageId) {
     }
 }
 
+
 /**
  * 更新投票的反应数量（使用去重逻辑）
  * @param {Client} client - Discord客户端
@@ -135,16 +171,18 @@ async function updateVoteReactionCountWithDeduplication(client, voteData) {
         // 获取去重后的反应数量
         const reactionResult = await getDeduplicatedReactionCount(client, voteData);
         const newCount = reactionResult.totalCount;
+        const targetMessageExists = reactionResult.targetMessageExists;
         
         // 更新数据库
         const updated = await updateSelfModerationVote(guildId, targetMessageId, type, {
             lastReactionCount: newCount,
             currentReactionCount: newCount,
             lastChecked: new Date().toISOString(),
-            uniqueUserCount: newCount // 记录去重后的用户数量
+            uniqueUserCount: newCount,
+            targetMessageExists: targetMessageExists // 记录目标消息是否存在
         });
         
-        console.log(`更新投票 ${guildId}_${targetMessageId}_${type} 反应数量: ${newCount}`);
+        console.log(`更新投票 ${guildId}_${targetMessageId}_${type} 反应数量: ${newCount}, 目标消息存在: ${targetMessageExists}`);
         return updated;
         
     } catch (error) {
@@ -242,6 +280,7 @@ module.exports = {
     getShitReactionUsers,
     getDeduplicatedReactionCount,
     updateVoteReactionCountWithDeduplication,
+    checkMessageExists,
     checkReactionThreshold,
     batchCheckReactions,
     getReactionChangeDescription

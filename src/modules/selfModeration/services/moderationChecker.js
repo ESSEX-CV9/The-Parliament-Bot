@@ -47,12 +47,26 @@ async function checkActiveModerationVotes(client) {
  */
 async function processIndividualVote(client, vote) {
     try {
-        const { guildId, targetMessageId, type, endTime, currentReactionCount, executed } = vote;
+        const { guildId, targetMessageId, type, endTime, currentReactionCount, executed, targetMessageExists } = vote;
         const now = new Date();
         const voteEndTime = new Date(endTime);
         
         // 检查是否过期
         const isExpired = now >= voteEndTime;
+        
+        // 如果是删除投票且目标消息不存在，直接标记为完成
+        if (type === 'delete' && targetMessageExists === false) {
+            console.log(`删除投票 ${guildId}_${targetMessageId} 的目标消息已不存在，标记为完成`);
+            await updateSelfModerationVote(guildId, targetMessageId, type, {
+                status: 'completed',
+                completedAt: new Date().toISOString(),
+                completionReason: 'target_message_deleted'
+            });
+            
+            // 发送消息已被删除的通知
+            await sendTargetMessageDeletedNotification(client, vote);
+            return;
+        }
         
         // 检查是否达到执行阈值
         const thresholdCheck = checkReactionThreshold(currentReactionCount, type);
@@ -62,6 +76,7 @@ async function processIndividualVote(client, vote) {
         console.log(`- 是否过期: ${isExpired}`);
         console.log(`- 是否达到阈值: ${thresholdCheck.reached}`);
         console.log(`- 是否已执行: ${executed}`);
+        console.log(`- 目标消息存在: ${targetMessageExists}`);
         
         // 如果达到阈值且未执行过，执行惩罚
         if (thresholdCheck.reached && !executed) {
@@ -74,6 +89,32 @@ async function processIndividualVote(client, vote) {
         
     } catch (error) {
         console.error(`处理投票 ${vote.guildId}_${vote.targetMessageId}_${vote.type} 时出错:`, error);
+    }
+}
+
+/**
+ * 发送目标消息已被删除的通知
+ * @param {Client} client - Discord客户端
+ * @param {object} vote - 投票数据
+ */
+async function sendTargetMessageDeletedNotification(client, vote) {
+    try {
+        const { channelId, type, targetMessageUrl, currentReactionCount } = vote;
+        const channel = await client.channels.fetch(channelId);
+        if (!channel) return;
+        
+        const actionName = type === 'delete' ? '删除消息' : '禁言用户';
+        
+        const embed = new EmbedBuilder()
+            .setTitle('📝 目标消息已被删除')
+            .setDescription(`**${actionName}**投票的目标消息已被提前删除，投票自动结束。\n\n**原目标消息：** ${targetMessageUrl}\n**最终⚠️数量：** ${currentReactionCount}（去重后）\n**状态：** 目标已删除，投票终止`)
+            .setColor('#808080')
+            .setTimestamp();
+        
+        await channel.send({ embeds: [embed] });
+        
+    } catch (error) {
+        console.error('发送目标消息删除通知时出错:', error);
     }
 }
 
@@ -143,22 +184,27 @@ async function handleExpiredVote(client, vote) {
  */
 async function sendPunishmentNotification(client, vote, result) {
     try {
-        const { channelId, type, currentReactionCount, targetMessageUrl, voteAnnouncementMessageId } = vote;
+        const { channelId, type, currentReactionCount, targetMessageUrl, voteAnnouncementMessageId, targetMessageExists } = vote;
         const channel = await client.channels.fetch(channelId);
         if (!channel) return;
         
         let embed;
         if (type === 'delete' && result.success) {
-            let description = `由于⚠️反应数量达到 **${currentReactionCount}** 个（去重后），以下消息已被删除：\n\n**原消息链接：** ${targetMessageUrl}\n**消息作者：** <@${result.messageInfo.authorId}>\n**执行时间：** <t:${Math.floor(Date.now() / 1000)}:f>`;
+            let description;
+            if (result.alreadyDeleted) {
+                description = `目标消息已被提前删除，投票自动完成。\n\n**原消息链接：** ${targetMessageUrl}\n**最终⚠️数量：** ${currentReactionCount}（去重后）\n**状态：** 消息已被提前删除`;
+            } else {
+                description = `由于⚠️反应数量达到 **${currentReactionCount}** 个（去重后），以下消息已被删除：\n\n**原消息链接：** ${targetMessageUrl}\n**消息作者：** <@${result.messageInfo.authorId}>\n**执行时间：** <t:${Math.floor(Date.now() / 1000)}:f>`;
+            }
             
             if (voteAnnouncementMessageId) {
                 description += `\n\n💡 反应统计包含目标消息和投票公告的所有⚠️反应（同一用户只计算一次）`;
             }
             
             embed = new EmbedBuilder()
-                .setTitle('🗑️ 搬屎消息已删除')
+                .setTitle(result.alreadyDeleted ? '📝 消息已被提前删除' : '🗑️ 搬屎消息已删除')
                 .setDescription(description)
-                .setColor('#FF0000')
+                .setColor(result.alreadyDeleted ? '#808080' : '#FF0000')
                 .setTimestamp();
         } else if (type === 'mute' && result.success) {
             let description;
@@ -167,6 +213,11 @@ async function sendPunishmentNotification(client, vote, result) {
             } else {
                 const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
                 description = `由于⚠️反应数量达到 **${currentReactionCount}** 个（去重后），<@${result.userId}> 已在此频道被禁言：\n\n**禁言时长：** ${result.additionalDuration}\n**总禁言时长：** ${result.totalDuration}\n**解禁时间：** <t:${endTimestamp}:f>\n**目标消息：** ${targetMessageUrl}`;
+                
+                // 如果目标消息不存在，添加说明
+                if (!result.targetMessageExists) {
+                    description += `\n\n⚠️ 注意：目标消息已被删除，禁言结束后不会删除用户消息。`;
+                }
             }
             
             if (voteAnnouncementMessageId) {
