@@ -112,6 +112,26 @@ function writeCheckSettings(data) {
     }
 }
 
+// 保存表单权限设置
+async function saveFormPermissionSettings(guildId, permissionSettings) {
+    const settings = readSettings();
+    if (!settings[guildId]) {
+        settings[guildId] = {};
+    }
+    settings[guildId].formPermissions = permissionSettings;
+    writeSettings(settings);
+    console.log(`成功保存表单权限设置 - guildId: ${guildId}`, permissionSettings);
+    return permissionSettings;
+}
+
+// 获取表单权限设置
+async function getFormPermissionSettings(guildId) {
+    const settings = readSettings();
+    const result = settings[guildId]?.formPermissions;
+    console.log(`获取表单权限设置 - guildId: ${guildId}`, result);
+    return result;
+}
+
 // 读取审核设置数据
 function readReviewSettings() {
     try {
@@ -808,6 +828,8 @@ module.exports = {
     updateMessage,
     getAllMessages,
     getNextId,
+    saveFormPermissionSettings,
+    getFormPermissionSettings,
 
     // 审核相关导出
     saveCheckChannelSettings,

@@ -332,6 +332,94 @@ function getSelfModerationPermissionDeniedMessage(type) {
     return `❌ **权限不足**\n\n您没有权限使用 \`/${actionName}\` 指令。`;
 }
 
+
+/**
+ * 检查用户是否有权限使用表单
+ * @param {GuildMember} member - 服务器成员对象
+ * @param {object} formPermissionSettings - 表单权限设置
+ * @returns {boolean} 是否有权限
+ */
+function checkFormPermission(member, formPermissionSettings) {
+    try {
+        console.log(`\n=== 表单权限检查开始 ===`);
+        console.log(`用户: ${member.user.tag} (${member.user.id})`);
+        console.log(`服务器: ${member.guild.name} (${member.guild.id})`);
+        
+        // 安全检查
+        if (!member || !member.user || !member.guild || !member.roles) {
+            console.log(`❌ 成员对象不完整`);
+            console.log(`=== 表单权限检查结束 ===\n`);
+            return false;
+        }
+        
+        // 如果没有设置表单权限，默认所有人都可以使用
+        if (!formPermissionSettings || !formPermissionSettings.allowedRoles || formPermissionSettings.allowedRoles.length === 0) {
+            console.log(`✅ 表单权限检查 - 未设置权限限制，默认允许: ${member.user.tag}`);
+            console.log(`=== 表单权限检查结束 ===\n`);
+            return true;
+        }
+        
+        // 检查是否是服务器所有者（所有者总是有权限）
+        if (member.guild.ownerId === member.user.id) {
+            console.log(`✅ 表单权限检查 - 服务器所有者: ${member.user.tag}`);
+            console.log(`=== 表单权限检查结束 ===\n`);
+            return true;
+        }
+        
+        // 管理员也有权限
+        if (checkAdminPermission(member)) {
+            console.log(`✅ 表单权限检查 - 拥有管理员权限: ${member.user.tag}`);
+            console.log(`=== 表单权限检查结束 ===\n`);
+            return true;
+        }
+        
+        // 检查是否拥有指定的身份组
+        const userRoleIds = [];
+        if (member.roles.cache) {
+            member.roles.cache.forEach(role => {
+                userRoleIds.push(role.id);
+            });
+        }
+        
+        console.log(`用户身份组ID:`, userRoleIds);
+        console.log(`允许的身份组ID:`, formPermissionSettings.allowedRoles);
+        
+        // 检查是否有匹配的身份组
+        const hasMatchingRole = formPermissionSettings.allowedRoles.some(roleId => userRoleIds.includes(roleId));
+        
+        if (hasMatchingRole) {
+            console.log(`✅ 表单权限检查 - 拥有允许的身份组: ${member.user.tag}`);
+            console.log(`=== 表单权限检查结束 ===\n`);
+            return true;
+        }
+        
+        console.log(`❌ 表单权限检查 - 权限不足: ${member.user.tag}`);
+        console.log(`=== 表单权限检查结束 ===\n`);
+        return false;
+        
+    } catch (error) {
+        console.error('表单权限检查过程中出错:', error);
+        console.log(`=== 表单权限检查结束（出错） ===\n`);
+        return false;
+    }
+}
+
+/**
+ * 获取表单权限不足时的错误消息
+ * @param {array} allowedRoleNames - 允许的身份组名称数组
+ * @returns {string} 错误消息
+ */
+function getFormPermissionDeniedMessage(allowedRoleNames = []) {
+    let message = `❌ **权限不足**\n\n您没有权限使用此表单。\n\n**需要以下权限之一：**\n• 服务器所有者\n• 管理员权限`;
+    
+    if (allowedRoleNames.length > 0) {
+        message += `\n• 以下身份组之一：${allowedRoleNames.map(role => `\`${role}\``).join('、')}`;
+    }
+    
+    message += `\n\n请联系服务器管理员获取相应权限。`;
+    return message;
+}
+
 // 启动时打印配置信息
 console.log(`\n=== 权限管理模块已加载 ===`);
 console.log(`允许的身份组:`, ALLOWED_ROLE_NAMES);
@@ -348,6 +436,10 @@ module.exports = {
     getUserPermissionDetails,
     ALLOWED_ROLE_NAMES,
     ALLOWED_PERMISSIONS,
+
+    // 表单权限相关导出
+    checkFormPermission,
+    getFormPermissionDeniedMessage,
 
     // 自助管理权限相关导出
     checkSelfModerationPermission,

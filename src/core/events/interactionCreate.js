@@ -11,6 +11,9 @@ const { processCourtVote } = require('../../modules/court/services/courtVotingSy
 // 自助管理相关处理
 const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
 
+const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
+const { getFormPermissionSettings } = require('../../core/utils/database');
+
 async function interactionCreateHandler(interaction) {
     try {
         // 处理命令
@@ -26,6 +29,30 @@ async function interactionCreateHandler(interaction) {
         // 处理按钮点击
         if (interaction.isButton()) {
             if (interaction.customId === 'open_form') {
+                // 检查表单使用权限
+                const formPermissionSettings = await getFormPermissionSettings(interaction.guild.id);
+                const hasFormPermission = checkFormPermission(interaction.member, formPermissionSettings);
+                
+                if (!hasFormPermission) {
+                    // 获取身份组名称用于错误消息
+                    let allowedRoleNames = [];
+                    if (formPermissionSettings && formPermissionSettings.allowedRoles) {
+                        for (const roleId of formPermissionSettings.allowedRoles) {
+                            try {
+                                const role = await interaction.guild.roles.fetch(roleId);
+                                if (role) allowedRoleNames.push(role.name);
+                            } catch (error) {
+                                // 忽略错误，继续处理其他身份组
+                            }
+                        }
+                    }
+                    
+                    return interaction.reply({
+                        content: getFormPermissionDeniedMessage(allowedRoleNames),
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+                
                 // 打开表单模态窗口
                 const modal = createFormModal();
                 await interaction.showModal(modal);

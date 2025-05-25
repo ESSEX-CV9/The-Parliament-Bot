@@ -3,12 +3,38 @@ const { MessageFlags } = require('discord.js');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getSettings, saveMessage, getNextId } = require('../../../core/utils/database');
 const { getProposalDeadline } = require('../../../core/config/timeconfig');
+const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
+const { getFormPermissionSettings } = require('../../../core/utils/database');
+
 
 async function processFormSubmission(interaction) {
     // 立即defer以防止超时
     await interaction.deferReply({ ephemeral: true });
     
     try {
+        // 检查表单使用权限
+        const formPermissionSettings = await getFormPermissionSettings(interaction.guild.id);
+        const hasFormPermission = checkFormPermission(interaction.member, formPermissionSettings);
+        
+        if (!hasFormPermission) {
+            // 获取身份组名称用于错误消息
+            let allowedRoleNames = [];
+            if (formPermissionSettings && formPermissionSettings.allowedRoles) {
+                for (const roleId of formPermissionSettings.allowedRoles) {
+                    try {
+                        const role = await interaction.guild.roles.fetch(roleId);
+                        if (role) allowedRoleNames.push(role.name);
+                    } catch (error) {
+                        // 忽略错误，继续处理其他身份组
+                    }
+                }
+            }
+            
+            return interaction.editReply({
+                content: getFormPermissionDeniedMessage(allowedRoleNames)
+            });
+        }
+        
         // 获取表单数据
         const title = interaction.fields.getTextInputValue('title');
         const reason = interaction.fields.getTextInputValue('reason');
