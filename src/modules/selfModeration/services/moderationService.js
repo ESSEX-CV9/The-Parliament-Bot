@@ -263,11 +263,11 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         
         const embed = new EmbedBuilder()
             .setTitle(`🗳️ ${actionName}投票已启动`)
-            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加⚠️反应来表达支持。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${messageInfo.message.author.id}>\n**发起人：** <@${voteData.initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前⚠️数量：** ${initialReactionCount}\n**执行条件：** ${type === 'delete' ? '20个⚠️删除消息' : '20个⚠️开始禁言'}`)
+            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加⚠️反应来表达支持，**或者直接对本消息添加⚠️反应**。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${messageInfo.message.author.id}>\n**发起人：** <@${voteData.initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前⚠️数量：** ${initialReactionCount}\n**执行条件：** ${type === 'delete' ? '20个⚠️删除消息' : '20个⚠️开始禁言'}`)
             .setColor('#FFA500')
             .setTimestamp()
             .setFooter({
-                text: '⚠️反应数量会实时检查，达到条件后会自动执行相应操作'
+                text: '⚠️反应数量会实时检查，达到条件后会自动执行相应操作。可以对目标消息或本公告添加⚠️反应，同一用户只计算一次。'
             });
         
         // 检查是否有冲突的投票
@@ -281,7 +281,25 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
             });
         }
         
-        await interaction.channel.send({ embeds: [embed] });
+        // 发送投票公告
+        const announcementMessage = await interaction.channel.send({ embeds: [embed] });
+        
+        // 自动添加⚠️反应到公告消息
+        try {
+            await announcementMessage.react('⚠️');
+            console.log(`已为投票公告消息 ${announcementMessage.id} 添加⚠️反应`);
+        } catch (error) {
+            console.error('添加反应到投票公告失败:', error);
+        }
+        
+        // 更新投票数据，保存公告消息ID
+        const { updateSelfModerationVote } = require('../../../core/utils/database');
+        await updateSelfModerationVote(voteData.guildId, voteData.targetMessageId, type, {
+            voteAnnouncementMessageId: announcementMessage.id,
+            voteAnnouncementChannelId: interaction.channel.id
+        });
+        
+        console.log(`投票公告已发送，消息ID: ${announcementMessage.id}`);
         
     } catch (error) {
         console.error('发送投票通知时出错:', error);

@@ -3,32 +3,28 @@ const { updateSelfModerationVote } = require('../../../core/utils/database');
 const { DELETE_THRESHOLD, MUTE_DURATIONS } = require('../../../core/config/timeconfig');
 
 /**
- * 获取目标消息的⚠️反应数量
+ * 获取消息的⚠️反应用户列表
  * @param {Client} client - Discord客户端
- * @param {string} guildId - 服务器ID
  * @param {string} channelId - 频道ID
  * @param {string} messageId - 消息ID
- * @returns {number} ⚠️反应数量
+ * @returns {Set<string>} 用户ID集合
  */
-async function getShitReactionCount(client, guildId, channelId, messageId) {
+async function getShitReactionUsers(client, channelId, messageId) {
     try {
-        // 获取频道
         const channel = await client.channels.fetch(channelId);
         if (!channel) {
             console.error(`找不到频道: ${channelId}`);
-            return 0;
+            return new Set();
         }
         
-        // 获取消息
         const message = await channel.messages.fetch(messageId);
         if (!message) {
             console.error(`找不到消息: ${messageId}`);
-            return 0;
+            return new Set();
         }
         
-        // 查找⚠️反应 - 使用多种方式识别
+        // 查找⚠️反应
         const shitReaction = message.reactions.cache.find(reaction => {
-            // 尝试多种方式识别警告emoji
             return reaction.emoji.name === '⚠️' || 
                    reaction.emoji.name === '⚠' ||
                    reaction.emoji.name === 'warning' ||
@@ -38,18 +34,88 @@ async function getShitReactionCount(client, guildId, channelId, messageId) {
         
         if (!shitReaction) {
             console.log(`消息 ${messageId} 没有⚠️反应`);
-            console.log('可用的反应:', message.reactions.cache.map(r => ({
-                name: r.emoji.name,
-                unicode: r.emoji.unicode,
-                id: r.emoji.id
-            })));
-            return 0;
+            return new Set();
         }
         
-        const count = shitReaction.count;
-        console.log(`消息 ${messageId} 的⚠️反应数量: ${count}`);
-        return count;
+        // 获取所有添加了⚠️反应的用户
+        const users = await shitReaction.users.fetch();
+        const userIds = new Set();
         
+        users.forEach(user => {
+            if (!user.bot) { // 排除机器人
+                userIds.add(user.id);
+            }
+        });
+        
+        console.log(`消息 ${messageId} 的⚠️反应用户数量: ${userIds.size}`);
+        return userIds;
+        
+    } catch (error) {
+        console.error('获取⚠️反应用户时出错:', error);
+        return new Set();
+    }
+}
+
+/**
+ * 获取目标消息和投票公告的⚠️反应数量（去重后）
+ * @param {Client} client - Discord客户端
+ * @param {object} voteData - 投票数据
+ * @returns {object} {uniqueUsers: Set, totalCount: number}
+ */
+async function getDeduplicatedReactionCount(client, voteData) {
+    try {
+        const { 
+            guildId, 
+            targetChannelId, 
+            targetMessageId, 
+            voteAnnouncementChannelId, 
+            voteAnnouncementMessageId 
+        } = voteData;
+        
+        // 获取目标消息的反应用户
+        const targetUsers = await getShitReactionUsers(client, targetChannelId, targetMessageId);
+        console.log(`目标消息反应用户: ${targetUsers.size}`);
+        
+        // 合并用户集合（Set会自动去重）
+        const allUsers = new Set(targetUsers);
+        
+        // 如果有投票公告消息，也获取其反应用户
+        if (voteAnnouncementMessageId && voteAnnouncementChannelId) {
+            const announcementUsers = await getShitReactionUsers(client, voteAnnouncementChannelId, voteAnnouncementMessageId);
+            console.log(`投票公告反应用户: ${announcementUsers.size}`);
+            
+            // 合并到总集合中（自动去重）
+            announcementUsers.forEach(userId => allUsers.add(userId));
+        }
+        
+        console.log(`去重后总反应用户数: ${allUsers.size}`);
+        
+        return {
+            uniqueUsers: allUsers,
+            totalCount: allUsers.size
+        };
+        
+    } catch (error) {
+        console.error('获取去重后反应数量时出错:', error);
+        return {
+            uniqueUsers: new Set(),
+            totalCount: 0
+        };
+    }
+}
+
+/**
+ * 获取目标消息的⚠️反应数量（兼容旧函数）
+ * @param {Client} client - Discord客户端
+ * @param {string} guildId - 服务器ID
+ * @param {string} channelId - 频道ID
+ * @param {string} messageId - 消息ID
+ * @returns {number} ⚠️反应数量
+ */
+async function getShitReactionCount(client, guildId, channelId, messageId) {
+    try {
+        const users = await getShitReactionUsers(client, channelId, messageId);
+        return users.size;
     } catch (error) {
         console.error('获取⚠️反应数量时出错:', error);
         return 0;
@@ -57,27 +123,72 @@ async function getShitReactionCount(client, guildId, channelId, messageId) {
 }
 
 /**
- * 更新投票的反应数量
- * @param {string} guildId - 服务器ID
- * @param {string} targetMessageId - 目标消息ID
- * @param {string} type - 投票类型
- * @param {number} newCount - 新的反应数量
+ * 更新投票的反应数量（使用去重逻辑）
+ * @param {Client} client - Discord客户端
+ * @param {object} voteData - 投票数据
  * @returns {object|null} 更新后的投票数据
  */
-async function updateVoteReactionCount(guildId, targetMessageId, type, newCount) {
+async function updateVoteReactionCountWithDeduplication(client, voteData) {
     try {
+        const { guildId, targetMessageId, type } = voteData;
+        
+        // 获取去重后的反应数量
+        const reactionResult = await getDeduplicatedReactionCount(client, voteData);
+        const newCount = reactionResult.totalCount;
+        
+        // 更新数据库
         const updated = await updateSelfModerationVote(guildId, targetMessageId, type, {
             lastReactionCount: newCount,
             currentReactionCount: newCount,
-            lastChecked: new Date().toISOString()
+            lastChecked: new Date().toISOString(),
+            uniqueUserCount: newCount // 记录去重后的用户数量
         });
         
+        console.log(`更新投票 ${guildId}_${targetMessageId}_${type} 反应数量: ${newCount}`);
         return updated;
         
     } catch (error) {
         console.error('更新投票反应数量时出错:', error);
         return null;
     }
+}
+
+/**
+ * 批量检查多个投票的反应数量（使用去重逻辑）
+ * @param {Client} client - Discord客户端
+ * @param {Array} votes - 投票数组
+ * @returns {Array} 更新后的投票数组
+ */
+async function batchCheckReactions(client, votes) {
+    const updatedVotes = [];
+    
+    for (const vote of votes) {
+        try {
+            // 使用新的去重反应计数方法
+            const reactionResult = await getDeduplicatedReactionCount(client, vote);
+            const currentCount = reactionResult.totalCount;
+            
+            // 如果反应数量有变化，更新数据库
+            if (currentCount !== vote.currentReactionCount) {
+                const updatedVote = await updateVoteReactionCountWithDeduplication(client, vote);
+                if (updatedVote) {
+                    updatedVotes.push(updatedVote);
+                } else {
+                    // 如果更新失败，至少更新内存中的数据
+                    vote.currentReactionCount = currentCount;
+                    updatedVotes.push(vote);
+                }
+            } else {
+                updatedVotes.push(vote);
+            }
+            
+        } catch (error) {
+            console.error(`检查投票 ${vote.guildId}_${vote.targetMessageId}_${vote.type} 的反应时出错:`, error);
+            updatedVotes.push(vote);
+        }
+    }
+    
+    return updatedVotes;
 }
 
 /**
@@ -111,43 +222,6 @@ function checkReactionThreshold(reactionCount, type) {
 }
 
 /**
- * 批量检查多个投票的反应数量
- * @param {Client} client - Discord客户端
- * @param {Array} votes - 投票数组
- * @returns {Array} 更新后的投票数组
- */
-async function batchCheckReactions(client, votes) {
-    const updatedVotes = [];
-    
-    for (const vote of votes) {
-        try {
-            const { guildId, targetChannelId, targetMessageId, type } = vote;
-            
-            // 获取当前反应数量
-            const currentCount = await getShitReactionCount(client, guildId, targetChannelId, targetMessageId);
-            
-            // 如果反应数量有变化，更新数据库
-            if (currentCount !== vote.currentReactionCount) {
-                const updatedVote = await updateVoteReactionCount(guildId, targetMessageId, type, currentCount);
-                if (updatedVote) {
-                    updatedVotes.push(updatedVote);
-                } else {
-                    updatedVotes.push(vote);
-                }
-            } else {
-                updatedVotes.push(vote);
-            }
-            
-        } catch (error) {
-            console.error(`检查投票 ${vote.guildId}_${vote.targetMessageId}_${vote.type} 的反应时出错:`, error);
-            updatedVotes.push(vote);
-        }
-    }
-    
-    return updatedVotes;
-}
-
-/**
  * 获取反应数量变化的描述
  * @param {number} oldCount - 旧的反应数量
  * @param {number} newCount - 新的反应数量
@@ -165,7 +239,9 @@ function getReactionChangeDescription(oldCount, newCount) {
 
 module.exports = {
     getShitReactionCount,
-    updateVoteReactionCount,
+    getShitReactionUsers,
+    getDeduplicatedReactionCount,
+    updateVoteReactionCountWithDeduplication,
     checkReactionThreshold,
     batchCheckReactions,
     getReactionChangeDescription

@@ -52,7 +52,9 @@ async function createOrMergeVote(voteData) {
             currentReactionCount: 0,
             lastReactionCount: 0,
             executed: false,
-            executedActions: [] // 记录已执行的惩罚
+            executedActions: [], // 记录已执行的惩罚
+            voteAnnouncementMessageId: null, // 投票公告消息ID
+            voteAnnouncementChannelId: channelId // 投票公告所在频道ID
         };
         
         const savedVote = await saveSelfModerationVote(newVoteData);

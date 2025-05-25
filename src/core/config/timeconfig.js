@@ -17,7 +17,7 @@ const TEST_CONFIG = {
     // 法庭投票系统
     COURT_VOTE_DURATION_MINUTES: 1,         // 投票持续时间：5分钟
     COURT_VOTE_PUBLIC_DELAY_MINUTES: 1,     // 公开票数延迟：2分钟
-    COURT_VOTE_CHECK_INTERVAL_MINUTES: 0.5, // 投票检查间隔：30秒
+    COURT_VOTE_CHECK_INTERVAL_MINUTES: 0.25, // 投票检查间隔：30秒
 
     // 自助管理系统
     SELF_MODERATION_VOTE_DURATION_MINUTES: 2,    // 投票持续时间：2分钟（测试）
@@ -41,7 +41,7 @@ const PRODUCTION_CONFIG = {
 
     // 自助管理系统
     SELF_MODERATION_VOTE_DURATION_MINUTES: 10,   // 投票持续时间：10分钟
-    SELF_MODERATION_CHECK_INTERVAL_MINUTES: 1,   // 检查间隔：1分钟
+    SELF_MODERATION_CHECK_INTERVAL_MINUTES: 0.5,   // 检查间隔：1分钟
 };
 
 // 禁言时长配置（分钟）
