@@ -18,6 +18,7 @@ const COURT_APPLICATIONS_FILE = path.join(DATA_DIR, 'courtApplications.json');
 const COURT_VOTES_FILE = path.join(DATA_DIR, 'courtVotes.json');
 const SELF_MODERATION_SETTINGS_FILE = path.join(DATA_DIR, 'selfModerationSettings.json');
 const SELF_MODERATION_VOTES_FILE = path.join(DATA_DIR, 'selfModerationVotes.json');
+const ARCHIVE_SETTINGS_FILE = path.join(DATA_DIR, 'archiveSettings.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -50,6 +51,9 @@ if (!fs.existsSync(SELF_MODERATION_SETTINGS_FILE)) {
 }
 if (!fs.existsSync(SELF_MODERATION_VOTES_FILE)) {
     fs.writeFileSync(SELF_MODERATION_VOTES_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(ARCHIVE_SETTINGS_FILE)) {
+    fs.writeFileSync(ARCHIVE_SETTINGS_FILE, '{}', 'utf8');
 }
 
 // 读取设置数据
@@ -839,6 +843,42 @@ async function checkMessageTimeLimit(guildId, messageTimestamp) {
     };
 }
 
+// 添加读取和写入归档设置的基础函数
+function readArchiveSettings() {
+    try {
+        const data = fs.readFileSync(ARCHIVE_SETTINGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取归档设置文件失败:', err);
+        return {};
+    }
+}
+
+function writeArchiveSettings(data) {
+    try {
+        fs.writeFileSync(ARCHIVE_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入归档设置文件失败:', err);
+    }
+}
+
+// 保存归档频道设置
+async function saveArchiveChannelSettings(guildId, archiveSettings) {
+    const settings = readArchiveSettings();
+    settings[guildId] = archiveSettings;
+    writeArchiveSettings(settings);
+    console.log(`成功保存归档频道设置 - guildId: ${guildId}`, archiveSettings);
+    return archiveSettings;
+}
+
+// 获取归档频道设置
+async function getArchiveChannelSettings(guildId) {
+    const settings = readArchiveSettings();
+    const result = settings[guildId];
+    console.log(`获取归档频道设置 - guildId: ${guildId}`, result);
+    return result;
+}
+
 
 module.exports = {
     saveSettings,
@@ -899,5 +939,8 @@ module.exports = {
     // 消息时间限制相关导出
     saveMessageTimeLimit,
     getMessageTimeLimit,
-    checkMessageTimeLimit
+    checkMessageTimeLimit,
+    // 归档相关导出
+    saveArchiveChannelSettings,
+    getArchiveChannelSettings,
 };

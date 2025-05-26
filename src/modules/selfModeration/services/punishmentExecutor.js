@@ -2,6 +2,7 @@
 const { updateSelfModerationVote } = require('../../../core/utils/database');
 const { calculateMuteDuration, calculateAdditionalMuteDuration, formatDuration } = require('../utils/timeCalculator');
 const { DELETE_THRESHOLD } = require('../../../core/config/timeconfig');
+const { archiveDeletedMessage } = require('./archiveService');
 
 /**
  * 执行删除消息惩罚
@@ -40,56 +41,25 @@ async function executeDeleteMessage(client, voteData) {
             };
         }
         
-        // 获取频道和消息
-        const channel = await client.channels.fetch(targetChannelId);
-        if (!channel) {
-            throw new Error(`找不到频道: ${targetChannelId}`);
-        }
-        
-        const message = await channel.messages.fetch(targetMessageId);
-        if (!message) {
-            // 消息在执行过程中被删除了
-            console.log(`消息 ${targetMessageId} 在执行过程中被删除`);
-            return {
-                success: true,
-                action: 'delete',
-                alreadyDeleted: true,
-                reactionCount: currentReactionCount
-            };
-        }
-        
-        // 保存消息信息以便后续使用
-        const messageInfo = {
-            content: message.content,
-            author: message.author.tag,
-            authorId: message.author.id,
-            url: `https://discord.com/channels/${guildId}/${targetChannelId}/${targetMessageId}`
-        };
-        
-        // 删除消息
-        await message.delete();
+        // 删除消息并归档
+        const deleteResult = await deleteAndArchiveMessage(client, voteData);
         
         // 更新投票状态
         await updateSelfModerationVote(guildId, targetMessageId, 'delete', {
             status: 'completed',
-            executed: true,
+            executed: deleteResult.success,
             executedAt: new Date().toISOString(),
+            archived: deleteResult.archived,
             executedActions: [{
                 type: 'delete',
                 timestamp: new Date().toISOString(),
                 reactionCount: currentReactionCount,
-                messageInfo
+                messageInfo: deleteResult.messageInfo,
+                archived: deleteResult.archived
             }]
         });
         
-        console.log(`成功删除消息: ${targetMessageId}`);
-        
-        return {
-            success: true,
-            action: 'delete',
-            messageInfo,
-            reactionCount: currentReactionCount
-        };
+        return deleteResult;
         
     } catch (error) {
         console.error('执行删除消息时出错:', error);
@@ -109,6 +79,85 @@ async function executeDeleteMessage(client, voteData) {
             success: false,
             action: 'delete',
             error: error.message
+        };
+    }
+}
+
+/**
+ * 删除消息并归档的通用函数
+ * @param {Client} client - Discord客户端
+ * @param {object} voteData - 投票数据
+ * @returns {object} 执行结果
+ */
+async function deleteAndArchiveMessage(client, voteData) {
+    try {
+        const { guildId, targetChannelId, targetMessageId, currentReactionCount } = voteData;
+        
+        // 获取频道和消息
+        const channel = await client.channels.fetch(targetChannelId);
+        if (!channel) {
+            throw new Error(`找不到频道: ${targetChannelId}`);
+        }
+        
+        const message = await channel.messages.fetch(targetMessageId);
+        if (!message) {
+            // 消息在执行过程中被删除了
+            console.log(`消息 ${targetMessageId} 在执行过程中被删除`);
+            return {
+                success: true,
+                action: 'delete',
+                alreadyDeleted: true,
+                reactionCount: currentReactionCount,
+                archived: false
+            };
+        }
+        
+        // 在删除前先进行归档
+        const messageInfo = {
+            content: message.content,
+            author: message.author.tag,
+            authorId: message.author.id,
+            messageId: message.id,
+            url: `https://discord.com/channels/${guildId}/${targetChannelId}/${targetMessageId}`,
+            attachments: message.attachments.map(att => ({
+                name: att.name,
+                url: att.url,
+                size: att.size
+            })),
+            embeds: message.embeds
+        };
+        
+        // 尝试归档消息
+        let archiveResult = false;
+        try {
+            archiveResult = await archiveDeletedMessage(client, messageInfo, voteData);
+            if (archiveResult) {
+                console.log(`消息 ${targetMessageId} 已成功归档`);
+            }
+        } catch (archiveError) {
+            console.error('归档消息失败，但继续执行删除:', archiveError);
+        }
+        
+        // 删除消息
+        await message.delete();
+        
+        console.log(`成功删除消息: ${targetMessageId}，归档状态: ${archiveResult}`);
+        
+        return {
+            success: true,
+            action: 'delete',
+            messageInfo,
+            reactionCount: currentReactionCount,
+            archived: archiveResult
+        };
+        
+    } catch (error) {
+        console.error('删除并归档消息时出错:', error);
+        return {
+            success: false,
+            action: 'delete',
+            error: error.message,
+            archived: false
         };
     }
 }
@@ -141,7 +190,7 @@ function getPermissionChannel(channel) {
 }
 
 /**
- * 执行禁言用户惩罚
+ * 执行禁言用户惩罚（只禁言，不删除消息）
  * @param {Client} client - Discord客户端
  * @param {object} voteData - 投票数据
  * @returns {object} 执行结果
@@ -218,8 +267,8 @@ async function executeMuteUser(client, voteData) {
             level: muteInfo.newLevel,
             endTime: muteEndTime.toISOString(),
             channelId: targetChannelId,
-            permissionChannelId: permissionChannel.id, // 记录实际设置权限的频道
-            targetMessageExists // 记录当时目标消息是否存在
+            permissionChannelId: permissionChannel.id,
+            targetMessageExists
         };
         
         // 更新投票状态
@@ -228,6 +277,7 @@ async function executeMuteUser(client, voteData) {
             executedActions: newExecutedActions,
             lastExecuted: new Date().toISOString(),
             executed: true
+            // 注意：这里不设置 status: 'completed'，因为投票还没结束
         });
         
         console.log(`成功禁言用户 ${targetUserId} ${muteInfo.additionalDuration}分钟`);
@@ -237,17 +287,6 @@ async function executeMuteUser(client, voteData) {
             try {
                 await permissionChannel.permissionOverwrites.delete(member);
                 console.log(`已解除用户 ${targetUserId} 在频道 ${permissionChannel.id} 的禁言`);
-                
-                // 只有当目标消息存在时才尝试删除
-                if (targetMessageExists) {
-                    // 延迟一点时间后检查是否需要删除用户消息
-                    setTimeout(() => {
-                        checkAndDeleteUserMessage(client, voteData);
-                    }, 5000);
-                } else {
-                    console.log(`目标消息不存在，跳过删除用户消息的步骤`);
-                }
-                
             } catch (error) {
                 console.error(`解除禁言时出错:`, error);
             }
@@ -335,42 +374,47 @@ async function delayedDeleteMessage(client, deleteVoteData, muteVoteData) {
 }
 
 /**
- * 检查是否需要删除用户消息（禁言结束后）
+ * 投票结束后删除用户消息（禁言投票专用）
  * @param {Client} client - Discord客户端
  * @param {object} voteData - 投票数据
+ * @returns {object} 删除结果
  */
-async function checkAndDeleteUserMessage(client, voteData) {
+async function deleteMessageAfterVoteEnd(client, voteData) {
     try {
         const { guildId, targetChannelId, targetMessageId, targetMessageExists } = voteData;
+        
+        console.log(`投票结束，开始删除消息: ${targetMessageId}, 消息存在: ${targetMessageExists}`);
         
         // 如果目标消息本来就不存在，不需要删除
         if (targetMessageExists === false) {
             console.log(`目标消息 ${targetMessageId} 本来就不存在，无需删除`);
-            return;
+            return {
+                success: true,
+                alreadyDeleted: true,
+                archived: false
+            };
         }
         
-        // 检查消息是否还存在
-        const channel = await client.channels.fetch(targetChannelId);
-        if (!channel) return;
-        
-        const message = await channel.messages.fetch(targetMessageId).catch(() => null);
-        if (!message) {
-            console.log(`消息 ${targetMessageId} 已不存在，无需删除`);
-            return;
-        }
-        
-        // 删除消息
-        await message.delete();
-        console.log(`禁言结束后删除了用户消息: ${targetMessageId}`);
+        // 使用通用的删除并归档函数
+        const deleteResult = await deleteAndArchiveMessage(client, voteData);
         
         // 更新投票记录
         await updateSelfModerationVote(guildId, targetMessageId, 'mute', {
-            messageDeleted: true,
+            messageDeleted: deleteResult.success,
+            messageArchived: deleteResult.archived,
             messageDeletedAt: new Date().toISOString()
         });
         
+        console.log(`投票结束后删除消息结果: 成功=${deleteResult.success}, 归档=${deleteResult.archived}`);
+        return deleteResult;
+        
     } catch (error) {
-        console.error('删除用户消息时出错:', error);
+        console.error('投票结束后删除用户消息时出错:', error);
+        return {
+            success: false,
+            error: error.message,
+            archived: false
+        };
     }
 }
 
@@ -378,6 +422,7 @@ module.exports = {
     executeDeleteMessage,
     executeMuteUser,
     delayedDeleteMessage,
-    checkAndDeleteUserMessage,
-    getCurrentMuteDuration
+    deleteMessageAfterVoteEnd, // 新增导出
+    getCurrentMuteDuration,
+    deleteAndArchiveMessage
 };

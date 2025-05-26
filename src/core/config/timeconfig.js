@@ -2,7 +2,7 @@
 // 时间配置文件 - 方便测试时快速调整时间
 
 // 是否为测试模式（true = 测试模式，时间大幅缩短；false = 生产模式，正常时间）
-const TEST_MODE = false; // 改为 false 可切换到测试模式
+const TEST_MODE = true; // 改为 false 可切换到测试模式
 
 // 测试模式下的时间设置（以分钟为单位，方便测试）
 const TEST_CONFIG = {
@@ -46,15 +46,15 @@ const PRODUCTION_CONFIG = {
 
 // 禁言时长配置（分钟）
 const MUTE_DURATIONS = {
-    LEVEL_1: { threshold: 20, duration: 10 },   // 20个⚠️ -> 20分钟
-    LEVEL_2: { threshold: 40, duration: 20 },   // 40个⚠️ -> 30分钟  
+    LEVEL_1: { threshold: 1, duration: 10 },   // 20个⚠️ -> 20分钟
+    LEVEL_2: { threshold: 2, duration: 20 },   // 40个⚠️ -> 30分钟  
     LEVEL_3: { threshold: 60, duration: 40 },   // 60个⚠️ -> 1小时
     LEVEL_4: { threshold: 80, duration: 60 },  // 80个⚠️ -> 3小时
     LEVEL_5: { threshold: 100, duration: 120 }  // 100个⚠️ -> 6小时
 };
 
 // 删除消息阈值
-const DELETE_THRESHOLD = 20; // 20个⚠️删除消息
+const DELETE_THRESHOLD = 1; // 20个⚠️删除消息
 
 // 获取当前配置
 function getTimeConfig() {

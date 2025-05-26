@@ -47,6 +47,8 @@ const setSelfModerationChannelsCommand = require('../modules/selfModeration/comm
 const setSelfModerationCooldownCommand = require('../modules/selfModeration/commands/setSelfModerationCooldown');
 const setMessageTimeLimitCommand = require('../modules/selfModeration/commands/setMessageTimeLimit');
 const checkMyCooldownCommand = require('../modules/selfModeration/commands/checkMyCooldown');
+const setArchiveChannelCommand = require('../modules/selfModeration/commands/setArchiveChannel');
+
 
 const client = new Client({ 
     intents: [
@@ -90,6 +92,7 @@ client.commands.set(setSelfModerationChannelsCommand.data.name, setSelfModeratio
 client.commands.set(setSelfModerationCooldownCommand.data.name, setSelfModerationCooldownCommand);
 client.commands.set(setMessageTimeLimitCommand.data.name, setMessageTimeLimitCommand);
 client.commands.set(checkMyCooldownCommand.data.name, checkMyCooldownCommand);
+client.commands.set(setArchiveChannelCommand.data.name, setArchiveChannelCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
