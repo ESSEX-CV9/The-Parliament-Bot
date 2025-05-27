@@ -6,6 +6,7 @@ const { parseMessageUrl, isMessageFromSameGuild, formatMessageLink } = require('
 const { validateChannel, checkBotPermissions } = require('../utils/channelValidator');
 const { createOrMergeVote, checkConflictingVote, formatVoteInfo } = require('./votingManager');
 const { getShitReactionCount } = require('./reactionTracker');
+const { getSelfModerationVoteEndTime, DELETE_THRESHOLD, MUTE_DURATIONS, getCurrentTimeMode } = require('../../../core/config/timeconfig');
 
 /**
  * 处理自助管理交互（按钮点击和模态窗口提交）
@@ -291,13 +292,25 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
             voteData.targetMessageId
         );
         
+        // 🔥 动态获取阈值配置
+        const deleteThreshold = DELETE_THRESHOLD;
+        const muteThreshold = MUTE_DURATIONS.LEVEL_1.threshold; // 最低禁言阈值
+        
+        // 🔥 获取当前时段模式
+        const currentTimeMode = getCurrentTimeMode();
+        
+        // 🔥 构建执行条件文本
+        const executionCondition = type === 'delete' 
+            ? `${deleteThreshold}个⚠️删除消息 (${currentTimeMode})` 
+            : `${muteThreshold}个⚠️开始禁言 (${currentTimeMode})`;
+        
         const embed = new EmbedBuilder()
             .setTitle(`🗳️ ${actionName}投票已启动`)
-            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加⚠️反应来表达支持，**或者直接对本消息添加⚠️反应**。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${targetUserId}>\n**发起人：** <@${initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前⚠️数量：** ${initialReactionCount}\n**执行条件：** ${type === 'delete' ? '15个⚠️删除消息' : '20个⚠️开始禁言'}`)
+            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加⚠️反应来表达支持，**或者直接对本消息添加⚠️反应**。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${targetUserId}>\n**发起人：** <@${initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前⚠️数量：** ${initialReactionCount}\n**执行条件：** ${executionCondition}`)
             .setColor('#FFA500')
             .setTimestamp()
             .setFooter({
-                text: '⚠️反应数量会实时检查，达到条件后会自动执行相应操作。可以对目标消息或本公告添加⚠️反应，同一用户只计算一次。'
+                text: '⚠️反应数量会定时检查，达到条件后会自动执行相应操作。可以对目标消息或本公告添加⚠️反应，同一用户只计算一次。'
             });
         
         // 检查是否有冲突的投票

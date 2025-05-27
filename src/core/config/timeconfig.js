@@ -2,7 +2,7 @@
 // 时间配置文件 - 方便测试时快速调整时间
 
 // 是否为测试模式（true = 测试模式，时间大幅缩短；false = 生产模式，正常时间）
-const TEST_MODE = true; // 改为 false 可切换到测试模式
+const TEST_MODE = false; // 改为 false 可切换到测试模式
 
 // 测试模式下的时间设置（以分钟为单位，方便测试）
 const TEST_CONFIG = {
@@ -44,17 +44,111 @@ const PRODUCTION_CONFIG = {
     SELF_MODERATION_CHECK_INTERVAL_MINUTES: 0.5,   // 检查间隔：1分钟
 };
 
-// 禁言时长配置（分钟）
-const MUTE_DURATIONS = {
-    LEVEL_1: { threshold: 1, duration: 10 },   // 20个⚠️ -> 20分钟
-    LEVEL_2: { threshold: 2, duration: 20 },   // 40个⚠️ -> 30分钟  
+// 白天/夜晚模式配置
+const DAY_NIGHT_CONFIG = {
+    // 北京时间白天时段（6:00 - 次日3:00 为白天模式）
+    DAY_START_HOUR: 6,   // 白天开始时间（6点）
+    DAY_END_HOUR: 3,     // 白天结束时间（次日3点）- 如果小于开始时间，表示跨越午夜
+    
+    // 夜晚模式的调整系数
+    NIGHT_DELETE_THRESHOLD_MULTIPLIER: 0.7, // 夜晚删除阈值 = 白天 * 0.7
+    NIGHT_MUTE_THRESHOLD_MULTIPLIER: 0.75,   // 夜晚禁言阈值 = 白天 * 0.75
+};
+
+// 判断当前是否为白天（基于北京时间）
+function isDayTime() {
+    const now = new Date();
+    // 转换为北京时间 (UTC+8)
+    const beijingTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+    const hour = beijingTime.getUTCHours();
+    
+    const startHour = DAY_NIGHT_CONFIG.DAY_START_HOUR;
+    const endHour = DAY_NIGHT_CONFIG.DAY_END_HOUR;
+    
+    // 如果结束时间小于开始时间，说明跨越了午夜
+    if (endHour < startHour) {
+        // 跨越午夜的情况：例如 6:00 到次日 3:00
+        // 白天时段包括：[6-23] 和 [0-2]
+        return hour >= startHour || hour < endHour;
+    } else {
+        // 普通情况：例如 6:00 到 22:00
+        return hour >= startHour && hour < endHour;
+    }
+}
+
+// 获取当前时段标识
+function getCurrentTimeMode() {
+    return isDayTime() ? '☀️ 白天模式' : '🌙 夜晚模式';
+}
+
+// 获取时间段的描述文字
+function getTimeRangeDescription() {
+    const startHour = DAY_NIGHT_CONFIG.DAY_START_HOUR;
+    const endHour = DAY_NIGHT_CONFIG.DAY_END_HOUR;
+    
+    if (endHour < startHour) {
+        // 跨越午夜
+        return `${startHour}:00 - 次日${endHour}:00`;
+    } else {
+        // 同一天
+        return `${startHour}:00 - ${endHour}:00`;
+    }
+}
+
+// 禁言时长配置（分钟）- 原始配置保持不变
+const BASE_MUTE_DURATIONS = {
+    LEVEL_1: { threshold: 20, duration: 10 },   // 20个⚠️ -> 20分钟
+    LEVEL_2: { threshold: 40, duration: 20 },   // 40个⚠️ -> 30分钟  
     LEVEL_3: { threshold: 60, duration: 40 },   // 60个⚠️ -> 1小时
     LEVEL_4: { threshold: 80, duration: 60 },  // 80个⚠️ -> 3小时
     LEVEL_5: { threshold: 100, duration: 120 }  // 100个⚠️ -> 6小时
 };
 
-// 删除消息阈值
-const DELETE_THRESHOLD = 1; // 20个⚠️删除消息
+// 删除消息阈值 - 原始配置
+const BASE_DELETE_THRESHOLD = 15; // 15个⚠️删除消息
+
+// 动态获取当前时段的禁言配置
+const MUTE_DURATIONS = new Proxy(BASE_MUTE_DURATIONS, {
+    get(target, prop) {
+        if (!(prop in target)) return target[prop];
+        
+        const level = target[prop];
+        const isDay = isDayTime();
+        
+        return {
+            threshold: isDay ? level.threshold : Math.floor(level.threshold * DAY_NIGHT_CONFIG.NIGHT_MUTE_THRESHOLD_MULTIPLIER),
+            duration: level.duration // 禁言时长不变，只调整触发阈值
+        };
+    }
+});
+
+// 动态获取当前时段的删除阈值
+Object.defineProperty(global, 'DELETE_THRESHOLD', {
+    get() {
+        const isDay = isDayTime();
+        return isDay ? BASE_DELETE_THRESHOLD : Math.floor(BASE_DELETE_THRESHOLD * DAY_NIGHT_CONFIG.NIGHT_DELETE_THRESHOLD_MULTIPLIER);
+    }
+});
+
+// 为了兼容直接引用，也提供常量形式
+const DELETE_THRESHOLD = new Proxy({}, {
+    get(target, prop) {
+        const isDay = isDayTime();
+        const value = isDay ? BASE_DELETE_THRESHOLD : Math.floor(BASE_DELETE_THRESHOLD * DAY_NIGHT_CONFIG.NIGHT_DELETE_THRESHOLD_MULTIPLIER);
+        
+        if (prop === 'valueOf' || prop === Symbol.toPrimitive) {
+            return () => value;
+        }
+        
+        return value;
+    },
+    has(target, prop) {
+        return true;
+    },
+    ownKeys(target) {
+        return ['valueOf', Symbol.toPrimitive];
+    }
+});
 
 // 获取当前配置
 function getTimeConfig() {
@@ -142,9 +236,16 @@ function getCheckIntervals() {
 // 打印当前时间配置
 function printTimeConfig() {
     const mode = TEST_MODE ? '🧪 测试模式' : '🚀 生产模式';
+    const timeMode = getCurrentTimeMode();
     const config = getTimeConfig();
     
     console.log(`\n=== 时间配置 - ${mode} ===`);
+    console.log(`⏰ 当前时段: ${timeMode}`);
+    
+    // 显示当前删除阈值和禁言阈值 - 修复这里
+    const currentDeleteThreshold = isDayTime() ? BASE_DELETE_THRESHOLD : Math.floor(BASE_DELETE_THRESHOLD * DAY_NIGHT_CONFIG.NIGHT_DELETE_THRESHOLD_MULTIPLIER);
+    console.log(`🗑️ 当前删除阈值: ${currentDeleteThreshold}`);
+    console.log(`🔇 当前禁言阈值: Level1=${MUTE_DURATIONS.LEVEL_1.threshold}, Level2=${MUTE_DURATIONS.LEVEL_2.threshold}, Level3=${MUTE_DURATIONS.LEVEL_3.threshold}`);
     
     if (TEST_MODE) {
         console.log(`📝 提案截止时间: ${config.PROPOSAL_DEADLINE_MINUTES} 分钟`);
@@ -162,6 +263,11 @@ function printTimeConfig() {
         console.log(`⏰ 检查间隔: 提案=${config.PROPOSAL_CHECK_INTERVAL_MINUTES}分钟, 申请=${config.COURT_APPLICATION_CHECK_INTERVAL_MINUTES}分钟, 投票=${config.COURT_VOTE_CHECK_INTERVAL_MINUTES}分钟, 自助管理=${config.SELF_MODERATION_CHECK_INTERVAL_MINUTES}分钟`);
     }
     
+    console.log(`\n--- 白天/夜晚配置 ---`);
+    console.log(`☀️ 白天时段: ${getTimeRangeDescription()} (北京时间)`);
+    console.log(`🌙 夜晚时段: ${DAY_NIGHT_CONFIG.DAY_END_HOUR < DAY_NIGHT_CONFIG.DAY_START_HOUR ? `${DAY_NIGHT_CONFIG.DAY_END_HOUR}:00 - ${DAY_NIGHT_CONFIG.DAY_START_HOUR}:00` : `${DAY_NIGHT_CONFIG.DAY_END_HOUR}:00 - ${DAY_NIGHT_CONFIG.DAY_START_HOUR}:00`} (北京时间)`);
+    console.log(`🗑️ 删除阈值: 白天=${BASE_DELETE_THRESHOLD}, 夜晚=${Math.floor(BASE_DELETE_THRESHOLD * DAY_NIGHT_CONFIG.NIGHT_DELETE_THRESHOLD_MULTIPLIER)}`);
+    console.log(`🔇 禁言阈值调整: 夜晚为白天的${(DAY_NIGHT_CONFIG.NIGHT_MUTE_THRESHOLD_MULTIPLIER * 100)}%`);
     console.log(`===============================\n`);
 }
 
@@ -176,5 +282,10 @@ module.exports = {
     getCheckIntervals,
     printTimeConfig,
     MUTE_DURATIONS,
-    DELETE_THRESHOLD
+    DELETE_THRESHOLD,
+    // 新增导出
+    isDayTime,
+    getCurrentTimeMode,
+    DAY_NIGHT_CONFIG,
+    getTimeRangeDescription
 };
