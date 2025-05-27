@@ -55,6 +55,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions, // 需要这个intent来监控reaction
+        GatewayIntentBits.MessageContent,
     ]
 });
 
