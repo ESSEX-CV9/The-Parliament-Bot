@@ -879,6 +879,38 @@ async function getArchiveChannelSettings(guildId) {
     return result;
 }
 
+// 保存归档查看身份组设置
+async function saveArchiveViewRoleSettings(guildId, roleId) {
+    const settings = readArchiveSettings();
+    if (!settings[guildId]) {
+        settings[guildId] = {};
+    }
+    settings[guildId].viewRoleId = roleId;
+    settings[guildId].updatedAt = new Date().toISOString();
+    writeArchiveSettings(settings);
+    console.log(`成功保存归档查看身份组设置 - guildId: ${guildId}, roleId: ${roleId}`);
+    return settings[guildId];
+}
+
+// 获取归档查看身份组设置
+async function getArchiveViewRoleSettings(guildId) {
+    const settings = readArchiveSettings();
+    const result = settings[guildId]?.viewRoleId;
+    console.log(`获取归档查看身份组设置 - guildId: ${guildId}, roleId: ${result}`);
+    return result;
+}
+
+// 清除归档查看身份组设置
+async function clearArchiveViewRoleSettings(guildId) {
+    const settings = readArchiveSettings();
+    if (settings[guildId]) {
+        delete settings[guildId].viewRoleId;
+        settings[guildId].updatedAt = new Date().toISOString();
+        writeArchiveSettings(settings);
+    }
+    console.log(`成功清除归档查看身份组设置 - guildId: ${guildId}`);
+    return true;
+}
 
 module.exports = {
     saveSettings,
@@ -943,4 +975,7 @@ module.exports = {
     // 归档相关导出
     saveArchiveChannelSettings,
     getArchiveChannelSettings,
+    saveArchiveViewRoleSettings,
+    getArchiveViewRoleSettings,
+    clearArchiveViewRoleSettings,
 };

@@ -48,6 +48,8 @@ const setSelfModerationCooldownCommand = require('../modules/selfModeration/comm
 const setMessageTimeLimitCommand = require('../modules/selfModeration/commands/setMessageTimeLimit');
 const checkMyCooldownCommand = require('../modules/selfModeration/commands/checkMyCooldown');
 const setArchiveChannelCommand = require('../modules/selfModeration/commands/setArchiveChannel');
+const setArchiveViewRoleCommand = require('../modules/selfModeration/commands/setArchiveViewRole');
+const getArchiveViewPermissionCommand = require('../modules/selfModeration/commands/getArchiveViewPermission');
 
 
 const client = new Client({ 
@@ -94,6 +96,8 @@ client.commands.set(setSelfModerationCooldownCommand.data.name, setSelfModeratio
 client.commands.set(setMessageTimeLimitCommand.data.name, setMessageTimeLimitCommand);
 client.commands.set(checkMyCooldownCommand.data.name, checkMyCooldownCommand);
 client.commands.set(setArchiveChannelCommand.data.name, setArchiveChannelCommand);
+client.commands.set(setArchiveViewRoleCommand.data.name, setArchiveViewRoleCommand);
+client.commands.set(getArchiveViewPermissionCommand.data.name, getArchiveViewPermissionCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
