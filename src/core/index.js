@@ -13,6 +13,7 @@ const { interactionCreateHandler } = require('./events/interactionCreate')
 const { startProposalChecker } = require('../modules/proposal/services/proposalChecker');
 const { startCourtChecker } = require('../modules/court/services/courtChecker');
 const { startSelfModerationChecker } = require('../modules/selfModeration/services/moderationChecker');
+const { startAttachmentCleanupScheduler } = require('../modules/selfModeration/services/archiveService');
 const { printTimeConfig } = require('./config/timeconfig');
 
 // 导入命令
@@ -50,6 +51,7 @@ const checkMyCooldownCommand = require('../modules/selfModeration/commands/check
 const setArchiveChannelCommand = require('../modules/selfModeration/commands/setArchiveChannel');
 const setArchiveViewRoleCommand = require('../modules/selfModeration/commands/setArchiveViewRole');
 const getArchiveViewPermissionCommand = require('../modules/selfModeration/commands/getArchiveViewPermission');
+const manageAttachmentCleanupCommand = require('../modules/selfModeration/commands/manageAttachmentCleanup');
 
 
 const client = new Client({ 
@@ -98,6 +100,7 @@ client.commands.set(checkMyCooldownCommand.data.name, checkMyCooldownCommand);
 client.commands.set(setArchiveChannelCommand.data.name, setArchiveChannelCommand);
 client.commands.set(setArchiveViewRoleCommand.data.name, setArchiveViewRoleCommand);
 client.commands.set(getArchiveViewPermissionCommand.data.name, getArchiveViewPermissionCommand);
+client.commands.set(manageAttachmentCleanupCommand.data.name, manageAttachmentCleanupCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
@@ -111,6 +114,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     
     startSelfModerationChecker(readyClient);
     console.log('✅ 自助管理检查器已启动');
+    
+    startAttachmentCleanupScheduler(readyClient);
+    console.log('✅ 附件清理定时器已启动');
     
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
 })

@@ -11,6 +11,14 @@ const ATTACHMENTS_DIR = path.join(__dirname, '../../../../data/attachments');
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB 限制
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mov', '.avi', '.pdf', '.txt', '.doc', '.docx', '.zip', '.rar'];
 
+// 🔥 新增：媒体文件扩展名（需要添加剧透效果的文件类型）
+const MEDIA_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv'];
+
+// 🔥 新增：清理配置
+const CLEANUP_INTERVAL_HOURS = 1; // 每小时清理一次
+const CLEANUP_FILE_AGE_HOURS = 24; // 删除24小时前的文件
+let cleanupTimer = null;
+
 /**
  * 确保附件目录存在
  */
@@ -131,6 +139,28 @@ async function downloadAttachment(url, filename, messageId) {
 }
 
 /**
+ * 🔥 新增：检查文件是否为媒体文件
+ * @param {string} filename - 文件名
+ * @returns {boolean} 是否为媒体文件
+ */
+function isMediaFile(filename) {
+    const ext = path.extname(filename).toLowerCase();
+    return MEDIA_EXTENSIONS.includes(ext);
+}
+
+/**
+ * 🔥 新增：为媒体文件生成带剧透效果的文件名
+ * @param {string} filename - 原始文件名
+ * @returns {string} 处理后的文件名
+ */
+function getSpoilerFilename(filename) {
+    if (isMediaFile(filename)) {
+        return `SPOILER_${filename}`;
+    }
+    return filename;
+}
+
+/**
  * 归档被删除的消息
  * @param {Client} client - Discord客户端
  * @param {object} messageInfo - 消息信息
@@ -213,6 +243,8 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
         
         // 处理附件下载和归档
         const attachmentFiles = [];
+        let hasMediaFiles = false; // 🔥 新增：标记是否包含媒体文件
+        
         if (messageInfo.attachments && messageInfo.attachments.length > 0) {
             const attachmentResults = [];
             
@@ -222,22 +254,37 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
                 const downloadResult = await downloadAttachment(att.url, att.name, messageInfo.messageId);
                 
                 if (downloadResult.success) {
-                    attachmentResults.push(`✅ [${att.name}](attachment://${downloadResult.localPath}) (${formatFileSize(att.size)}) - 已保存`);
+                    // 🔥 检查是否为媒体文件
+                    const isMedia = isMediaFile(att.name);
+                    if (isMedia) {
+                        hasMediaFiles = true;
+                    }
                     
-                    // 添加到要发送的文件列表
+                    // 🔥 为媒体文件添加剧透标记
+                    const displayName = isMedia ? `🔞 ${att.name} (媒体文件，已添加剧透效果)` : att.name;
+                    attachmentResults.push(`✅ [${displayName}](attachment://${downloadResult.localPath}) (${formatFileSize(att.size)}) - 已保存`);
+                    
+                    // 🔥 添加到要发送的文件列表，媒体文件使用剧透文件名
                     const fullPath = path.join(ATTACHMENTS_DIR, downloadResult.localPath);
-                    attachmentFiles.push(new AttachmentBuilder(fullPath, { name: downloadResult.localPath }));
+                    const spoilerFilename = getSpoilerFilename(downloadResult.localPath);
+                    attachmentFiles.push(new AttachmentBuilder(fullPath, { name: spoilerFilename }));
                     
-                    console.log(`✅ 成功下载附件: ${att.name} -> ${downloadResult.localPath}`);
+                    console.log(`✅ 成功下载附件: ${att.name} -> ${downloadResult.localPath}${isMedia ? ' (将添加剧透效果)' : ''}`);
                 } else {
                     attachmentResults.push(`❌ [${att.name}](${att.url}) (${formatFileSize(att.size)}) - 下载失败: ${downloadResult.error}`);
                     console.error(`❌ 下载附件失败: ${att.name} - ${downloadResult.error}`);
                 }
             }
             
+            // 🔥 修改附件字段，添加媒体文件说明
+            let attachmentFieldValue = attachmentResults.join('\n');
+            if (hasMediaFiles) {
+                attachmentFieldValue += '\n\n⚠️ **注意**: 媒体文件（图片、视频等）已自动添加剧透效果，点击查看时请注意内容适宜性。';
+            }
+            
             embed.addFields({
                 name: '📎 附件',
-                value: attachmentResults.join('\n'),
+                value: attachmentFieldValue,
                 inline: false
             });
         }
@@ -251,6 +298,15 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
             });
         }
         
+        // 🔥 如果包含媒体文件，在嵌入消息中添加额外警告
+        if (hasMediaFiles) {
+            embed.addFields({
+                name: '🔞 内容警告',
+                value: '此消息包含媒体文件，已自动添加剧透效果。查看前请确认内容适宜性。',
+                inline: false
+            });
+        }
+        
         // 发送归档消息（包含附件）
         const messageOptions = { embeds: [embed] };
         if (attachmentFiles.length > 0) {
@@ -259,7 +315,7 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
         
         await archiveChannel.send(messageOptions);
         
-        console.log(`成功归档消息到频道 ${archiveChannel.name} (${archiveChannel.id})，类型: ${actionType}，附件数量: ${attachmentFiles.length}`);
+        console.log(`成功归档消息到频道 ${archiveChannel.name} (${archiveChannel.id})，类型: ${actionType}，附件数量: ${attachmentFiles.length}${hasMediaFiles ? '（包含媒体文件，已添加剧透效果）' : ''}`);
         return true;
         
     } catch (error) {
@@ -346,11 +402,71 @@ async function checkArchiveChannelAvailable(client, guildId) {
 }
 
 /**
- * 清理旧的附件文件（可选功能）
- * @param {number} daysOld - 删除多少天前的文件
+ * 🔥 新增：启动定时清理任务
+ * @param {Client} client - Discord客户端（用于日志记录）
+ */
+function startAttachmentCleanupScheduler(client = null) {
+    // 如果已经有定时器在运行，先清除它
+    if (cleanupTimer) {
+        clearInterval(cleanupTimer);
+    }
+    
+    // 设置每小时执行一次清理
+    const intervalMs = CLEANUP_INTERVAL_HOURS * 60 * 60 * 1000; // 转换为毫秒
+    
+    cleanupTimer = setInterval(async () => {
+        try {
+            console.log('🧹 开始执行定时附件清理任务...');
+            const result = await cleanupOldAttachments(CLEANUP_FILE_AGE_HOURS / 24); // 转换为天数
+            
+            if (result.deleted > 0) {
+                console.log(`✅ 定时清理完成：删除了 ${result.deleted} 个旧附件文件`);
+            } else {
+                console.log('✅ 定时清理完成：没有需要删除的旧文件');
+            }
+            
+            if (result.errors.length > 0) {
+                console.error('⚠️ 清理过程中出现错误:', result.errors);
+            }
+            
+        } catch (error) {
+            console.error('❌ 定时清理任务执行失败:', error);
+        }
+    }, intervalMs);
+    
+    console.log(`🕐 附件清理定时器已启动：每 ${CLEANUP_INTERVAL_HOURS} 小时清理一次，删除 ${CLEANUP_FILE_AGE_HOURS} 小时前的文件`);
+    
+    // 立即执行一次清理（可选）
+    setTimeout(async () => {
+        try {
+            console.log('🧹 执行初始附件清理...');
+            const result = await cleanupOldAttachments(CLEANUP_FILE_AGE_HOURS / 24);
+            if (result.deleted > 0) {
+                console.log(`✅ 初始清理完成：删除了 ${result.deleted} 个旧附件文件`);
+            }
+        } catch (error) {
+            console.error('❌ 初始清理失败:', error);
+        }
+    }, 5000); // 5秒后执行初始清理
+}
+
+/**
+ * 🔥 新增：停止定时清理任务
+ */
+function stopAttachmentCleanupScheduler() {
+    if (cleanupTimer) {
+        clearInterval(cleanupTimer);
+        cleanupTimer = null;
+        console.log('🛑 附件清理定时器已停止');
+    }
+}
+
+/**
+ * 🔥 修改：清理旧的附件文件（改为按小时计算）
+ * @param {number} daysOld - 删除多少天前的文件（保持兼容性）
  * @returns {Promise<{deleted: number, errors: string[]}>}
  */
-async function cleanupOldAttachments(daysOld = 30) {
+async function cleanupOldAttachments(daysOld = 1) {
     try {
         await ensureAttachmentsDir();
         
@@ -368,7 +484,7 @@ async function cleanupOldAttachments(daysOld = 30) {
                 if (stats.mtime.getTime() < cutoffTime) {
                     await fs.unlink(filePath);
                     deleted++;
-                    console.log(`删除旧附件: ${file}`);
+                    console.log(`🗑️ 删除旧附件: ${file} (创建于 ${stats.mtime.toLocaleString()})`);
                 }
             } catch (error) {
                 errors.push(`删除文件 ${file} 时出错: ${error.message}`);
@@ -380,6 +496,19 @@ async function cleanupOldAttachments(daysOld = 30) {
     } catch (error) {
         return { deleted: 0, errors: [`清理附件时出错: ${error.message}`] };
     }
+}
+
+/**
+ * 🔥 新增：获取清理任务状态
+ * @returns {object} 清理任务的状态信息
+ */
+function getCleanupStatus() {
+    return {
+        isRunning: cleanupTimer !== null,
+        intervalHours: CLEANUP_INTERVAL_HOURS,
+        fileAgeHours: CLEANUP_FILE_AGE_HOURS,
+        nextCleanupTime: cleanupTimer ? new Date(Date.now() + CLEANUP_INTERVAL_HOURS * 60 * 60 * 1000) : null
+    };
 }
 
 /**
@@ -412,5 +541,10 @@ module.exports = {
     downloadAttachment,
     cleanupOldAttachments,
     getAttachmentInfo,
-    ensureAttachmentsDir
+    ensureAttachmentsDir,
+    startAttachmentCleanupScheduler,
+    stopAttachmentCleanupScheduler,
+    getCleanupStatus,
+    isMediaFile,
+    getSpoilerFilename
 };

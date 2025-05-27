@@ -46,9 +46,9 @@ const PRODUCTION_CONFIG = {
 
 // 白天/夜晚模式配置
 const DAY_NIGHT_CONFIG = {
-    // 北京时间白天时段（6:00 - 次日3:00 为白天模式）
+    // 北京时间白天时段（6:00 - 次日2:00 为白天模式）
     DAY_START_HOUR: 6,   // 白天开始时间（6点）
-    DAY_END_HOUR: 3,     // 白天结束时间（次日3点）- 如果小于开始时间，表示跨越午夜
+    DAY_END_HOUR: 2,     // 白天结束时间（次日2点）- 如果小于开始时间，表示跨越午夜
     
     // 夜晚模式的调整系数
     NIGHT_DELETE_THRESHOLD_MULTIPLIER: 0.7, // 夜晚删除阈值 = 白天 * 0.7
@@ -105,7 +105,7 @@ const BASE_MUTE_DURATIONS = {
 };
 
 // 删除消息阈值 - 原始配置
-const BASE_DELETE_THRESHOLD = 10; // 15个⚠️删除消息
+const BASE_DELETE_THRESHOLD = 10; // 10个⚠️删除消息
 
 // 动态获取当前时段的禁言配置
 const MUTE_DURATIONS = new Proxy(BASE_MUTE_DURATIONS, {
