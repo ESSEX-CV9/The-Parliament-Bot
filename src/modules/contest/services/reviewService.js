@@ -5,6 +5,7 @@ const {
     updateContestApplication 
 } = require('../utils/contestDatabase');
 const { sendReviewNotification } = require('./notificationService');
+const { ensureContestStatusTags, updateThreadStatusTag, getTagStatusFromApplicationStatus } = require('../utils/forumTagManager');
 
 async function processApplicationReview(interaction, applicationId, reviewResult, reason = '') {
     try {
@@ -103,6 +104,9 @@ async function updateReviewThreadStatus(client, applicationData, reviewData) {
             throw new Error('找不到要更新的消息');
         }
         
+        // 确保论坛标签
+        const tagMap = await ensureContestStatusTags(thread.parent);
+        
         const statusEmojis = {
             'approved': '✅',
             'rejected': '❌',
@@ -180,20 +184,57 @@ ${reviewData.reason ? `💬 **审核意见：** ${reviewData.reason}\n\n` : ''}`
             components: components
         });
         
-        // 更新帖子标题
-        const statusPrefixes = {
-            'approved': '【已通过】',
-            'rejected': '【已拒绝】',
-            'modification_required': '【需修改】'
-        };
+        // 更新标签状态
+        const tagStatus = getTagStatusFromApplicationStatus(reviewData.result);
+        await updateThreadStatusTag(thread, tagStatus, tagMap);
         
-        await thread.setName(`${statusPrefixes[reviewData.result]}${formData.title}`);
+        // 只有最终结果才更新标题
+        if (reviewData.result === 'approved') {
+            await thread.setName(`【已通过】${formData.title}`);
+        } else if (reviewData.result === 'rejected') {
+            await thread.setName(`【未通过】${formData.title}`);
+        }
+        // modification_required 保持【待审核】标题，依靠标签显示状态
+        
+        // 如果是被打回修改，发送审核历史消息
+        if (reviewData.result === 'modification_required') {
+            await postReviewHistoryMessage(thread, reviewData);
+        }
         
         console.log(`审核帖子状态已更新 - 帖子: ${thread.id}, 状态: ${reviewData.result}`);
         
     } catch (error) {
         console.error('更新审核帖子状态时出错:', error);
         throw error;
+    }
+}
+
+/**
+ * 发送审核历史消息
+ */
+async function postReviewHistoryMessage(thread, reviewData) {
+    try {
+        const historyMessage = `📋 **审核记录**
+        
+👨‍💼 **审核员：** <@${reviewData.reviewerId}>
+📅 **审核时间：** <t:${Math.floor(new Date(reviewData.reviewedAt).getTime() / 1000)}:f>
+⚠️ **审核结果：** 需要修改
+
+💬 **修改要求：**
+${reviewData.reason || '无具体要求'}
+
+---
+💡 申请人可以点击上方的 **"✏️ 编辑申请"** 按钮进行修改。修改后将进入再次审核流程。`;
+
+        await thread.send({
+            content: historyMessage
+        });
+        
+        console.log(`审核历史消息已发送 - 帖子: ${thread.id}`);
+        
+    } catch (error) {
+        console.error('发送审核历史消息时出错:', error);
+        // 不抛出错误，避免影响主流程
     }
 }
 
@@ -263,6 +304,9 @@ async function updateCancelledThreadStatus(client, applicationData) {
             return;
         }
         
+        // 确保论坛标签
+        const tagMap = await ensureContestStatusTags(thread.parent);
+        
         // 移除所有按钮
         const components = [
             new ActionRowBuilder()
@@ -279,8 +323,10 @@ async function updateCancelledThreadStatus(client, applicationData) {
             components: components
         });
         
-        // 更新帖子标题
-        await thread.setName(`【已撤销】${applicationData.formData.title}`);
+        // 更新标签状态
+        await updateThreadStatusTag(thread, 'CANCELLED', tagMap);
+        
+        // 不再更新标题 - 保持当前标题不变
         
     } catch (error) {
         console.error('更新撤销状态时出错:', error);

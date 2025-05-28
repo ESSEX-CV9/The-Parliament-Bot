@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, MessageFlags, ChannelType } = require('discord.js');
 const { saveContestSettings, getContestSettings } = require('../utils/contestDatabase');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
+const { ensureContestStatusTags } = require('../utils/forumTagManager');
 
 const data = new SlashCommandBuilder()
     .setName('设置赛事申请入口')
@@ -82,57 +83,84 @@ async function execute(interaction) {
             });
         }
 
-        await interaction.editReply({
-            content: '⏳ 正在保存设置...'
-        });
-
-        // 获取当前设置（保留已有的权限设置）
-        const currentSettings = await getContestSettings(interaction.guild.id) || {};
+        console.log('权限检查通过，开始设置赛事系统...');
         
-        // 保存设置
-        const settings = {
-            ...currentSettings,
-            guildId: interaction.guild.id,
-            reviewForumId: reviewForum.id,
-            contestCategoryId: contestCategory.id,
-            itemsPerPage: itemsPerPage,
-            setupBy: interaction.user.id
-        };
-        
-        await saveContestSettings(interaction.guild.id, settings);
-
-        // 创建申请入口按钮
-        let entryMessage;
         try {
-            entryMessage = await interaction.channel.send({
-                content: `🏆 **赛事申请入口**\n\n欢迎申请举办比赛！\n\n**申请流程：**\n1️⃣ 点击下方按钮填写申请表单\n2️⃣ 等待管理员在审批论坛中审核\n3️⃣ 审核通过后确认建立赛事频道\n4️⃣ 开始管理您的比赛\n\n**表单内容包括：**\n• 比赛标题\n• 主题和参赛要求\n• 比赛持续时间\n• 奖项设置和评价标准\n• 注意事项和其他补充`,
-                components: [
-                    {
-                        type: 1, // ACTION_ROW
-                        components: [
-                            {
-                                type: 2, // BUTTON
-                                style: 1, // PRIMARY
-                                label: '🏆 申请办赛事',
-                                custom_id: 'contest_application'
-                            }
-                        ]
-                    }
-                ]
+            // 确保论坛有所需的审核状态标签
+            await interaction.editReply({
+                content: '⏳ 正在设置论坛审核标签...'
             });
-        } catch (sendError) {
-            console.error('发送申请入口消息失败:', sendError);
-            return interaction.editReply({
-                content: `❌ 发送申请入口消息失败，请检查机器人权限。错误信息：${sendError.message}`
+            
+            const tagMap = await ensureContestStatusTags(reviewForum);
+            console.log('论坛标签设置完成:', Object.keys(tagMap));
+            
+            // 保存设置
+            await interaction.editReply({
+                content: '⏳ 正在保存配置...'
             });
+
+            const contestSettings = {
+                guildId: interaction.guild.id,
+                reviewForumId: reviewForum.id,
+                contestCategoryId: contestCategory.id,
+                itemsPerPage: itemsPerPage,
+                tagMap: tagMap, // 保存标签映射
+                updatedAt: new Date().toISOString()
+            };
+
+            await saveContestSettings(contestSettings);
+
+            // 创建申请入口按钮
+            let entryMessage;
+            try {
+                entryMessage = await interaction.channel.send({
+                    content: `🏆 **赛事申请入口**\n\n欢迎申请举办比赛！\n\n**申请流程：**\n1️⃣ 点击下方按钮填写申请表单\n2️⃣ 等待管理员在审批论坛中审核\n3️⃣ 审核通过后确认建立赛事频道\n4️⃣ 开始管理您的比赛\n\n**表单内容包括：**\n• 比赛标题\n• 主题和参赛要求\n• 比赛持续时间\n• 奖项设置和评价标准\n• 注意事项和其他补充`,
+                    components: [
+                        {
+                            type: 1, // ACTION_ROW
+                            components: [
+                                {
+                                    type: 2, // BUTTON
+                                    style: 1, // PRIMARY
+                                    label: '🏆 申请办赛事',
+                                    custom_id: 'contest_application'
+                                }
+                            ]
+                        }
+                    ]
+                });
+            } catch (sendError) {
+                console.error('发送申请入口消息失败:', sendError);
+                return interaction.editReply({
+                    content: `❌ 发送申请入口消息失败，请检查机器人权限。错误信息：${sendError.message}`
+                });
+            }
+            
+            await interaction.editReply({ 
+                content: `✅ **赛事申请系统设置完成！**\n\n**配置信息：**\n• **申请入口频道：** ${interaction.channel}\n• **审批论坛：** ${reviewForum}\n• **赛事分类：** ${contestCategory}\n• **每页作品数：** ${itemsPerPage}\n• **入口消息ID：** \`${entryMessage.id}\`\n\n用户现在可以点击按钮申请举办赛事。\n\n**下一步：**\n• 使用 \`/设置赛事审核员\` 设置审核权限\n• 使用 \`/设置赛事申请权限\` 设置申请权限（可选）`
+            });
+            
+            console.log(`赛事申请系统设置完成 - 消息ID: ${entryMessage.id}, 操作者: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('设置赛事申请入口时出错:', error);
+            console.error('错误堆栈:', error.stack);
+            
+            try {
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: `❌ 设置时出错：${error.message}\n请查看控制台获取详细信息。`,
+                        flags: MessageFlags.Ephemeral
+                    });
+                } else {
+                    await interaction.editReply({
+                        content: `❌ 设置时出错：${error.message}\n请查看控制台获取详细信息。`
+                    });
+                }
+            } catch (replyError) {
+                console.error('回复错误信息失败:', replyError);
+            }
         }
-        
-        await interaction.editReply({ 
-            content: `✅ **赛事申请系统设置完成！**\n\n**配置信息：**\n• **申请入口频道：** ${interaction.channel}\n• **审批论坛：** ${reviewForum}\n• **赛事分类：** ${contestCategory}\n• **每页作品数：** ${itemsPerPage}\n• **入口消息ID：** \`${entryMessage.id}\`\n\n用户现在可以点击按钮申请举办赛事。\n\n**下一步：**\n• 使用 \`/设置赛事审核员\` 设置审核权限\n• 使用 \`/设置赛事申请权限\` 设置申请权限（可选）`
-        });
-        
-        console.log(`赛事申请系统设置完成 - 消息ID: ${entryMessage.id}, 操作者: ${interaction.user.tag}`);
-        
     } catch (error) {
         console.error('设置赛事申请入口时出错:', error);
         console.error('错误堆栈:', error.stack);

@@ -6,6 +6,7 @@ const {
     updateContestApplication,
     getContestApplication 
 } = require('../utils/contestDatabase');
+const { ensureContestStatusTags, updateThreadStatusTag } = require('../utils/forumTagManager');
 
 async function processContestApplication(interaction) {
     try {
@@ -85,6 +86,9 @@ async function processContestApplication(interaction) {
 }
 
 async function createReviewThread(reviewForum, formData, applicant, applicationId) {
+    // 确保论坛有所需的标签
+    const tagMap = await ensureContestStatusTags(reviewForum);
+    
     // 创建审核帖子内容
     const threadContent = `👤 **申请人：** <@${applicant.id}>
 📅 **申请时间：** <t:${Math.floor(Date.now() / 1000)}:f>
@@ -119,13 +123,14 @@ ${formData.notes ? `📋 **注意事项和其他补充**\n${formData.notes}\n\n`
                 .setStyle(ButtonStyle.Secondary)
         );
     
-    // 创建论坛帖子
+    // 创建论坛帖子，标题只显示【待审核】前缀
     const thread = await reviewForum.threads.create({
         name: `【待审核】${formData.title}`,
         message: {
             content: threadContent,
             components: [editButton]
-        }
+        },
+        appliedTags: [tagMap.PENDING] // 应用待审核标签
     });
     
     // 设置帖子权限
@@ -291,11 +296,15 @@ async function updateReviewThreadContent(client, threadId, formData, applicant, 
     try {
         const thread = await client.channels.fetch(threadId);
         const messages = await thread.messages.fetch({ limit: 10 });
-        const firstMessage = messages.last(); // 获取第一条消息
+        const firstMessage = messages.last();
         
         if (!firstMessage) {
             throw new Error('找不到要更新的消息');
         }
+
+        // 获取当前申请数据以确定状态
+        const applicationData = await getContestApplication(applicationId);
+        const currentStatus = applicationData.status;
         
         const updatedContent = `👤 **申请人：** <@${applicant.id}>
 📅 **申请时间：** <t:${Math.floor(Date.now() / 1000)}:f>
@@ -336,8 +345,24 @@ ${formData.notes ? `📋 **注意事项和其他补充**\n${formData.notes}\n\n`
             components: [editButton]
         });
         
-        // 更新帖子标题
-        await thread.setName(`【待审核】${formData.title}`);
+        // 只有标题内容变化时才更新帖子标题
+        const currentTitle = thread.name;
+        const newTitle = `【待审核】${formData.title}`;
+        
+        if (currentTitle !== newTitle) {
+            await thread.setName(newTitle);
+        }
+        
+        // 如果状态是要求修改，则更新为待再审状态
+        if (currentStatus === 'modification_required') {
+            try {
+                const tagMap = await ensureContestStatusTags(thread.parent);
+                await updateThreadStatusTag(thread, 'PENDING_RECHECK', tagMap);
+            } catch (tagError) {
+                console.error('更新标签失败:', tagError);
+                // 标签更新失败不影响主流程
+            }
+        }
         
     } catch (error) {
         console.error('更新审核帖子内容时出错:', error);

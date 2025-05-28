@@ -40,8 +40,21 @@ function writeJsonFile(filePath, data) {
 }
 
 // 赛事设置相关
-async function saveContestSettings(guildId, settings) {
+async function saveContestSettings(settingsData) {
     const allSettings = readJsonFile(CONTEST_SETTINGS_FILE);
+    
+    // 支持两种调用方式：新方式(单个对象)和旧方式(兼容性)
+    let guildId, settings;
+    if (typeof settingsData === 'string') {
+        // 旧方式：saveContestSettings(guildId, settings)
+        guildId = settingsData;
+        settings = arguments[1] || {};
+    } else {
+        // 新方式：saveContestSettings(settingsObject)
+        guildId = settingsData.guildId;
+        settings = settingsData;
+    }
+    
     allSettings[guildId] = {
         ...settings,
         guildId,

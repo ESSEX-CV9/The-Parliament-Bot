@@ -59,6 +59,7 @@ const setContestReviewersCommand = require('../modules/contest/commands/setConte
 const reviewContestApplicationCommand = require('../modules/contest/commands/reviewContestApplication');
 const updateContestInfoCommand = require('../modules/contest/commands/updateContestInfo');
 const updateContestTitleCommand = require('../modules/contest/commands/updateContestTitle');
+const initContestTagsCommand = require('../modules/contest/commands/initContestTags');
 
 const client = new Client({ 
     intents: [
@@ -114,6 +115,7 @@ client.commands.set(setContestReviewersCommand.data.name, setContestReviewersCom
 client.commands.set(reviewContestApplicationCommand.data.name, reviewContestApplicationCommand);
 client.commands.set(updateContestInfoCommand.data.name, updateContestInfoCommand);
 client.commands.set(updateContestTitleCommand.data.name, updateContestTitleCommand);
+client.commands.set(initContestTagsCommand.data.name, initContestTagsCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);

@@ -6,6 +6,7 @@ const {
     saveContestChannel 
 } = require('../utils/contestDatabase');
 const { sendChannelCreatedNotification } = require('./notificationService');
+const { ensureContestStatusTags, updateThreadStatusTag } = require('../utils/forumTagManager');
 
 async function processChannelConfirmation(interaction) {
     try {
@@ -238,6 +239,9 @@ async function updateChannelCreatedThreadStatus(client, applicationData, contest
             throw new Error('找不到要更新的消息');
         }
         
+        // 确保论坛标签
+        const tagMap = await ensureContestStatusTags(thread.parent);
+        
         // 构建更新的内容
         const formData = applicationData.formData;
         const updatedContent = `👤 **申请人：** <@${applicationData.applicantId}>
@@ -284,13 +288,16 @@ ${applicationData.reviewData.reason ? `💬 **审核意见：** ${applicationDat
             components: components
         });
         
-        await thread.setName(`【已通过】${formData.title}`);
+        // 更新标签状态
+        await updateThreadStatusTag(thread, 'CHANNEL_CREATED', tagMap);
         
-        console.log(`审核帖子状态已更新为"赛事已开启" - 帖子: ${thread.id}`);
+        // 不再更新标题 - 保持当前标题不变
+        
+        console.log(`频道创建状态已更新 - 帖子: ${thread.id}`);
         
     } catch (error) {
-        console.error('更新审核帖子为"赛事已开启"状态时出错:', error);
-        // 不抛出错误，避免影响主流程
+        console.error('更新频道创建状态时出错:', error);
+        throw error;
     }
 }
 
