@@ -250,6 +250,9 @@ async function processEditApplicationSubmission(interaction) {
             });
         }
         
+        // 保存原始状态，用于判断是否需要更新标签
+        const originalStatus = applicationData.status;
+        
         // 获取更新的表单数据
         const updatedFormData = {
             title: interaction.fields.getTextInputValue('contest_title'),
@@ -271,7 +274,7 @@ async function processEditApplicationSubmission(interaction) {
             content: '⏳ 正在更新申请内容...'
         });
         
-        await updateReviewThreadContent(interaction.client, applicationData.threadId, updatedFormData, interaction.user, applicationId);
+        await updateReviewThreadContent(interaction.client, applicationData.threadId, updatedFormData, interaction.user, applicationId, originalStatus);
         
         await interaction.editReply({
             content: '✅ 申请内容已成功更新！'
@@ -292,7 +295,7 @@ async function processEditApplicationSubmission(interaction) {
     }
 }
 
-async function updateReviewThreadContent(client, threadId, formData, applicant, applicationId) {
+async function updateReviewThreadContent(client, threadId, formData, applicant, applicationId, originalStatus) {
     try {
         const thread = await client.channels.fetch(threadId);
         const messages = await thread.messages.fetch({ limit: 10 });
@@ -302,10 +305,6 @@ async function updateReviewThreadContent(client, threadId, formData, applicant, 
             throw new Error('找不到要更新的消息');
         }
 
-        // 获取当前申请数据以确定状态
-        const applicationData = await getContestApplication(applicationId);
-        const currentStatus = applicationData.status;
-        
         const updatedContent = `👤 **申请人：** <@${applicant.id}>
 📅 **申请时间：** <t:${Math.floor(Date.now() / 1000)}:f>
 🆔 **申请ID：** \`${applicationId}\`
@@ -353,11 +352,22 @@ ${formData.notes ? `📋 **注意事项和其他补充**\n${formData.notes}\n\n`
             await thread.setName(newTitle);
         }
         
-        // 如果状态是要求修改，则更新为待再审状态
-        if (currentStatus === 'modification_required') {
+        // 如果原始状态是要求修改，则更新为待再审状态
+        if (originalStatus === 'modification_required') {
             try {
                 const tagMap = await ensureContestStatusTags(thread.parent);
                 await updateThreadStatusTag(thread, 'PENDING_RECHECK', tagMap);
+                console.log(`申请状态从"要求修改"更新为"待再审" - 申请ID: ${applicationId}`);
+            } catch (tagError) {
+                console.error('更新标签失败:', tagError);
+                // 标签更新失败不影响主流程
+            }
+        } else {
+            // 其他情况更新为普通的待审核状态
+            try {
+                const tagMap = await ensureContestStatusTags(thread.parent);
+                await updateThreadStatusTag(thread, 'PENDING', tagMap);
+                console.log(`申请状态更新为"待审核" - 申请ID: ${applicationId}`);
             } catch (tagError) {
                 console.error('更新标签失败:', tagError);
                 // 标签更新失败不影响主流程

@@ -205,6 +205,15 @@ ${reviewData.reason ? `💬 **审核意见：** ${reviewData.reason}\n\n` : ''}`
         
     } catch (error) {
         console.error('更新审核帖子状态时出错:', error);
+        
+        // 检查是否是频道不存在的错误
+        if (error.code === 10003) {
+            console.warn(`⚠️ 审核帖子不存在或已被删除 - 帖子ID: ${applicationData.threadId}, 申请ID: ${applicationData.id}`);
+            console.warn('审核结果已保存到数据库，但无法更新帖子状态');
+            return; // 不抛出错误，让审核流程继续
+        }
+        
+        // 其他错误仍然抛出
         throw error;
     }
 }
@@ -272,12 +281,21 @@ async function processCancelApplication(interaction) {
             updatedAt: new Date().toISOString()
         });
         
-        // 更新审核帖子状态
-        await updateCancelledThreadStatus(interaction.client, applicationData);
-        
-        await interaction.editReply({
-            content: `✅ 申请ID \`${applicationId}\` 已撤销办理。`
-        });
+        // 尝试更新审核帖子状态
+        try {
+            await updateCancelledThreadStatus(interaction.client, applicationData);
+            
+            await interaction.editReply({
+                content: `✅ 申请ID \`${applicationId}\` 已撤销办理。`
+            });
+        } catch (threadUpdateError) {
+            console.error('更新撤销帖子时出错:', threadUpdateError);
+            
+            // 即使帖子更新失败，也要告知用户撤销已完成
+            await interaction.editReply({
+                content: `✅ 申请ID \`${applicationId}\` 已撤销办理。\n\n⚠️ 注意：审核帖子更新可能失败，但撤销状态已保存。`
+            });
+        }
         
         console.log(`申请已撤销 - ID: ${applicationId}, 用户: ${interaction.user.tag}`);
         
@@ -330,6 +348,16 @@ async function updateCancelledThreadStatus(client, applicationData) {
         
     } catch (error) {
         console.error('更新撤销状态时出错:', error);
+        
+        // 检查是否是频道不存在的错误
+        if (error.code === 10003) {
+            console.warn(`⚠️ 审核帖子不存在或已被删除 - 帖子ID: ${applicationData.threadId}, 申请ID: ${applicationData.id}`);
+            console.warn('撤销状态已保存到数据库，但无法更新帖子状态');
+            return; // 不抛出错误
+        }
+        
+        // 其他错误记录但不抛出，避免影响主流程
+        console.warn('更新撤销状态失败，但不影响主流程');
     }
 }
 
