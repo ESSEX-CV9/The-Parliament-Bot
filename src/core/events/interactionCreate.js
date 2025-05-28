@@ -257,6 +257,14 @@ async function interactionCreateHandler(interaction) {
                 // 作品展示翻页按钮（旧格式）
                 await displayService.handlePageNavigation(interaction);
             }
+            
+            // 新增管理操作按钮处理
+            if (interaction.customId.startsWith('manage_quick_delete_') ||
+                interaction.customId.startsWith('manage_delete_with_reason_') ||
+                interaction.customId.startsWith('manage_delete_page_')) {
+                await displayService.handleManagementAction(interaction);
+            }
+            
             return;
         }
         
@@ -322,6 +330,9 @@ async function interactionCreateHandler(interaction) {
                     }],
                     components: updatedComponents
                 });
+            } else if (interaction.customId.startsWith('manage_select_submission_')) {
+                // 投稿选择下拉菜单
+                await displayService.handleSubmissionSelect(interaction);
             }
             return;
         }
