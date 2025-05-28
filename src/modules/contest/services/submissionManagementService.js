@@ -315,8 +315,15 @@ async function processRejectionModal(interaction) {
         
         await deleteSubmissionWithReason(interaction, submissionId, contestChannelId, rejectionReason);
         
+        // 删除成功后，清除用户选择
+        const { displayService } = require('./displayService');
+        displayService.clearUserSelection(interaction.user.id, contestChannelId);
+        
+        // 自动刷新界面
+        await displayService.refreshSubmissionList(interaction, contestChannelId);
+        
     } catch (error) {
-        console.error('处理拒稿模态窗口时出错:', error);
+        console.error('处理拒稿模态框时出错:', error);
         
         try {
             await interaction.editReply({

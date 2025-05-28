@@ -25,6 +25,9 @@ class DisplayService {
             fullLast: 'c_fl',
             fullPageJump: 'c_fpj'
         };
+        
+        // 添加用户选择状态存储
+        this.userSelections = new Map();
     }
 
     async updateDisplayMessage(displayMessage, submissions, currentPage, itemsPerPage, contestChannelId) {
@@ -257,16 +260,22 @@ class DisplayService {
             // 添加当前页面的投稿选项
             currentPageSubmissions.forEach((submission, index) => {
                 const submissionNumber = ((currentPage - 1) * itemsPerPage) + index + 1;
-                const authorName = submission.cachedPreview.authorDisplayName || '未知作者';
+                
+                // 修复：使用正确的字段名
+                const authorName = submission.cachedPreview.authorName || '未知作者';
+                
+                // 使用投稿链接而不是作者名
+                const workUrl = submission.workUrl || `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
+                
+                // 创建选项标签：显示编号、作者和投稿ID
                 const optionLabel = `${submissionNumber}. ${authorName} - ID:${submission.contestSubmissionId}`;
+                
+                // 创建选项描述：显示投稿链接
+                const linkText = workUrl.length > 80 ? workUrl.substring(0, 77) + '...' : workUrl;
                 
                 submissionSelectMenu.addOptions({
                     label: optionLabel.length > 100 ? optionLabel.substring(0, 97) + '...' : optionLabel,
-                    description: submission.submissionDescription ? 
-                        (submission.submissionDescription.length > 100 ? 
-                            submission.submissionDescription.substring(0, 97) + '...' : 
-                            submission.submissionDescription) : 
-                        '无稿件说明',
+                    description: linkText,
                     value: submission.globalId.toString()
                 });
             });
@@ -346,11 +355,14 @@ class DisplayService {
                 return;
             }
             
+            // 添加权限检查
+            const isOrganizer = contestChannelData.applicantId === interaction.user.id;
+            
             // 获取所有有效投稿
             const submissions = await this.getSubmissionsData(contestChannelId);
             const processedSubmissions = preprocessSubmissions(submissions);
             
-            const paginationInfo = paginateData(processedSubmissions, 1, newItemsPerPage); // 切换时回到第一页
+            const paginationInfo = paginateData(processedSubmissions, 1, newItemsPerPage);
             
             // 构建展示内容
             const embed = await this.buildFullDisplayEmbed(processedSubmissions, paginationInfo, newItemsPerPage);
@@ -358,7 +370,9 @@ class DisplayService {
                 paginationInfo.currentPage, 
                 paginationInfo.totalPages, 
                 contestChannelId, 
-                newItemsPerPage
+                newItemsPerPage,
+                isOrganizer,          // 添加权限参数
+                paginationInfo.pageData  // 添加当前页面数据
             );
             
             await interaction.editReply({
@@ -446,6 +460,9 @@ class DisplayService {
                 });
             }
             
+            // 添加权限检查
+            const isOrganizer = contestChannelData.applicantId === interaction.user.id;
+            
             // 获取当前的每页显示数量
             const itemsPerPage = this.extractItemsPerPageFromMessage(interaction);
             
@@ -469,7 +486,9 @@ class DisplayService {
                 paginationInfo.currentPage, 
                 paginationInfo.totalPages, 
                 contestChannelId, 
-                itemsPerPage
+                itemsPerPage,
+                isOrganizer,          // 添加权限参数
+                paginationInfo.pageData  // 添加当前页面数据
             );
             
             await interaction.editReply({
@@ -568,6 +587,9 @@ class DisplayService {
                 return;
             }
             
+            // 添加权限检查
+            const isOrganizer = contestChannelData.applicantId === interaction.user.id;
+            
             // 获取当前的每页显示数量
             const itemsPerPage = this.extractItemsPerPageFromMessage(interaction);
             
@@ -604,7 +626,9 @@ class DisplayService {
                 paginationInfo.currentPage, 
                 paginationInfo.totalPages, 
                 contestChannelId, 
-                itemsPerPage
+                itemsPerPage,
+                isOrganizer,          // 添加权限参数
+                paginationInfo.pageData  // 添加当前页面数据
             );
             
             await interaction.editReply({
@@ -690,10 +714,32 @@ class DisplayService {
             const selectedGlobalId = interaction.values[0];
             const contestChannelId = interaction.customId.replace('manage_select_submission_', '');
             
-            // 存储选中的投稿ID到交互数据中（后续按钮操作会用到）
+            // 存储用户的选择（使用用户ID + 频道ID作为键）
+            if (!this.userSelections) {
+                this.userSelections = new Map();
+            }
+            
+            const selectionKey = `${interaction.user.id}_${contestChannelId}`;
+            this.userSelections.set(selectionKey, {
+                globalId: selectedGlobalId,
+                timestamp: Date.now(),
+                userId: interaction.user.id,
+                contestChannelId: contestChannelId
+            });
+            
+            // 设置5分钟过期时间
+            setTimeout(() => {
+                this.userSelections.delete(selectionKey);
+                console.log(`清除过期的用户选择 - 用户: ${interaction.user.id}, 频道: ${contestChannelId}`);
+            }, 5 * 60 * 1000); // 5分钟
+            
             console.log(`主办人选择了投稿 - 全局ID: ${selectedGlobalId}, 频道: ${contestChannelId}, 用户: ${interaction.user.tag}`);
             
-            // 这里暂时不做任何界面更新，等待用户点击操作按钮
+            // 可选：给用户一个视觉反馈
+            await interaction.followUp({
+                content: `✅ 已选择要操作的投稿（ID: ${selectedGlobalId}），请点击下方的操作按钮。`,
+                ephemeral: true
+            });
             
         } catch (error) {
             console.error('处理投稿选择时出错:', error);
@@ -736,24 +782,39 @@ class DisplayService {
         }
     }
 
-    // 快速删除投稿
+    // 快速删除投稿（修复版）
     async handleQuickDelete(interaction, contestChannelId) {
         // 获取用户选择的投稿
         const selectedGlobalId = await this.getSelectedSubmissionFromMessage(interaction);
         if (!selectedGlobalId) {
             return interaction.reply({
-                content: '❌ 请先选择要删除的投稿作品。',
+                content: '❌ 请先从下拉菜单中选择要删除的投稿作品，然后再点击删除按钮。',
                 ephemeral: true
             });
         }
         
         await interaction.deferReply({ ephemeral: true });
         
-        const { deleteSubmissionWithReason } = require('./submissionManagementService');
-        await deleteSubmissionWithReason(interaction, selectedGlobalId, contestChannelId, '主办人删除了您的投稿');
-        
-        // 自动刷新界面
-        await this.refreshSubmissionList(interaction, contestChannelId);
+        try {
+            const { deleteSubmissionWithReason } = require('./submissionManagementService');
+            await deleteSubmissionWithReason(interaction, selectedGlobalId, contestChannelId, '主办人删除了您的投稿');
+            
+            // 清除用户选择
+            this.clearUserSelection(interaction.user.id, contestChannelId);
+            
+            // 删除成功提示，建议用户手动刷新
+            await interaction.editReply({
+                content: '✅ **投稿删除成功！**\n\n💡 **提示：** 请点击界面上的 🔄 刷新按钮来查看最新的投稿列表。'
+            });
+            
+            console.log(`投稿删除成功 - 全局ID: ${selectedGlobalId}, 用户: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('删除投稿时出错:', error);
+            await interaction.editReply({
+                content: '❌ 删除投稿时出现错误，请稍后重试。'
+            });
+        }
     }
 
     // 删除并提供理由
@@ -761,7 +822,7 @@ class DisplayService {
         const selectedGlobalId = await this.getSelectedSubmissionFromMessage(interaction);
         if (!selectedGlobalId) {
             return interaction.reply({
-                content: '❌ 请先选择要删除的投稿作品。',
+                content: '❌ 请先从下拉菜单中选择要删除的投稿作品，然后再点击删除按钮。',
                 ephemeral: true
             });
         }
@@ -769,9 +830,11 @@ class DisplayService {
         const { createRejectionModal } = require('../components/rejectionModal');
         const modal = createRejectionModal(selectedGlobalId, contestChannelId);
         await interaction.showModal(modal);
+        
+        // 注意：这里不清除选择，因为用户还需要在模态框中完成操作
     }
 
-    // 删除整页稿件
+    // 删除整页稿件（修复版）
     async handleDeletePage(interaction, contestChannelId) {
         await interaction.deferReply({ ephemeral: true });
         
@@ -783,95 +846,120 @@ class DisplayService {
             });
         }
         
-        const { deleteSubmissionWithReason } = require('./submissionManagementService');
-        let deletedCount = 0;
-        
-        for (const submission of currentPageSubmissions) {
-            try {
-                await deleteSubmissionWithReason(interaction, submission.globalId, contestChannelId, '主办人批量删除了投稿');
-                deletedCount++;
-            } catch (error) {
-                console.error(`删除投稿失败 - ID: ${submission.globalId}`, error);
+        try {
+            const { deleteSubmissionWithReason } = require('./submissionManagementService');
+            let deletedCount = 0;
+            
+            for (const submission of currentPageSubmissions) {
+                try {
+                    await deleteSubmissionWithReason(interaction, submission.globalId, contestChannelId, '主办人批量删除了投稿');
+                    deletedCount++;
+                } catch (error) {
+                    console.error(`删除投稿失败 - ID: ${submission.globalId}`, error);
+                }
             }
+            
+            // 清除用户选择
+            this.clearUserSelection(interaction.user.id, contestChannelId);
+            
+            await interaction.editReply({
+                content: `✅ **批量删除成功！**\n\n📊 **删除统计：** 已成功删除 ${deletedCount} 个投稿作品\n\n💡 **提示：** 请点击界面上的 🔄 刷新按钮来查看最新的投稿列表。`
+            });
+            
+            console.log(`批量删除成功 - 删除数量: ${deletedCount}, 用户: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('批量删除投稿时出错:', error);
+            await interaction.editReply({
+                content: '❌ 批量删除时出现错误，请稍后重试。'
+            });
         }
-        
-        await interaction.editReply({
-            content: `✅ 已成功删除 ${deletedCount} 个投稿作品。`
-        });
-        
-        // 自动刷新界面
-        await this.refreshSubmissionList(interaction, contestChannelId);
     }
 
-    // 辅助方法：从消息中获取选中的投稿ID
+    // 从状态存储中获取用户选择
     async getSelectedSubmissionFromMessage(interaction) {
-        // 从消息组件中查找下拉菜单的值
-        // 这需要根据实际的Discord.js交互机制来实现
-        // 可能需要维护一个临时状态来记录用户的选择
-        return null; // 需要实际实现
+        if (!this.userSelections) {
+            this.userSelections = new Map();
+        }
+        
+        const contestChannelId = interaction.customId.split('_').slice(-1)[0];
+        const selectionKey = `${interaction.user.id}_${contestChannelId}`;
+        
+        const selection = this.userSelections.get(selectionKey);
+        if (!selection) {
+            return null;
+        }
+        
+        // 检查是否过期（10分钟）
+        const isExpired = Date.now() - selection.timestamp > 10 * 60 * 1000;
+        if (isExpired) {
+            this.userSelections.delete(selectionKey);
+            return null;
+        }
+        
+        return selection.globalId;
+    }
+
+    // 清除用户选择
+    clearUserSelection(userId, contestChannelId) {
+        if (!this.userSelections) {
+            this.userSelections = new Map();
+            return;
+        }
+        
+        const selectionKey = `${userId}_${contestChannelId}`;
+        this.userSelections.delete(selectionKey);
     }
 
     // 辅助方法：获取当前页面的投稿
     async getCurrentPageSubmissions(interaction) {
-        // 从embed的footer中解析当前页码，然后重新获取数据
-        const footerText = interaction.message.embeds[0].footer.text;
-        const pageMatch = footerText.match(/第 (\d+) 页/);
-        const itemsMatch = footerText.match(/每页 (\d+) 个/);
-        
-        if (!pageMatch || !itemsMatch) return null;
-        
-        const currentPage = parseInt(pageMatch[1]);
-        const itemsPerPage = parseInt(itemsMatch[1]);
-        
-        const contestChannelId = interaction.customId.split('_').slice(-1)[0];
-        const submissions = await this.getSubmissionsData(contestChannelId);
-        const processedSubmissions = preprocessSubmissions(submissions);
-        const paginationInfo = paginateData(processedSubmissions, currentPage, itemsPerPage);
-        
-        return paginationInfo.pageData;
-    }
-
-    // 刷新投稿列表界面
-    async refreshSubmissionList(interaction, contestChannelId) {
         try {
-            // 清除缓存
-            this.clearCache(contestChannelId);
+            // 从embed的footer中解析当前页码，然后重新获取数据
+            const footerText = interaction.message.embeds[0].footer.text;
+            const pageMatch = footerText.match(/第 (\d+) 页/);
+            const itemsMatch = footerText.match(/每页 (\d+) 个/);
             
-            // 重新获取数据并更新界面
-            const contestChannelData = await this.getContestChannelData(contestChannelId);
-            const isOrganizer = contestChannelData.applicantId === interaction.user.id;
+            if (!pageMatch || !itemsMatch) return null;
             
+            const currentPage = parseInt(pageMatch[1]);
+            const itemsPerPage = parseInt(itemsMatch[1]);
+            
+            const contestChannelId = interaction.customId.split('_').slice(-1)[0];
             const submissions = await this.getSubmissionsData(contestChannelId);
             const processedSubmissions = preprocessSubmissions(submissions);
+            const paginationInfo = paginateData(processedSubmissions, currentPage, itemsPerPage);
             
-            if (processedSubmissions.length === 0) {
-                return interaction.followUp({
-                    content: '📝 已删除所有投稿，当前没有任何投稿作品。',
-                    ephemeral: true
-                });
-            }
-            
-            const itemsPerPage = this.extractItemsPerPageFromMessage(interaction);
-            const paginationInfo = paginateData(processedSubmissions, 1, itemsPerPage); // 回到第一页
-            
-            const embed = await this.buildFullDisplayEmbed(processedSubmissions, paginationInfo, itemsPerPage);
-            const components = this.buildFullDisplayComponents(
-                paginationInfo.currentPage, 
-                paginationInfo.totalPages, 
-                contestChannelId, 
-                itemsPerPage,
-                isOrganizer,
-                paginationInfo.pageData
-            );
-            
-            await interaction.message.edit({
-                embeds: [embed],
-                components: components
-            });
-            
+            return paginationInfo.pageData;
         } catch (error) {
-            console.error('刷新投稿列表时出错:', error);
+            console.error('获取当前页面投稿时出错:', error);
+            return null;
         }
+    }
+
+    // 删除 refreshSubmissionList 方法，或者改为一个简单的缓存清理方法
+    clearSubmissionCache(contestChannelId) {
+        // 只清理缓存，不尝试刷新界面
+        this.clearCache(contestChannelId);
+        console.log(`已清理投稿缓存 - 频道: ${contestChannelId}`);
+    }
+
+    // 获取状态存储统计信息（用于调试）
+    getSelectionStats() {
+        const stats = {
+            totalSelections: this.userSelections.size,
+            selections: []
+        };
+        
+        for (const [key, value] of this.userSelections.entries()) {
+            stats.selections.push({
+                key,
+                age: Date.now() - value.timestamp,
+                userId: value.userId,
+                contestChannelId: value.contestChannelId
+            });
+        }
+        
+        return stats;
     }
 }
 
