@@ -143,7 +143,11 @@ async function saveContestChannel(channelData) {
 
 async function getContestChannel(channelId) {
     const channels = readJsonFile(CONTEST_CHANNELS_FILE);
-    return channels[channelId];
+    console.log(`查询赛事频道 - 频道ID: ${channelId}`);
+    console.log(`所有赛事频道ID:`, Object.keys(channels));
+    const result = channels[channelId];
+    console.log(`查询结果:`, result ? '找到' : '未找到');
+    return result;
 }
 
 async function updateContestChannel(channelId, updates) {
@@ -179,7 +183,7 @@ async function saveContestSubmission(submissionData) {
 
 async function getContestSubmission(submissionId) {
     const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
-    return submissions[submissionId];
+    return submissions[submissionId] || null;
 }
 
 async function getSubmissionsByChannel(channelId) {

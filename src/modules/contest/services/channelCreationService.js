@@ -196,9 +196,18 @@ async function setupChannelMessages(contestChannel, applicationData, channelCont
                     .setStyle(ButtonStyle.Primary)
             );
         
+        // 为主办人添加稿件管理按钮
+        const managementButton = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`contest_manage_${contestChannel.id}`)
+                    .setLabel('🗂️ 稿件管理')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        
         const submissionMessage = await contestChannel.send({
             embeds: [submissionEmbed],
-            components: [submissionButton]
+            components: [submissionButton, managementButton]
         });
         
         // 第三条消息：作品展示区域

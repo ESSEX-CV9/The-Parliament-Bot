@@ -80,6 +80,31 @@ async function validateSubmissionLink(client, url, submitterId, expectedGuildId)
             };
         }
         
+        // 验证是否为许可论坛（如果设置了许可论坛列表）
+        const { getContestSettings } = require('../utils/contestDatabase');
+        const settings = await getContestSettings(expectedGuildId);
+        
+        if (settings && settings.allowedForumIds && settings.allowedForumIds.length > 0) {
+            // 检查频道是否为论坛帖子
+            if (channel.isThread() && channel.parent) {
+                // 检查父论坛是否在许可列表中
+                if (!settings.allowedForumIds.includes(channel.parent.id)) {
+                    return {
+                        success: false,
+                        error: '只能投稿指定论坛中的作品。请确保您的作品发布在允许投稿的论坛中。'
+                    };
+                }
+            } else {
+                // 如果不是论坛帖子，检查频道本身是否为许可论坛
+                if (!settings.allowedForumIds.includes(channel.id)) {
+                    return {
+                        success: false,
+                        error: '只能投稿指定论坛中的作品。请确保您的作品发布在允许投稿的论坛中。'
+                    };
+                }
+            }
+        }
+        
         let targetMessage = null;
         
         if (parseResult.linkType === 'message') {

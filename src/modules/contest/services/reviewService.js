@@ -196,10 +196,8 @@ ${reviewData.reason ? `💬 **审核意见：** ${reviewData.reason}\n\n` : ''}`
         }
         // modification_required 保持【待审核】标题，依靠标签显示状态
         
-        // 如果是被打回修改，发送审核历史消息
-        if (reviewData.result === 'modification_required') {
-            await postReviewHistoryMessage(thread, reviewData);
-        }
+        // 发送审核记录消息（所有审核结果都发送）
+        await postReviewHistoryMessage(thread, reviewData, applicationData.applicantId);
         
         console.log(`审核帖子状态已更新 - 帖子: ${thread.id}, 状态: ${reviewData.result}`);
         
@@ -221,28 +219,51 @@ ${reviewData.reason ? `💬 **审核意见：** ${reviewData.reason}\n\n` : ''}`
 /**
  * 发送审核历史消息
  */
-async function postReviewHistoryMessage(thread, reviewData) {
+async function postReviewHistoryMessage(thread, reviewData, applicantId) {
     try {
-        const historyMessage = `📋 **审核记录**
+        // 根据审核结果设置不同的emoji和文本
+        const resultConfig = {
+            'approved': {
+                emoji: '✅',
+                text: '审核通过',
+                color: '🟢',
+                followUp: '💡 申请人现在可以点击上方的 **"✅ 确认建立频道"** 按钮来创建赛事频道。'
+            },
+            'rejected': {
+                emoji: '❌',
+                text: '审核拒绝',
+                color: '🔴',
+                followUp: '📝 如有疑问，申请人可以联系审核员了解详细情况。'
+            },
+            'modification_required': {
+                emoji: '⚠️',
+                text: '需要修改',
+                color: '🟡',
+                followUp: '💡 申请人可以点击上方的 **"✏️ 编辑申请"** 按钮进行修改。修改后将进入再次审核流程。'
+            }
+        };
         
+        const config = resultConfig[reviewData.result] || resultConfig['modification_required'];
+        
+        const historyMessage = `<@${applicantId}> 您的赛事申请已被审核！
+## 📋 审核记录       
 👨‍💼 **审核员：** <@${reviewData.reviewerId}>
 📅 **审核时间：** <t:${Math.floor(new Date(reviewData.reviewedAt).getTime() / 1000)}:f>
-⚠️ **审核结果：** 需要修改
+${config.emoji} **审核结果：** ${config.text}
 
-💬 **修改要求：**
-${reviewData.reason || '无具体要求'}
-
+💬 **审核意见：**
+${reviewData.reason || '无具体意见'}
 ---
-💡 申请人可以点击上方的 **"✏️ 编辑申请"** 按钮进行修改。修改后将进入再次审核流程。`;
+${config.followUp}`;
 
         await thread.send({
             content: historyMessage
         });
         
-        console.log(`审核历史消息已发送 - 帖子: ${thread.id}`);
+        console.log(`审核记录消息已发送 - 帖子: ${thread.id}, 结果: ${reviewData.result}`);
         
     } catch (error) {
-        console.error('发送审核历史消息时出错:', error);
+        console.error('发送审核记录消息时出错:', error);
         // 不抛出错误，避免影响主流程
     }
 }

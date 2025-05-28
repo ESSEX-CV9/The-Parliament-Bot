@@ -22,6 +22,8 @@ const { processContestSubmission } = require('../../modules/contest/services/sub
 const { displayService } = require('../../modules/contest/services/displayService');
 const { getContestSettings, getContestApplication } = require('../../modules/contest/utils/contestDatabase');
 const { checkContestApplicationPermission, getApplicationPermissionDeniedMessage } = require('../../modules/contest/utils/contestPermissions');
+const { processSubmissionManagement, processSubmissionAction, processDeleteConfirmation, processRejectionModal } = require('../../modules/contest/services/submissionManagementService');
+const { createRejectionModal } = require('../../modules/contest/components/rejectionModal');
 
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../core/utils/database');
@@ -138,6 +140,53 @@ async function interactionCreateHandler(interaction) {
                 const contestChannelId = interaction.customId.replace('contest_submit_', '');
                 const modal = createSubmissionModal(contestChannelId);
                 await interaction.showModal(modal);
+            } else if (interaction.customId.startsWith('contest_manage_')) {
+                // 稿件管理按钮
+                await processSubmissionManagement(interaction);
+            } else if (interaction.customId.startsWith('manage_prev_') || 
+                       interaction.customId.startsWith('manage_next_')) {
+                // 稿件管理翻页按钮
+                const parts = interaction.customId.split('_');
+                const action = parts[1]; // prev 或 next
+                const contestChannelId = parts[2];
+                const page = parseInt(parts[3]);
+                
+                // 重新获取投稿数据并显示指定页面
+                const { getSubmissionsByChannel } = require('../../modules/contest/utils/contestDatabase');
+                const submissions = await getSubmissionsByChannel(contestChannelId);
+                const validSubmissions = submissions.filter(sub => sub.isValid)
+                    .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+                
+                const { showSubmissionManagementPage } = require('../../modules/contest/services/submissionManagementService');
+                await showSubmissionManagementPage(interaction, validSubmissions, page, contestChannelId);
+            } else if (interaction.customId.startsWith('manage_close_')) {
+                // 关闭稿件管理界面
+                await interaction.update({
+                    content: '✅ 稿件管理界面已关闭。',
+                    embeds: [],
+                    components: []
+                });
+            } else if (interaction.customId.startsWith('confirm_delete_')) {
+                // 确认删除投稿
+                await processDeleteConfirmation(interaction);
+            } else if (interaction.customId.startsWith('quick_delete_')) {
+                // 快速删除投稿
+                await processDeleteConfirmation(interaction);
+            } else if (interaction.customId.startsWith('show_rejection_modal_')) {
+                // 显示拒稿说明模态窗口
+                const parts = interaction.customId.split('_');
+                const submissionId = parts[3];
+                const contestChannelId = parts[4];
+                
+                const modal = createRejectionModal(submissionId, contestChannelId);
+                await interaction.showModal(modal);
+            } else if (interaction.customId.startsWith('cancel_delete_')) {
+                // 取消删除投稿
+                await interaction.update({
+                    content: '❌ 已取消删除操作。',
+                    embeds: [],
+                    components: []
+                });
             } else if (interaction.customId.startsWith('contest_prev_') || 
                        interaction.customId.startsWith('contest_next_') || 
                        interaction.customId.startsWith('contest_refresh_')) {
@@ -172,6 +221,18 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('contest_submission_')) {
                 // 投稿表单提交
                 await processContestSubmission(interaction);
+            } else if (interaction.customId.startsWith('rejection_reason_')) {
+                // 拒稿说明模态窗口提交
+                await processRejectionModal(interaction);
+            }
+            return;
+        }
+        
+        // 处理选择菜单
+        if (interaction.isStringSelectMenu()) {
+            if (interaction.customId.startsWith('submission_action_')) {
+                // 稿件管理操作选择
+                await processSubmissionAction(interaction);
             }
             return;
         }

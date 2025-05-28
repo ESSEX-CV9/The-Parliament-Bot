@@ -13,14 +13,18 @@ async function processContestSubmission(interaction) {
     try {
         await interaction.deferReply({ ephemeral: true });
         
-        // 从按钮ID中提取频道ID
-        const contestChannelId = interaction.customId.replace('contest_submit_', '');
+        // 从模态窗口customId中提取频道ID
+        const contestChannelId = interaction.customId.replace('contest_submission_', '');
         
         console.log(`处理投稿 - 频道: ${contestChannelId}, 用户: ${interaction.user.tag}`);
+        console.log(`模态窗口customId: ${interaction.customId}`);
         
         // 验证是否为有效的赛事频道
         const contestChannelData = await getContestChannel(contestChannelId);
+        console.log(`查询到的赛事频道数据:`, contestChannelData);
+        
         if (!contestChannelData) {
+            console.log(`未找到赛事频道数据 - 频道ID: ${contestChannelId}`);
             return interaction.editReply({
                 content: '❌ 无效的赛事频道。'
             });

@@ -17,6 +17,10 @@ const data = new SlashCommandBuilder()
             .setDescription('创建赛事频道的分类')
             .setRequired(true)
             .addChannelTypes(ChannelType.GuildCategory))
+    .addStringOption(option =>
+        option.setName('许可论坛')
+            .setDescription('允许投稿的论坛ID列表，用逗号分隔（例如：123456789,987654321）')
+            .setRequired(false))
     .addIntegerOption(option => 
         option.setName('每页作品数')
             .setDescription('作品展示每页显示的数量（5-8，默认6）')
@@ -49,6 +53,7 @@ async function execute(interaction) {
 
         const reviewForum = interaction.options.getChannel('审批论坛');
         const contestCategory = interaction.options.getChannel('赛事分类');
+        const allowedForums = interaction.options.getString('许可论坛') || '';
         const itemsPerPage = interaction.options.getInteger('每页作品数') || 6;
         
         // 验证频道类型
@@ -85,6 +90,32 @@ async function execute(interaction) {
 
         console.log('权限检查通过，开始设置赛事系统...');
         
+        // 验证和处理许可论坛列表
+        let allowedForumIds = [];
+        if (allowedForums.trim()) {
+            const forumIds = allowedForums.split(',').map(id => id.trim()).filter(id => id);
+            
+            // 验证每个论坛ID是否有效
+            for (const forumId of forumIds) {
+                try {
+                    const forum = await interaction.client.channels.fetch(forumId);
+                    if (forum && forum.type === ChannelType.GuildForum && forum.guild.id === interaction.guild.id) {
+                        allowedForumIds.push(forumId);
+                    } else {
+                        await interaction.editReply({
+                            content: `❌ 论坛ID ${forumId} 无效或不是本服务器的论坛频道。`
+                        });
+                        return;
+                    }
+                } catch (error) {
+                    await interaction.editReply({
+                        content: `❌ 无法访问论坛ID ${forumId}，请检查ID是否正确。`
+                    });
+                    return;
+                }
+            }
+        }
+        
         try {
             // 确保论坛有所需的审核状态标签
             await interaction.editReply({
@@ -104,6 +135,7 @@ async function execute(interaction) {
                 reviewForumId: reviewForum.id,
                 contestCategoryId: contestCategory.id,
                 itemsPerPage: itemsPerPage,
+                allowedForumIds: allowedForumIds,
                 tagMap: tagMap, // 保存标签映射
                 updatedAt: new Date().toISOString()
             };
@@ -137,7 +169,7 @@ async function execute(interaction) {
             }
             
             await interaction.editReply({ 
-                content: `✅ **赛事申请系统设置完成！**\n\n**配置信息：**\n• **申请入口频道：** ${interaction.channel}\n• **审批论坛：** ${reviewForum}\n• **赛事分类：** ${contestCategory}\n• **每页作品数：** ${itemsPerPage}\n• **入口消息ID：** \`${entryMessage.id}\`\n\n用户现在可以点击按钮申请举办赛事。\n\n**下一步：**\n• 使用 \`/设置赛事审核员\` 设置审核权限\n• 使用 \`/设置赛事申请权限\` 设置申请权限（可选）`
+                content: `✅ **赛事申请系统设置完成！**\n\n**配置信息：**\n• **申请入口频道：** ${interaction.channel}\n• **审批论坛：** ${reviewForum}\n• **赛事分类：** ${contestCategory}\n• **每页作品数：** ${itemsPerPage}\n• **许可论坛数量：** ${allowedForumIds.length} 个\n• **入口消息ID：** \`${entryMessage.id}\`\n\n用户现在可以点击按钮申请举办赛事。\n\n**下一步：**\n• 使用 \`/设置赛事审核员\` 设置审核权限\n• 使用 \`/设置赛事申请权限\` 设置申请权限（可选）`
             });
             
             console.log(`赛事申请系统设置完成 - 消息ID: ${entryMessage.id}, 操作者: ${interaction.user.tag}`);

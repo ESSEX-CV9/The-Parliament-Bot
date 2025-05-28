@@ -60,6 +60,7 @@ const reviewContestApplicationCommand = require('../modules/contest/commands/rev
 const updateContestInfoCommand = require('../modules/contest/commands/updateContestInfo');
 const updateContestTitleCommand = require('../modules/contest/commands/updateContestTitle');
 const initContestTagsCommand = require('../modules/contest/commands/initContestTags');
+const manageAllowedForumsCommand = require('../modules/contest/commands/manageAllowedForums');
 
 const client = new Client({ 
     intents: [
@@ -116,6 +117,7 @@ client.commands.set(reviewContestApplicationCommand.data.name, reviewContestAppl
 client.commands.set(updateContestInfoCommand.data.name, updateContestInfoCommand);
 client.commands.set(updateContestTitleCommand.data.name, updateContestTitleCommand);
 client.commands.set(initContestTagsCommand.data.name, initContestTagsCommand);
+client.commands.set(manageAllowedForumsCommand.data.name, manageAllowedForumsCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
