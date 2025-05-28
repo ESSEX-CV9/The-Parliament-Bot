@@ -4,6 +4,7 @@ const {
     getContestApplication,
     updateContestApplication 
 } = require('../utils/contestDatabase');
+const { sendReviewNotification } = require('./notificationService');
 
 async function processApplicationReview(interaction, applicationId, reviewResult, reason = '') {
     try {
@@ -59,6 +60,9 @@ async function processApplicationReview(interaction, applicationId, reviewResult
         
         try {
             await updateReviewThreadStatus(interaction.client, applicationData, reviewData);
+            
+            // 发送私聊通知
+            await sendReviewNotification(interaction.client, applicationData, reviewData);
             
             // 更新成功，显示最终结果
             await interaction.editReply({

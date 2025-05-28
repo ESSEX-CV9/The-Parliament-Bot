@@ -5,6 +5,7 @@ const {
     updateContestApplication,
     saveContestChannel 
 } = require('../utils/contestDatabase');
+const { sendChannelCreatedNotification } = require('./notificationService');
 
 async function processChannelConfirmation(interaction) {
     try {
@@ -57,11 +58,18 @@ async function processChannelConfirmation(interaction) {
             channelContent
         );
         
-        // 更新申请数据
+        // 更新申请数据，添加频道创建状态
         await updateContestApplication(applicationId, {
             channelId: contestChannel.id,
+            status: 'channel_created', // 新增状态：频道已创建
             updatedAt: new Date().toISOString()
         });
+        
+        // 更新审核帖子状态为"赛事已开启"
+        await updateChannelCreatedThreadStatus(interaction.client, applicationData, contestChannel);
+        
+        // 发送私聊通知
+        await sendChannelCreatedNotification(interaction.client, applicationData, contestChannel);
         
         await interaction.editReply({
             content: `✅ **赛事频道创建成功！**\n\n🏆 **频道：** ${contestChannel}\n🔗 **链接：** ${contestChannel.url}\n\n您现在可以在频道中管理赛事和查看投稿作品了。`
@@ -214,6 +222,75 @@ async function setupChannelMessages(contestChannel, applicationData, channelCont
     } catch (error) {
         console.error('设置频道消息时出错:', error);
         throw error;
+    }
+}
+
+/**
+ * 更新审核帖子状态为"赛事已开启"
+ */
+async function updateChannelCreatedThreadStatus(client, applicationData, contestChannel) {
+    try {
+        const thread = await client.channels.fetch(applicationData.threadId);
+        const messages = await thread.messages.fetch({ limit: 10 });
+        const firstMessage = messages.last();
+        
+        if (!firstMessage) {
+            throw new Error('找不到要更新的消息');
+        }
+        
+        // 构建更新的内容
+        const formData = applicationData.formData;
+        const updatedContent = `👤 **申请人：** <@${applicationData.applicantId}>
+📅 **申请时间：** <t:${Math.floor(new Date(applicationData.createdAt).getTime() / 1000)}:f>
+🆔 **申请ID：** \`${applicationData.id}\`
+👨‍💼 **审核员：** <@${applicationData.reviewData.reviewerId}>
+📅 **审核时间：** <t:${Math.floor(new Date(applicationData.reviewData.reviewedAt).getTime() / 1000)}:f>
+🏆 **赛事频道：** ${contestChannel}
+
+---
+
+🏆 **比赛标题**
+${formData.title}
+
+📝 **主题和参赛要求**
+${formData.theme}
+
+⏰ **比赛持续时间**
+${formData.duration}
+
+🎖️ **奖项设置和评价标准**
+${formData.awards}
+
+${formData.notes ? `📋 **注意事项和其他补充**\n${formData.notes}\n\n` : ''}---
+
+🎉 **状态：** 赛事已开启
+
+${applicationData.reviewData.reason ? `💬 **审核意见：** ${applicationData.reviewData.reason}\n\n` : ''}`;
+        
+        // 移除所有按钮，显示已开启状态
+        const components = [
+            new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`contest_opened_${applicationData.id}`)
+                        .setLabel('🎉 赛事已开启')
+                        .setStyle(ButtonStyle.Success)
+                        .setDisabled(true)
+                )
+        ];
+        
+        await firstMessage.edit({
+            content: updatedContent,
+            components: components
+        });
+        
+        await thread.setName(`【已通过】${formData.title}`);
+        
+        console.log(`审核帖子状态已更新为"赛事已开启" - 帖子: ${thread.id}`);
+        
+    } catch (error) {
+        console.error('更新审核帖子为"赛事已开启"状态时出错:', error);
+        // 不抛出错误，避免影响主流程
     }
 }
 
