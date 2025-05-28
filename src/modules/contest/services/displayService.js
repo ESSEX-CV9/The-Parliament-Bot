@@ -253,7 +253,7 @@ class DisplayService {
         
         return components;
     }
-
+    
     // 新增：处理页面跳转按钮
     async handlePageJumpButton(interaction) {
         try {
@@ -324,7 +324,7 @@ class DisplayService {
             const validSubmissions = submissions.filter(sub => sub.isValid)
                 .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
             
-            const itemsPerPage = 6;
+            const itemsPerPage = 5;
             const totalPages = Math.max(1, Math.ceil(validSubmissions.length / itemsPerPage));
             
             // 验证页码范围
@@ -390,7 +390,7 @@ class DisplayService {
                 });
             }
             
-            const itemsPerPage = 6;
+            const itemsPerPage = 5;
             const totalPages = Math.max(1, Math.ceil(validSubmissions.length / itemsPerPage));
             const currentPage = 1;
             
@@ -440,7 +440,7 @@ class DisplayService {
             const validSubmissions = submissions.filter(sub => sub.isValid)
                 .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
             
-            const itemsPerPage = 6;
+            const itemsPerPage = 5;
             const totalPages = Math.max(1, Math.ceil(validSubmissions.length / itemsPerPage));
             
             // 从交互消息中获取当前页码
