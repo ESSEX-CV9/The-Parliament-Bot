@@ -105,7 +105,7 @@ async function execute(interaction) {
         let entryMessage;
         try {
             entryMessage = await interaction.channel.send({
-                content: `🏆 **赛事申请入口**\n\n欢迎申请举办同人创作比赛！\n\n**申请流程：**\n1️⃣ 点击下方按钮填写申请表单\n2️⃣ 等待管理员在审批论坛中审核\n3️⃣ 审核通过后确认建立赛事频道\n4️⃣ 开始管理您的比赛\n\n**表单内容包括：**\n• 比赛标题\n• 主题和参赛要求\n• 比赛持续时间\n• 奖项设置和评价标准\n• 注意事项和其他补充`,
+                content: `🏆 **赛事申请入口**\n\n欢迎申请举办比赛！\n\n**申请流程：**\n1️⃣ 点击下方按钮填写申请表单\n2️⃣ 等待管理员在审批论坛中审核\n3️⃣ 审核通过后确认建立赛事频道\n4️⃣ 开始管理您的比赛\n\n**表单内容包括：**\n• 比赛标题\n• 主题和参赛要求\n• 比赛持续时间\n• 奖项设置和评价标准\n• 注意事项和其他补充`,
                 components: [
                     {
                         type: 1, // ACTION_ROW

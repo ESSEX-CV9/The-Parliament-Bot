@@ -80,7 +80,29 @@ async function saveContestApplication(applicationData) {
 
 async function getContestApplication(applicationId) {
     const applications = readJsonFile(CONTEST_APPLICATIONS_FILE);
-    return applications[applicationId];
+    
+    // 尝试直接查找
+    if (applications[applicationId]) {
+        return applications[applicationId];
+    }
+    
+    // 如果直接查找失败，尝试转换为字符串查找
+    const stringId = String(applicationId);
+    if (applications[stringId]) {
+        return applications[stringId];
+    }
+    
+    // 如果还是失败，遍历查找匹配的ID
+    for (const appId in applications) {
+        const app = applications[appId];
+        if (app.id == applicationId) { // 使用 == 而不是 === 来处理类型转换
+            return app;
+        }
+    }
+    
+    console.log(`未找到申请ID: ${applicationId}`);
+    console.log('当前所有申请ID:', Object.keys(applications));
+    return null;
 }
 
 async function updateContestApplication(applicationId, updates) {

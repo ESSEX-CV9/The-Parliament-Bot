@@ -1,5 +1,5 @@
 // src/modules/contest/services/applicationService.js
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { 
     getNextApplicationId, 
     saveContestApplication,
@@ -9,7 +9,7 @@ const {
 
 async function processContestApplication(interaction) {
     try {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         
         console.log(`处理赛事申请 - 用户: ${interaction.user.tag}`);
         
@@ -139,6 +139,12 @@ async function setupReviewThreadPermissions(thread, applicantId) {
         const { getContestSettings } = require('../utils/contestDatabase');
         const settings = await getContestSettings(thread.guild.id);
         
+        // 检查thread是否有permissionOverwrites属性
+        if (!thread.permissionOverwrites) {
+            console.log(`论坛帖子 ${thread.id} 不支持权限覆盖，跳过权限设置`);
+            return;
+        }
+        
         // 允许申请人发言
         await thread.permissionOverwrites.create(applicantId, {
             SendMessages: true,
@@ -163,61 +169,68 @@ async function setupReviewThreadPermissions(thread, applicantId) {
         
     } catch (error) {
         console.error('设置审核帖子权限时出错:', error);
+        // 不要抛出错误，让流程继续
     }
 }
 
 async function processEditApplication(interaction) {
     try {
-        await interaction.deferReply({ ephemeral: true });
-        
         // 从按钮ID中提取申请ID
         const applicationId = interaction.customId.replace('contest_edit_', '');
         const applicationData = await getContestApplication(applicationId);
         
         if (!applicationData) {
-            return interaction.editReply({
-                content: '❌ 找不到对应的申请记录。'
+            return interaction.reply({
+                content: '❌ 找不到对应的申请记录。',
+                ephemeral: true
             });
         }
         
         // 检查权限：只有申请人可以编辑
         if (applicationData.applicantId !== interaction.user.id) {
-            return interaction.editReply({
-                content: '❌ 只有申请人可以编辑申请内容。'
+            return interaction.reply({
+                content: '❌ 只有申请人可以编辑申请内容。',
+                ephemeral: true
             });
         }
         
         // 检查状态：只有待审核或要求修改的申请可以编辑
         if (!['pending', 'modification_required'].includes(applicationData.status)) {
-            return interaction.editReply({
-                content: '❌ 当前申请状态不允许编辑。'
+            return interaction.reply({
+                content: '❌ 当前申请状态不允许编辑。',
+                ephemeral: true
             });
         }
         
         const { createEditApplicationModal } = require('../components/applicationModal');
         const modal = createEditApplicationModal(applicationData.formData);
         
+        // 直接显示模态窗口，不要先 defer
         await interaction.showModal(modal);
         
     } catch (error) {
         console.error('处理编辑申请时出错:', error);
         
-        try {
-            await interaction.editReply({
-                content: `❌ 处理编辑请求时出现错误：${error.message}`
-            });
-        } catch (replyError) {
-            console.error('回复错误信息失败:', replyError);
+        // 如果还没有回复过，则回复错误信息
+        if (!interaction.replied && !interaction.deferred) {
+            try {
+                await interaction.reply({
+                    content: `❌ 处理编辑请求时出现错误：${error.message}`,
+                    ephemeral: true
+                });
+            } catch (replyError) {
+                console.error('回复错误信息失败:', replyError);
+            }
         }
     }
 }
 
 async function processEditApplicationSubmission(interaction) {
     try {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         
         // 获取申请ID（从modal的customId中提取）
-        const applicationId = findApplicationIdFromThread(interaction.channel.id);
+        const applicationId = await findApplicationIdFromThread(interaction.channel.id);
         
         if (!applicationId) {
             return interaction.editReply({
@@ -338,12 +351,16 @@ async function findApplicationIdFromThread(threadId) {
         const { getAllContestApplications } = require('../utils/contestDatabase');
         const applications = await getAllContestApplications();
         
+        // 遍历所有申请，查找匹配的threadId
         for (const appId in applications) {
-            if (applications[appId].threadId === threadId) {
-                return applications[appId].id;
+            const app = applications[appId];
+            if (app.threadId === threadId) {
+                return app.id;
             }
         }
         
+        console.log(`未找到threadId ${threadId} 对应的申请ID`);
+        console.log('当前所有申请:', Object.keys(applications));
         return null;
     } catch (error) {
         console.error('查找申请ID时出错:', error);

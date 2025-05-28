@@ -54,7 +54,7 @@ ${formData.awards}
 
 ${formData.notes ? `📋 **注意事项**\n${formData.notes}\n\n` : ''}---
 
-欢迎参加本次同人创作比赛！请在下方投稿入口提交您的作品。`;
+欢迎参加本次比赛！请在下方投稿入口提交您的作品。`;
 }
 
 module.exports = { 

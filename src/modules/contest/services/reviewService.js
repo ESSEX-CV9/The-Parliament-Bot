@@ -45,23 +45,34 @@ async function processApplicationReview(interaction, applicationId, reviewResult
             updatedAt: new Date().toISOString()
         });
         
-        // 更新审核帖子
-        await interaction.editReply({
-            content: '⏳ 正在更新审核帖子...'
-        });
-        
-        await updateReviewThreadStatus(interaction.client, applicationData, reviewData);
-        
-        // 根据审核结果给出不同回复
+        // 准备结果消息
         const resultMessages = {
             'approved': `✅ 申请ID \`${applicationId}\` 已审核通过！申请人现在可以确认建立赛事频道了。`,
             'rejected': `❌ 申请ID \`${applicationId}\` 已被拒绝。${reason ? `\n**拒绝原因：** ${reason}` : ''}`,
             'modification_required': `⚠️ 申请ID \`${applicationId}\` 需要修改。${reason ? `\n**修改要求：** ${reason}` : ''}\n申请人可以继续编辑申请内容。`
         };
         
+        // 更新审核帖子
         await interaction.editReply({
-            content: resultMessages[reviewResult] || '✅ 审核完成。'
+            content: '⏳ 正在更新审核帖子...'
         });
+        
+        try {
+            await updateReviewThreadStatus(interaction.client, applicationData, reviewData);
+            
+            // 更新成功，显示最终结果
+            await interaction.editReply({
+                content: resultMessages[reviewResult] || '✅ 审核完成。'
+            });
+            
+        } catch (threadUpdateError) {
+            console.error('更新审核帖子时出错:', threadUpdateError);
+            
+            // 即使帖子更新失败，也要告知用户审核已完成
+            await interaction.editReply({
+                content: `${resultMessages[reviewResult] || '✅ 审核完成。'}\n\n⚠️ 注意：审核帖子更新可能失败，但审核结果已保存。`
+            });
+        }
         
         console.log(`申请审核完成 - ID: ${applicationId}, 结果: ${reviewResult}`);
         
