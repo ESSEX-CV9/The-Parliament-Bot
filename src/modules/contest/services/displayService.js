@@ -79,7 +79,7 @@ class DisplayService {
                 description += `👤投稿者: ${authorMention}\n`;
                 description += `📅投稿时间：<t:${publishTime}:f>\n`;
                 description += `📝作品介绍: ${content}\n`;
-                description += `🆔投稿ID：\`${submission.id}\`\n`;
+                description += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
                 description += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
             } else {
                 // 本服务器投稿的正常格式
@@ -87,7 +87,7 @@ class DisplayService {
                 description += `👤作者：${authorMention}\n`;
                 description += `📅发布时间：<t:${publishTime}:f>\n`;
                 description += `📝作品介绍: ${content}\n`;
-                description += `🆔投稿ID：\`${submission.id}\`\n`;
+                description += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
             }
             
             if (i < submissions.length - 1) {
