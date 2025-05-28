@@ -62,6 +62,7 @@ const updateContestTitleCommand = require('../modules/contest/commands/updateCon
 const initContestTagsCommand = require('../modules/contest/commands/initContestTags');
 const manageAllowedForumsCommand = require('../modules/contest/commands/manageAllowedForums');
 const manageExternalServersCommand = require('../modules/contest/commands/manageExternalServers');
+const cacheStats = require('../modules/contest/commands/cacheStats');
 
 const client = new Client({ 
     intents: [
@@ -120,6 +121,7 @@ client.commands.set(updateContestTitleCommand.data.name, updateContestTitleComma
 client.commands.set(initContestTagsCommand.data.name, initContestTagsCommand);
 client.commands.set(manageAllowedForumsCommand.data.name, manageAllowedForumsCommand);
 client.commands.set(manageExternalServersCommand.data.name, manageExternalServersCommand);
+client.commands.set(cacheStats.data.name, cacheStats);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);

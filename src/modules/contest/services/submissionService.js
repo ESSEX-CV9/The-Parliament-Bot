@@ -8,6 +8,7 @@ const {
     getSubmissionsByChannel 
 } = require('../utils/contestDatabase');
 const { validateSubmissionLink, checkDuplicateSubmission } = require('./linkParser');
+const { displayService } = require('./displayService');
 
 async function processContestSubmission(interaction) {
     try {
@@ -112,6 +113,9 @@ async function processContestSubmission(interaction) {
         // 更新作品展示
         await updateSubmissionDisplay(interaction.client, contestChannelData);
         
+        // 清除缓存以确保数据一致性
+        displayService.clearCache(contestChannelId);
+        
         const externalWarning = validationResult.isExternal ? '\n\n⚠️ **注意：** 这是外部服务器投稿，机器人无法验证内容。' : '';
         
         await interaction.editReply({
@@ -147,7 +151,6 @@ async function updateSubmissionDisplay(client, contestChannelData) {
         const submissions = await getSubmissionsByChannel(contestChannelData.channelId);
         const validSubmissions = submissions.filter(sub => sub.isValid);
         
-        const { displayService } = require('./displayService');
         await displayService.updateDisplayMessage(
             displayMessage,
             validSubmissions,
@@ -155,6 +158,9 @@ async function updateSubmissionDisplay(client, contestChannelData) {
             5, // 固定显示最近5个
             contestChannelData.channelId
         );
+        
+        // 清除缓存以确保显示最新数据
+        displayService.clearCache(contestChannelData.channelId);
         
         console.log(`作品展示已更新 - 频道: ${contestChannelData.channelId}, 作品数: ${validSubmissions.length}`);
         
