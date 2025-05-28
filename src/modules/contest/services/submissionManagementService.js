@@ -88,7 +88,10 @@ async function showSubmissionManagementPage(interaction, submissions, page, cont
         const submissionNumber = startIndex + i + 1;
         const submittedTime = Math.floor(new Date(submission.submittedAt).getTime() / 1000);
         
-        description += `**${submissionNumber}. ${preview.title}**\n`;
+        // 构建作品链接
+        const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
+        
+        description += `**${submissionNumber}.** ${workUrl}\n`;
         description += `👤 作者：<@${submission.submitterId}>\n`;
         description += `📅 投稿时间：<t:${submittedTime}:R>\n`;
         description += `🆔 投稿ID：\`${submission.id}\`\n`;
@@ -105,11 +108,17 @@ async function showSubmissionManagementPage(interaction, submissions, page, cont
     
     // 删除投稿选择菜单
     if (pageSubmissions.length > 0) {
-        const selectOptions = pageSubmissions.map(submission => ({
-            label: `${submission.cachedPreview.title.substring(0, 50)}${submission.cachedPreview.title.length > 50 ? '...' : ''}`,
-            description: `作者: ${submission.submitterId} | ID: ${submission.id}`,
-            value: `delete_${submission.id}`
-        }));
+        const selectOptions = pageSubmissions.map(submission => {
+            // 获取帖子标题的前20字
+            const title = submission.cachedPreview.title || '无标题';
+            const shortTitle = title.length > 20 ? `${title.substring(0, 20)}...` : title;
+            
+            return {
+                label: shortTitle,
+                description: `作者: ${submission.submitterId} | ID: ${submission.id}`,
+                value: `delete_${submission.id}`
+            };
+        });
         
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId(`submission_action_${contestChannelId}`)
@@ -204,9 +213,12 @@ async function showDeleteConfirmation(interaction, submissionId, contestChannelI
         });
     }
     
+    // 构建作品链接
+    const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
+    
     const embed = new EmbedBuilder()
         .setTitle('⚠️ 确认删除投稿')
-        .setDescription(`**作品：** ${submission.cachedPreview.title}\n**作者：** <@${submission.submitterId}>\n**投稿时间：** <t:${Math.floor(new Date(submission.submittedAt).getTime() / 1000)}:f>\n\n确定要删除这个投稿吗？`)
+        .setDescription(`**作品链接：** ${workUrl}\n**作者：** <@${submission.submitterId}>\n**投稿时间：** <t:${Math.floor(new Date(submission.submittedAt).getTime() / 1000)}:f>\n\n确定要删除这个投稿吗？`)
         .setColor('#FF6B6B');
     
     const buttons = new ActionRowBuilder()
@@ -266,11 +278,14 @@ async function sendRejectionNotification(client, submission, reason) {
         const user = await client.users.fetch(submission.submitterId);
         if (!user) return;
         
+        // 构建作品链接
+        const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
+        
         const embed = new EmbedBuilder()
             .setTitle('📝 投稿被删除通知')
             .setDescription(`您的投稿作品已被主办人删除。`)
             .addFields(
-                { name: '🎨 作品标题', value: submission.cachedPreview.title, inline: false },
+                { name: '🔗 作品链接', value: workUrl, inline: false },
                 { name: '📅 投稿时间', value: `<t:${Math.floor(new Date(submission.submittedAt).getTime() / 1000)}:f>`, inline: true },
                 { name: '🗑️ 删除原因', value: reason || '无具体说明', inline: false }
             )
@@ -329,6 +344,9 @@ async function deleteSubmissionWithReason(interaction, submissionId, contestChan
         });
     }
     
+    // 构建作品链接
+    const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
+    
     // 删除投稿
     await deleteContestSubmission(submissionId);
     
@@ -350,7 +368,7 @@ async function deleteSubmissionWithReason(interaction, submissionId, contestChan
     await sendRejectionNotification(interaction.client, submission, reason);
     
     await interaction.editReply({
-        content: `✅ 已删除投稿《${submission.cachedPreview.title}》，并已通知作者。\n\n**拒稿说明：** ${reason}`
+        content: `✅ 已删除投稿 ${workUrl}，并已通知作者。\n\n**拒稿说明：** ${reason}`
     });
     
     console.log(`投稿已删除 - ID: ${submissionId}, 主办人: ${interaction.user.tag}, 原因: ${reason}`);

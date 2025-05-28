@@ -173,11 +173,17 @@ function extractMessagePreview(message) {
         let title = '';
         let content = message.content;
         
-        // 尝试从内容中提取标题
-        const lines = content.split('\n').filter(line => line.trim().length > 0);
-        if (lines.length > 1 && lines[0].length <= 100) {
-            title = lines[0].trim();
-            content = lines.slice(1).join('\n');
+        // 优先检查是否为论坛帖子，如果是则使用帖子标题
+        if (message.channel.isThread() && message.channel.parent && message.channel.parent.type === 15) {
+            // 这是论坛帖子，使用帖子标题
+            title = message.channel.name;
+        } else {
+            // 不是论坛帖子，尝试从内容中提取标题
+            const lines = content.split('\n').filter(line => line.trim().length > 0);
+            if (lines.length > 1 && lines[0].length <= 100) {
+                title = lines[0].trim();
+                content = lines.slice(1).join('\n');
+            }
         }
         
         // 获取首个图片

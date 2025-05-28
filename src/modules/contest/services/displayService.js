@@ -56,18 +56,31 @@ class DisplayService {
             const preview = submission.cachedPreview;
             const submissionNumber = ((currentPage - 1) * submissions.length) + i + 1;
             
-            // 构建单个作品的展示
-            const submittedTime = Math.floor(new Date(submission.submittedAt).getTime() / 1000);
+            // 构建作品链接
             const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
             
-            description += `**${submissionNumber}. ${preview.title}**\n`;
-            description += `👤 作者：<@${submission.submitterId}>\n`;
-            description += `📅 投稿时间：<t:${submittedTime}:R>\n`;
-            description += `📝 ${preview.content.substring(0, 200)}${preview.content.length > 200 ? '...' : ''}\n`;
-            description += `🔗 [查看完整作品](${workUrl})\n`;
+            // 获取发布时间（使用帖子的原始发布时间）
+            const publishTime = Math.floor(preview.timestamp / 1000);
+            
+            // 获取作者信息
+            const authorMention = `<@${submission.submitterId}>`;
+            
+            // 使用稿件说明，如果没有则显示默认文本
+            let content = submission.submissionDescription || '作者未提供稿件说明';
+            // 确保内容不超过300字，超出部分用.....省略
+            if (content.length > 300) {
+                content = content.substring(0, 300) + '.....';
+            }
+            
+            // 构建新格式的展示（移除多余的缩进）
+            description += `${submissionNumber}.  ${workUrl}\n`;
+            description += `👤作者：${authorMention}\n`;
+            description += `📅发布时间：<t:${publishTime}:f>\n`;
+            description += `📝作品介绍: ${content}\n`;
+            description += `🆔投稿ID：\`${submission.id}\`\n`;
             
             if (i < submissions.length - 1) {
-                description += '\n---\n\n';
+                description += '\n';
             }
         }
         

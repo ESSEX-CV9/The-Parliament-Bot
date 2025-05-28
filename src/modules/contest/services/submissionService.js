@@ -30,8 +30,9 @@ async function processContestSubmission(interaction) {
             });
         }
         
-        // 获取提交的链接
+        // 获取提交的链接和稿件说明
         const submissionLink = interaction.fields.getTextInputValue('submission_link').trim();
+        const submissionDescription = interaction.fields.getTextInputValue('submission_description')?.trim() || '';
         
         await interaction.editReply({
             content: '⏳ 正在验证投稿链接...'
@@ -82,6 +83,7 @@ async function processContestSubmission(interaction) {
                 messageId: validationResult.parsedInfo.messageId
             },
             cachedPreview: validationResult.preview,
+            submissionDescription: submissionDescription,
             submittedAt: new Date().toISOString(),
             isValid: true
         };
