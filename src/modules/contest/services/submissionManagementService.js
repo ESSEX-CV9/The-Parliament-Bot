@@ -4,7 +4,8 @@ const {
     getSubmissionsByChannel,
     updateContestSubmission,
     deleteContestSubmission,
-    updateContestChannel
+    updateContestChannel,
+    getContestSubmissionByGlobalId
 } = require('../utils/contestDatabase');
 
 /**
@@ -94,7 +95,7 @@ async function showSubmissionManagementPage(interaction, submissions, page, cont
         description += `**${submissionNumber}.** ${workUrl}\n`;
         description += `👤 作者：<@${submission.submitterId}>\n`;
         description += `📅 投稿时间：<t:${submittedTime}:R>\n`;
-        description += `🆔 投稿ID：\`${submission.id}\`\n`;
+        description += `🆔 投稿ID：\`${submission.contestSubmissionId}\`\n`;
         
         if (i < pageSubmissions.length - 1) {
             description += '\n---\n\n';
@@ -115,8 +116,8 @@ async function showSubmissionManagementPage(interaction, submissions, page, cont
             
             return {
                 label: shortTitle,
-                description: `作者: ${submission.submitterId} | ID: ${submission.id}`,
-                value: `delete_${submission.id}`
+                description: `作者: ${submission.submitterId} | ID: ${submission.contestSubmissionId}`,
+                value: `delete_${submission.globalId}`
             };
         });
         
@@ -179,12 +180,12 @@ async function processSubmissionAction(interaction) {
     try {
         await interaction.deferReply({ ephemeral: true });
         
-        const [action, submissionId] = interaction.values[0].split('_');
+        const [action, globalId] = interaction.values[0].split('_');
         const contestChannelId = interaction.customId.replace('submission_action_', '');
         
         if (action === 'delete') {
             // 显示删除确认和拒稿说明输入
-            await showDeleteConfirmation(interaction, submissionId, contestChannelId);
+            await showDeleteConfirmation(interaction, globalId, contestChannelId);
         }
         
     } catch (error) {
@@ -203,13 +204,13 @@ async function processSubmissionAction(interaction) {
 /**
  * 显示删除确认界面
  */
-async function showDeleteConfirmation(interaction, submissionId, contestChannelId) {
-    const { getContestSubmission } = require('../utils/contestDatabase');
-    const submission = await getContestSubmission(submissionId);
+async function showDeleteConfirmation(interaction, globalId, contestChannelId) {
+    // 通过全局ID获取投稿
+    const submission = await getContestSubmissionByGlobalId(globalId);
     
     if (!submission) {
         return interaction.editReply({
-            content: '❌ 找不到指定的投稿。'
+            content: '❌ 未找到指定的投稿。'
         });
     }
     
@@ -217,24 +218,21 @@ async function showDeleteConfirmation(interaction, submissionId, contestChannelI
     const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
     
     const embed = new EmbedBuilder()
-        .setTitle('⚠️ 确认删除投稿')
-        .setDescription(`**作品链接：** ${workUrl}\n**作者：** <@${submission.submitterId}>\n**投稿时间：** <t:${Math.floor(new Date(submission.submittedAt).getTime() / 1000)}:f>\n\n确定要删除这个投稿吗？`)
-        .setColor('#FF6B6B');
+        .setTitle('🗑️ 删除投稿确认')
+        .setDescription(`**投稿ID：** \`${submission.contestSubmissionId}\`\n**作者：** <@${submission.submitterId}>\n**作品：** ${submission.cachedPreview.title || '无标题'}\n\n请选择删除方式：`)
+        .setColor('#FF6B6B')
+        .setTimestamp();
     
     const buttons = new ActionRowBuilder()
         .addComponents(
             new ButtonBuilder()
-                .setCustomId(`show_rejection_modal_${submissionId}_${contestChannelId}`)
-                .setLabel('🗑️ 删除并说明原因')
-                .setStyle(ButtonStyle.Danger),
+                .setCustomId(`show_rejection_modal_${globalId}_${contestChannelId}`)
+                .setLabel('📝 填写拒稿理由')
+                .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
-                .setCustomId(`quick_delete_${submissionId}_${contestChannelId}`)
+                .setCustomId(`quick_delete_${globalId}_${contestChannelId}`)
                 .setLabel('🗑️ 直接删除')
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId(`cancel_delete_${contestChannelId}`)
-                .setLabel('❌ 取消')
-                .setStyle(ButtonStyle.Secondary)
+                .setStyle(ButtonStyle.Danger)
         );
     
     await interaction.editReply({
@@ -294,7 +292,7 @@ async function sendRejectionNotification(client, submission, reason) {
         
         await user.send({ embeds: [embed] });
         
-        console.log(`拒稿通知已发送 - 用户: ${user.tag}, 投稿ID: ${submission.id}`);
+        console.log(`拒稿通知已发送 - 用户: ${user.tag}, 投稿ID: ${submission.contestSubmissionId}`);
         
     } catch (error) {
         console.error('发送拒稿通知时出错:', error);
@@ -333,27 +331,28 @@ async function processRejectionModal(interaction) {
 /**
  * 删除投稿并发送通知
  */
-async function deleteSubmissionWithReason(interaction, submissionId, contestChannelId, reason) {
-    // 获取投稿信息
-    const { getContestSubmission } = require('../utils/contestDatabase');
-    const submission = await getContestSubmission(submissionId);
-    
-    if (!submission) {
-        return interaction.editReply({
-            content: '❌ 找不到指定的投稿。'
-        });
-    }
-    
-    // 构建作品链接
-    const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
-    
-    // 删除投稿
-    await deleteContestSubmission(submissionId);
-    
-    // 更新赛事频道的投稿列表
-    const contestChannelData = await getContestChannel(contestChannelId);
-    if (contestChannelData) {
-        const updatedSubmissions = contestChannelData.submissions.filter(id => id != submissionId);
+async function deleteSubmissionWithReason(interaction, globalId, contestChannelId, reason) {
+    try {
+        // 通过全局ID获取投稿
+        const submission = await getContestSubmissionByGlobalId(globalId);
+        
+        if (!submission) {
+            return interaction.editReply({
+                content: '❌ 未找到指定的投稿。'
+            });
+        }
+        
+        // 发送拒稿通知
+        if (reason !== '主办人删除了您的投稿') {
+            await sendRejectionNotification(interaction.client, submission, reason);
+        }
+        
+        // 删除投稿数据
+        await deleteContestSubmission(globalId);
+        
+        // 更新赛事频道的投稿列表
+        const contestChannelData = await getContestChannel(contestChannelId);
+        const updatedSubmissions = contestChannelData.submissions.filter(id => id != globalId);
         await updateContestChannel(contestChannelId, {
             submissions: updatedSubmissions,
             totalSubmissions: updatedSubmissions.length
@@ -361,17 +360,28 @@ async function deleteSubmissionWithReason(interaction, submissionId, contestChan
         
         // 更新作品展示
         const { updateSubmissionDisplay } = require('./submissionService');
-        await updateSubmissionDisplay(interaction.client, contestChannelData);
+        await updateSubmissionDisplay(interaction.client, {
+            ...contestChannelData,
+            submissions: updatedSubmissions
+        });
+        
+        await interaction.editReply({
+            content: `✅ **投稿已删除**\n\n🆔 **投稿ID：** \`${submission.contestSubmissionId}\`\n📝 **理由：** ${reason}`
+        });
+        
+        console.log(`投稿已删除 - 比赛内ID: ${submission.contestSubmissionId}, 全局ID: ${globalId}, 主办人: ${interaction.user.tag}, 原因: ${reason}`);
+        
+    } catch (error) {
+        console.error('删除投稿时出错:', error);
+        
+        try {
+            await interaction.editReply({
+                content: `❌ 删除投稿时出现错误：${error.message}`
+            });
+        } catch (replyError) {
+            console.error('回复错误信息失败:', replyError);
+        }
     }
-    
-    // 发送拒稿通知
-    await sendRejectionNotification(interaction.client, submission, reason);
-    
-    await interaction.editReply({
-        content: `✅ 已删除投稿 ${workUrl}，并已通知作者。\n\n**拒稿说明：** ${reason}`
-    });
-    
-    console.log(`投稿已删除 - ID: ${submissionId}, 主办人: ${interaction.user.tag}, 原因: ${reason}`);
 }
 
 module.exports = {

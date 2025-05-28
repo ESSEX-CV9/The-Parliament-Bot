@@ -77,10 +77,11 @@ async function processContestSubmission(interaction) {
             content: '⏳ 正在保存投稿信息...'
         });
         
-        // 保存投稿数据
-        const submissionId = getNextSubmissionId();
+        // 生成比赛内的独立投稿ID
+        const contestSubmissionId = getNextSubmissionId(contestChannelId);
+        
         const submissionData = {
-            id: submissionId,
+            contestSubmissionId: contestSubmissionId, // 比赛内的独立ID
             contestChannelId: contestChannelId,
             submitterId: interaction.user.id,
             originalUrl: submissionLink,
@@ -97,10 +98,10 @@ async function processContestSubmission(interaction) {
             isExternal: validationResult.isExternal || false
         };
         
-        await saveContestSubmission(submissionData);
+        const savedSubmission = await saveContestSubmission(submissionData);
         
-        // 更新赛事频道的投稿列表
-        const updatedSubmissions = [...contestChannelData.submissions, submissionId];
+        // 更新赛事频道的投稿列表（使用全局ID）
+        const updatedSubmissions = [...contestChannelData.submissions, savedSubmission.globalId];
         await updateContestChannel(contestChannelId, {
             submissions: updatedSubmissions,
             totalSubmissions: updatedSubmissions.length
@@ -112,10 +113,10 @@ async function processContestSubmission(interaction) {
         const externalWarning = validationResult.isExternal ? '\n\n⚠️ **注意：** 这是外部服务器投稿，机器人无法验证内容。' : '';
         
         await interaction.editReply({
-            content: `✅ **投稿成功！**\n\n🎨 **作品：** ${validationResult.preview.title}\n📝 **投稿ID：** \`${submissionId}\`\n\n您的作品已添加到展示列表中。${externalWarning}`
+            content: `✅ **投稿成功！**\n\n🎨 **作品：** ${validationResult.preview.title}\n📝 **投稿ID：** \`${contestSubmissionId}\`\n\n您的作品已添加到展示列表中。${externalWarning}`
         });
         
-        console.log(`投稿成功 - ID: ${submissionId}, 用户: ${interaction.user.tag}, 频道: ${contestChannelId}, 外部: ${validationResult.isExternal}`);
+        console.log(`投稿成功 - 比赛内ID: ${contestSubmissionId}, 全局ID: ${savedSubmission.globalId}, 用户: ${interaction.user.tag}, 频道: ${contestChannelId}, 外部: ${validationResult.isExternal}`);
         
     } catch (error) {
         console.error('处理投稿时出错:', error);

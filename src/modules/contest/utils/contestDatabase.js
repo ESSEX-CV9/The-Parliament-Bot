@@ -161,13 +161,28 @@ async function updateContestChannel(channelId, updates) {
 }
 
 // 投稿相关
-function getNextSubmissionId() {
+function getNextSubmissionId(contestChannelId) {
+    const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
+    let maxId = 0;
+    
+    // 只查找当前比赛的投稿，获取最大ID
+    for (const subId in submissions) {
+        const sub = submissions[subId];
+        if (sub.contestChannelId === contestChannelId && sub.contestSubmissionId && !isNaN(parseInt(sub.contestSubmissionId))) {
+            maxId = Math.max(maxId, parseInt(sub.contestSubmissionId));
+        }
+    }
+    return maxId + 1;
+}
+
+// 新增：获取全局唯一ID（用于存储键）
+function getNextGlobalSubmissionId() {
     const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
     let maxId = 0;
     for (const subId in submissions) {
         const sub = submissions[subId];
-        if (sub.id && !isNaN(parseInt(sub.id))) {
-            maxId = Math.max(maxId, parseInt(sub.id));
+        if (sub.globalId && !isNaN(parseInt(sub.globalId))) {
+            maxId = Math.max(maxId, parseInt(sub.globalId));
         }
     }
     return maxId + 1;
@@ -175,15 +190,40 @@ function getNextSubmissionId() {
 
 async function saveContestSubmission(submissionData) {
     const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
-    submissions[submissionData.id] = submissionData;
+    
+    // 使用全局唯一ID作为存储键，但保留比赛内的独立ID
+    const globalId = getNextGlobalSubmissionId();
+    const submissionWithGlobalId = {
+        ...submissionData,
+        globalId: globalId // 添加全局唯一ID用于存储
+    };
+    
+    submissions[globalId] = submissionWithGlobalId;
     writeJsonFile(CONTEST_SUBMISSIONS_FILE, submissions);
-    console.log(`成功保存投稿 - ID: ${submissionData.id}`);
-    return submissionData;
+    console.log(`成功保存投稿 - 全局ID: ${globalId}, 比赛内ID: ${submissionData.contestSubmissionId}, 比赛: ${submissionData.contestChannelId}`);
+    return submissionWithGlobalId;
 }
 
-async function getContestSubmission(submissionId) {
+// 修改：通过比赛内ID和比赛频道ID查找投稿
+async function getContestSubmission(contestSubmissionId, contestChannelId) {
     const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
-    return submissions[submissionId] || null;
+    
+    // 遍历查找匹配的投稿
+    for (const globalId in submissions) {
+        const sub = submissions[globalId];
+        if (sub.contestSubmissionId == contestSubmissionId && sub.contestChannelId === contestChannelId) {
+            return sub;
+        }
+    }
+    
+    console.log(`未找到投稿 - 比赛内ID: ${contestSubmissionId}, 比赛: ${contestChannelId}`);
+    return null;
+}
+
+// 新增：通过全局ID查找投稿（用于内部操作）
+async function getContestSubmissionByGlobalId(globalId) {
+    const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
+    return submissions[globalId] || null;
 }
 
 async function getSubmissionsByChannel(channelId) {
@@ -191,20 +231,22 @@ async function getSubmissionsByChannel(channelId) {
     return Object.values(submissions).filter(sub => sub.contestChannelId === channelId);
 }
 
-async function updateContestSubmission(submissionId, updates) {
+// 修改：通过全局ID更新投稿
+async function updateContestSubmission(globalId, updates) {
     const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
-    if (submissions[submissionId]) {
-        submissions[submissionId] = { ...submissions[submissionId], ...updates };
+    if (submissions[globalId]) {
+        submissions[globalId] = { ...submissions[globalId], ...updates };
         writeJsonFile(CONTEST_SUBMISSIONS_FILE, submissions);
-        return submissions[submissionId];
+        return submissions[globalId];
     }
     return null;
 }
 
-async function deleteContestSubmission(submissionId) {
+// 修改：通过全局ID删除投稿
+async function deleteContestSubmission(globalId) {
     const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
-    if (submissions[submissionId]) {
-        delete submissions[submissionId];
+    if (submissions[globalId]) {
+        delete submissions[globalId];
         writeJsonFile(CONTEST_SUBMISSIONS_FILE, submissions);
         return true;
     }
@@ -232,6 +274,7 @@ module.exports = {
     getNextSubmissionId,
     saveContestSubmission,
     getContestSubmission,
+    getContestSubmissionByGlobalId,
     getSubmissionsByChannel,
     updateContestSubmission,
     deleteContestSubmission

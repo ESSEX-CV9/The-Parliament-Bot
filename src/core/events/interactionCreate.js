@@ -119,7 +119,7 @@ async function interactionCreateHandler(interaction) {
                 // 编辑申请按钮
                 await processEditApplication(interaction);
             } else if (interaction.customId.startsWith('contest_confirm_')) {
-                // 确认建立频道按钮
+                // 确认建立频道按钮 - 显示选择界面
                 const applicationId = interaction.customId.replace('contest_confirm_', '');
                 const applicationData = await getContestApplication(applicationId);
                 
@@ -134,8 +134,39 @@ async function interactionCreateHandler(interaction) {
                 const contestSettings = await getContestSettings(interaction.guild.id);
                 const allowedExternalServers = contestSettings?.allowedExternalServers || [];
                 
-                const modal = createConfirmChannelModal(applicationData, allowedExternalServers);
+                const { createConfirmChannelSelection } = require('../../modules/contest/components/confirmChannelSelection');
+                const { embed, components } = createConfirmChannelSelection(applicationData, allowedExternalServers);
+                
+                await interaction.reply({
+                    embeds: [embed],
+                    components: components,
+                    ephemeral: true
+                });
+            } else if (interaction.customId.startsWith('proceed_channel_creation_')) {
+                // 继续设置频道详情按钮
+                const applicationId = interaction.customId.replace('proceed_channel_creation_', '');
+                const applicationData = await getContestApplication(applicationId);
+                
+                if (!applicationData) {
+                    return interaction.reply({
+                        content: '❌ 找不到对应的申请记录。',
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+                
+                // 从之前的选择中获取外部服务器设置
+                // 这里需要从某个地方获取用户的选择，我们可以使用临时存储或从消息中解析
+                const allowExternalServers = interaction.message.components[1].components[0].disabled === false;
+                
+                const modal = createConfirmChannelModal(applicationData, allowExternalServers);
                 await interaction.showModal(modal);
+            } else if (interaction.customId.startsWith('cancel_channel_creation_')) {
+                // 取消建立频道
+                await interaction.update({
+                    content: '❌ 已取消建立频道。',
+                    embeds: [],
+                    components: []
+                });
             } else if (interaction.customId.startsWith('contest_cancel_')) {
                 // 撤销办理按钮
                 await processCancelApplication(interaction);
@@ -184,13 +215,6 @@ async function interactionCreateHandler(interaction) {
                 
                 const modal = createRejectionModal(submissionId, contestChannelId);
                 await interaction.showModal(modal);
-            } else if (interaction.customId.startsWith('cancel_delete_')) {
-                // 取消删除投稿
-                await interaction.update({
-                    content: '❌ 已取消删除操作。',
-                    embeds: [],
-                    components: []
-                });
             } else if (interaction.customId.startsWith('contest_prev_') || 
                        interaction.customId.startsWith('contest_next_') || 
                        interaction.customId.startsWith('contest_refresh_')) {
@@ -237,6 +261,28 @@ async function interactionCreateHandler(interaction) {
             if (interaction.customId.startsWith('submission_action_')) {
                 // 稿件管理操作选择
                 await processSubmissionAction(interaction);
+            } else if (interaction.customId.startsWith('external_server_select_')) {
+                // 外部服务器投稿选择
+                const applicationId = interaction.customId.replace('external_server_select_', '');
+                const allowExternalServers = interaction.values[0] === 'yes';
+                
+                // 更新按钮状态
+                const updatedComponents = [...interaction.message.components];
+                const buttonRow = updatedComponents[1];
+                buttonRow.components[0].data.disabled = false; // 启用继续按钮
+                
+                // 存储选择到按钮的customId中（临时方案）
+                buttonRow.components[0].data.custom_id = `proceed_channel_creation_${applicationId}_${allowExternalServers}`;
+                
+                const selectionText = allowExternalServers ? '是 - 允许外部服务器投稿' : '否 - 仅允许本服务器投稿';
+                
+                await interaction.update({
+                    embeds: [{
+                        ...interaction.message.embeds[0].data,
+                        description: `**赛事名称：** ${interaction.message.embeds[0].data.description.split('\n')[0].replace('**赛事名称：** ', '')}\n\n✅ **外部服务器投稿：** ${selectionText}\n\n请点击下方按钮继续设置频道详情。`
+                    }],
+                    components: updatedComponents
+                });
             }
             return;
         }

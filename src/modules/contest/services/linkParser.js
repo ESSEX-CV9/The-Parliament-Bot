@@ -280,17 +280,17 @@ async function checkDuplicateSubmission(contestChannelId, messageId, submitterId
         }
         
         // 检查用户是否已经投稿过（每人只能投稿一次）
-        const userSubmission = submissions.find(sub => 
-            sub.isValid && 
-            sub.submitterId === submitterId
-        );
+        // const userSubmission = submissions.find(sub => 
+        //     sub.isValid && 
+        //     sub.submitterId === submitterId
+        // );
         
-        if (userSubmission) {
-            return {
-                isDuplicate: true,
-                error: '您已经投稿过了，每人只能投稿一次。如需修改请联系主办人。'
-            };
-        }
+        // if (userSubmission) {
+        //     return {
+        //         isDuplicate: true,
+        //         error: '您已经投稿过了，每人只能投稿一次。如需修改请联系主办人。'
+        //     };
+        // }
         
         return {
             isDuplicate: false

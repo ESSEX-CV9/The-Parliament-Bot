@@ -13,8 +13,11 @@ async function processChannelConfirmation(interaction) {
     try {
         await interaction.deferReply({ ephemeral: true });
         
-        // 从modal customId中提取申请ID
-        const applicationId = interaction.customId.replace('contest_confirm_channel_', '');
+        // 从customId中提取申请ID和外部服务器设置
+        const customIdParts = interaction.customId.replace('contest_confirm_channel_', '').split('_');
+        const applicationId = customIdParts[0];
+        const allowExternalServers = customIdParts[1] === 'true';
+        
         const applicationData = await getContestApplication(applicationId);
         
         if (!applicationData) {
@@ -23,39 +26,16 @@ async function processChannelConfirmation(interaction) {
             });
         }
         
-        // 检查权限：只有申请人可以确认
+        // 检查权限：只有申请人可以确认建立频道
         if (applicationData.applicantId !== interaction.user.id) {
             return interaction.editReply({
                 content: '❌ 只有申请人可以确认建立频道。'
             });
         }
         
-        // 检查状态
-        if (applicationData.status !== 'approved') {
-            return interaction.editReply({
-                content: '❌ 申请未通过审核，无法建立频道。'
-            });
-        }
-        
-        if (applicationData.channelId) {
-            return interaction.editReply({
-                content: '❌ 该申请的赛事频道已经建立过了。'
-            });
-        }
-        
         // 获取表单数据
-        const channelName = interaction.fields.getTextInputValue('channel_name');
-        const channelContent = interaction.fields.getTextInputValue('channel_content');
-        
-        // 获取外部服务器选项（如果存在）
-        let allowExternalServers = false;
-        try {
-            const externalServersInput = interaction.fields.getTextInputValue('external_servers');
-            allowExternalServers = externalServersInput && externalServersInput.trim().toLowerCase() === '是';
-        } catch (error) {
-            // 如果没有这个字段，默认为false
-            allowExternalServers = false;
-        }
+        const channelName = interaction.fields.getTextInputValue('channel_name').trim();
+        const channelContent = interaction.fields.getTextInputValue('channel_content').trim();
         
         await interaction.editReply({
             content: '⏳ 正在创建赛事频道...'
@@ -71,24 +51,18 @@ async function processChannelConfirmation(interaction) {
             allowExternalServers
         );
         
-        // 更新申请数据，添加频道创建状态
+        // 更新申请状态
         await updateContestApplication(applicationId, {
-            channelId: contestChannel.id,
-            status: 'channel_created', // 新增状态：频道已创建
+            status: 'completed',
+            contestChannelId: contestChannel.id,
             allowExternalServers: allowExternalServers,
-            updatedAt: new Date().toISOString()
+            completedAt: new Date().toISOString()
         });
-        
-        // 更新审核帖子状态为"赛事已开启"
-        await updateChannelCreatedThreadStatus(interaction.client, applicationData, contestChannel);
-        
-        // 发送私聊通知
-        await sendChannelCreatedNotification(interaction.client, applicationData, contestChannel);
         
         const externalServerText = allowExternalServers ? '\n🌐 **外部服务器投稿：** 已启用' : '';
         
         await interaction.editReply({
-            content: `✅ **赛事频道创建成功！**\n\n🏆 **频道：** ${contestChannel}\n🔗 **链接：** ${contestChannel.url}${externalServerText}\n\n您现在可以在频道中管理赛事和查看投稿作品了。`
+            content: `✅ **赛事频道创建成功！**\n\n📍 **频道：** <#${contestChannel.id}>\n🏷️ **名称：** ${channelName}${externalServerText}\n\n赛事频道已准备就绪，参赛者现在可以开始投稿了！`
         });
         
         console.log(`赛事频道创建成功 - 申请ID: ${applicationId}, 频道ID: ${contestChannel.id}, 外部服务器: ${allowExternalServers}`);
@@ -98,7 +72,7 @@ async function processChannelConfirmation(interaction) {
         
         try {
             await interaction.editReply({
-                content: `❌ 创建频道时出现错误：${error.message}\n请稍后重试或联系管理员。`
+                content: `❌ 创建赛事频道时出现错误：${error.message}`
             });
         } catch (replyError) {
             console.error('回复错误信息失败:', replyError);
