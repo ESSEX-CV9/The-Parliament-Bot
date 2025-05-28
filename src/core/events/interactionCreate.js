@@ -1,4 +1,4 @@
-// src\core\events\interactionCreate.js
+// src/core/events/interactionCreate.js
 const { PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { createFormModal } = require('../../modules/proposal/components/formModal');
 const { createReviewModal } = require('../../modules/creatorReview/components/reviewModal'); 
@@ -10,6 +10,18 @@ const { processCourtSupport } = require('../../modules/court/services/courtVoteT
 const { processCourtVote } = require('../../modules/court/services/courtVotingSystem');
 // 自助管理相关处理
 const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
+
+// 赛事系统相关处理
+const { createContestApplicationModal } = require('../../modules/contest/components/applicationModal');
+const { createSubmissionModal } = require('../../modules/contest/components/submissionModal');
+const { createConfirmChannelModal } = require('../../modules/contest/components/confirmChannelModal');
+const { processContestApplication, processEditApplication, processEditApplicationSubmission } = require('../../modules/contest/services/applicationService');
+const { processCancelApplication } = require('../../modules/contest/services/reviewService');
+const { processChannelConfirmation } = require('../../modules/contest/services/channelCreationService');
+const { processContestSubmission } = require('../../modules/contest/services/submissionService');
+const { displayService } = require('../../modules/contest/services/displayService');
+const { getContestSettings, getContestApplication } = require('../../modules/contest/utils/contestDatabase');
+const { checkContestApplicationPermission, getApplicationPermissionDeniedMessage } = require('../../modules/contest/utils/contestPermissions');
 
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../core/utils/database');
@@ -73,6 +85,64 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('selfmod_')) {
                 // 处理自助管理按钮
                 await processSelfModerationInteraction(interaction);
+            } 
+            // === 赛事系统按钮处理 ===
+            else if (interaction.customId === 'contest_application') {
+                // 赛事申请按钮
+                const contestSettings = await getContestSettings(interaction.guild.id);
+                const hasPermission = checkContestApplicationPermission(interaction.member, contestSettings);
+                
+                if (!hasPermission) {
+                    let allowedRoleNames = [];
+                    if (contestSettings && contestSettings.applicationPermissionRoles) {
+                        for (const roleId of contestSettings.applicationPermissionRoles) {
+                            try {
+                                const role = await interaction.guild.roles.fetch(roleId);
+                                if (role) allowedRoleNames.push(role.name);
+                            } catch (error) {
+                                // 忽略错误
+                            }
+                        }
+                    }
+                    
+                    return interaction.reply({
+                        content: getApplicationPermissionDeniedMessage(allowedRoleNames),
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+                
+                const modal = createContestApplicationModal();
+                await interaction.showModal(modal);
+            } else if (interaction.customId.startsWith('contest_edit_')) {
+                // 编辑申请按钮
+                await processEditApplication(interaction);
+            } else if (interaction.customId.startsWith('contest_confirm_')) {
+                // 确认建立频道按钮
+                const applicationId = interaction.customId.replace('contest_confirm_', '');
+                const applicationData = await getContestApplication(applicationId);
+                
+                if (!applicationData) {
+                    return interaction.reply({
+                        content: '❌ 找不到对应的申请记录。',
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+                
+                const modal = createConfirmChannelModal(applicationData);
+                await interaction.showModal(modal);
+            } else if (interaction.customId.startsWith('contest_cancel_')) {
+                // 撤销办理按钮
+                await processCancelApplication(interaction);
+            } else if (interaction.customId.startsWith('contest_submit_')) {
+                // 投稿按钮
+                const contestChannelId = interaction.customId.replace('contest_submit_', '');
+                const modal = createSubmissionModal(contestChannelId);
+                await interaction.showModal(modal);
+            } else if (interaction.customId.startsWith('contest_prev_') || 
+                       interaction.customId.startsWith('contest_next_') || 
+                       interaction.customId.startsWith('contest_refresh_')) {
+                // 作品展示翻页按钮
+                await displayService.handlePageNavigation(interaction);
             }
             return;
         }
@@ -88,6 +158,20 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('selfmod_modal_')) {
                 // 自助管理模态窗口提交处理
                 await processSelfModerationInteraction(interaction);
+            }
+            // === 赛事系统模态窗口处理 ===
+            else if (interaction.customId === 'contest_application') {
+                // 赛事申请表单提交
+                await processContestApplication(interaction);
+            } else if (interaction.customId === 'contest_edit_application') {
+                // 编辑申请表单提交
+                await processEditApplicationSubmission(interaction);
+            } else if (interaction.customId.startsWith('contest_confirm_channel_')) {
+                // 确认建立频道表单提交
+                await processChannelConfirmation(interaction);
+            } else if (interaction.customId.startsWith('contest_submission_')) {
+                // 投稿表单提交
+                await processContestSubmission(interaction);
             }
             return;
         }

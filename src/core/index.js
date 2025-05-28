@@ -1,4 +1,4 @@
-// src\core\index.js
+// src/core/index.js
 require('dotenv').config();
 
 const {
@@ -53,6 +53,12 @@ const setArchiveViewRoleCommand = require('../modules/selfModeration/commands/se
 const getArchiveViewPermissionCommand = require('../modules/selfModeration/commands/getArchiveViewPermission');
 const manageAttachmentCleanupCommand = require('../modules/selfModeration/commands/manageAttachmentCleanup');
 
+// 赛事系统命令
+const setupContestApplicationCommand = require('../modules/contest/commands/setupContestApplication');
+const setContestReviewersCommand = require('../modules/contest/commands/setContestReviewers');
+const reviewContestApplicationCommand = require('../modules/contest/commands/reviewContestApplication');
+const updateContestInfoCommand = require('../modules/contest/commands/updateContestInfo');
+const updateContestTitleCommand = require('../modules/contest/commands/updateContestTitle');
 
 const client = new Client({ 
     intents: [
@@ -102,6 +108,13 @@ client.commands.set(setArchiveViewRoleCommand.data.name, setArchiveViewRoleComma
 client.commands.set(getArchiveViewPermissionCommand.data.name, getArchiveViewPermissionCommand);
 client.commands.set(manageAttachmentCleanupCommand.data.name, manageAttachmentCleanupCommand);
 
+// 赛事系统命令
+client.commands.set(setupContestApplicationCommand.data.name, setupContestApplicationCommand);
+client.commands.set(setContestReviewersCommand.data.name, setContestReviewersCommand);
+client.commands.set(reviewContestApplicationCommand.data.name, reviewContestApplicationCommand);
+client.commands.set(updateContestInfoCommand.data.name, updateContestInfoCommand);
+client.commands.set(updateContestTitleCommand.data.name, updateContestTitleCommand);
+
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
     printTimeConfig();
@@ -119,6 +132,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log('✅ 附件清理定时器已启动');
     
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
+    console.log('🏆 赛事管理系统已加载');
 })
 
 client.on(Events.InteractionCreate, interactionCreateHandler)
