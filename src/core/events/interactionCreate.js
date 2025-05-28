@@ -222,6 +222,9 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('contest_view_all_')) {
                 // 查看所有投稿作品按钮
                 await displayService.handleViewAllSubmissions(interaction);
+            } else if (interaction.customId.startsWith('contest_items_per_page_')) {
+                // 每页显示数量设置按钮
+                await displayService.handleItemsPerPageChange(interaction);
             } else if (interaction.customId.startsWith('contest_full_first_') || 
                        interaction.customId.startsWith('contest_full_prev_') || 
                        interaction.customId.startsWith('contest_full_next_') || 

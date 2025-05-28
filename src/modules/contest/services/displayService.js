@@ -111,12 +111,12 @@ class DisplayService {
     }
 
     // 新增：构建完整作品列表的嵌入消息
-    async buildFullDisplayEmbed(submissions, currentPage, totalPages, totalSubmissions) {
+    async buildFullDisplayEmbed(submissions, currentPage, totalPages, totalSubmissions, itemsPerPage = 5) {
         const embed = new EmbedBuilder()
             .setTitle('🎨 所有参赛作品')
             .setColor('#87CEEB')
             .setFooter({ 
-                text: `第 ${currentPage} 页 / 共 ${totalPages} 页 | 共 ${totalSubmissions} 个作品` 
+                text: `第 ${currentPage} 页 / 共 ${totalPages} 页 | 共 ${totalSubmissions} 个作品 | 每页 ${itemsPerPage} 个` 
             })
             .setTimestamp();
         
@@ -130,7 +130,7 @@ class DisplayService {
         for (let i = 0; i < submissions.length; i++) {
             const submission = submissions[i];
             const preview = submission.cachedPreview;
-            const submissionNumber = ((currentPage - 1) * submissions.length) + i + 1;
+            const submissionNumber = ((currentPage - 1) * itemsPerPage) + i + 1;
             
             // 构建作品链接
             const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
@@ -176,22 +176,39 @@ class DisplayService {
         return embed;
     }
     
-    // 修改：构建完整作品列表的组件，添加首页、尾页和页面跳转功能
-    buildFullDisplayComponents(currentPage, totalPages, contestChannelId) {
+    // 修改：构建完整作品列表的组件，添加每页显示数量设置按钮
+    buildFullDisplayComponents(currentPage, totalPages, contestChannelId, itemsPerPage = 5) {
+        const components = [];
+        
+        // 第一行：每页显示数量设置按钮
+        const itemsPerPageRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`contest_items_per_page_5_${contestChannelId}`)
+                    .setLabel('5/页')
+                    .setStyle(itemsPerPage === 5 ? ButtonStyle.Success : ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`contest_items_per_page_10_${contestChannelId}`)
+                    .setLabel('10/页')
+                    .setStyle(itemsPerPage === 10 ? ButtonStyle.Success : ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`contest_items_per_page_20_${contestChannelId}`)
+                    .setLabel('20/页')
+                    .setStyle(itemsPerPage === 20 ? ButtonStyle.Success : ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`contest_full_refresh_${contestChannelId}`)
+                    .setLabel('🔄 刷新')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        
+        components.push(itemsPerPageRow);
+        
         if (totalPages <= 1) {
-            // 只有一页，显示刷新按钮
-            return [
-                new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`contest_full_refresh_${contestChannelId}`)
-                            .setLabel('🔄 刷新')
-                            .setStyle(ButtonStyle.Secondary)
-                    )
-            ];
+            // 只有一页，只显示每页数量设置和刷新按钮
+            return components;
         }
         
-        const components = [];
+        // 第二行：页面导航按钮
         const navigationRow = new ActionRowBuilder();
         
         // 首页按钮
@@ -240,20 +257,65 @@ class DisplayService {
         
         components.push(navigationRow);
         
-        // 第二行：刷新按钮
-        const actionRow = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`contest_full_refresh_${contestChannelId}`)
-                    .setLabel('🔄 刷新')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-        
-        components.push(actionRow);
-        
         return components;
     }
-    
+
+    // 新增：从交互消息中提取当前的每页显示数量
+    extractItemsPerPageFromMessage(interaction) {
+        try {
+            const footerText = interaction.message.embeds[0].footer.text;
+            const itemsMatch = footerText.match(/每页 (\d+) 个/);
+            return itemsMatch ? parseInt(itemsMatch[1]) : 5; // 默认5个
+        } catch (error) {
+            console.error('提取每页显示数量时出错:', error);
+            return 5; // 默认5个
+        }
+    }
+
+    // 新增：处理每页显示数量变更
+    async handleItemsPerPageChange(interaction) {
+        try {
+            await interaction.deferUpdate();
+            
+            const customId = interaction.customId;
+            const parts = customId.split('_');
+            const newItemsPerPage = parseInt(parts[4]); // contest_items_per_page_5_channelId
+            const contestChannelId = parts[5];
+            
+            const contestChannelData = await getContestChannel(contestChannelId);
+            if (!contestChannelData) {
+                return;
+            }
+            
+            // 获取所有有效投稿
+            const submissions = await getSubmissionsByChannel(contestChannelId);
+            const validSubmissions = submissions.filter(sub => sub.isValid)
+                .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
+            
+            const totalPages = Math.max(1, Math.ceil(validSubmissions.length / newItemsPerPage));
+            const currentPage = 1; // 切换每页显示数量时回到第一页
+            
+            // 计算当前页的投稿范围
+            const startIndex = (currentPage - 1) * newItemsPerPage;
+            const endIndex = Math.min(startIndex + newItemsPerPage, validSubmissions.length);
+            const pageSubmissions = validSubmissions.slice(startIndex, endIndex);
+            
+            // 构建展示内容
+            const embed = await this.buildFullDisplayEmbed(pageSubmissions, currentPage, totalPages, validSubmissions.length, newItemsPerPage);
+            const components = this.buildFullDisplayComponents(currentPage, totalPages, contestChannelId, newItemsPerPage);
+            
+            await interaction.editReply({
+                embeds: [embed],
+                components: components
+            });
+            
+            console.log(`每页显示数量已更改 - 频道: ${contestChannelId}, 新数量: ${newItemsPerPage}, 用户: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('处理每页显示数量变更时出错:', error);
+        }
+    }
+
     // 新增：处理页面跳转按钮
     async handlePageJumpButton(interaction) {
         try {
@@ -292,7 +354,7 @@ class DisplayService {
         }
     }
 
-    // 新增：处理页面跳转模态框提交
+    // 修改：处理页面跳转模态框提交，支持动态每页显示数量
     async handlePageJumpSubmission(interaction) {
         try {
             await interaction.deferUpdate();
@@ -319,12 +381,14 @@ class DisplayService {
                 });
             }
             
+            // 获取当前的每页显示数量
+            const itemsPerPage = this.extractItemsPerPageFromMessage(interaction);
+            
             // 获取所有有效投稿
             const submissions = await getSubmissionsByChannel(contestChannelId);
             const validSubmissions = submissions.filter(sub => sub.isValid)
                 .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
             
-            const itemsPerPage = 5;
             const totalPages = Math.max(1, Math.ceil(validSubmissions.length / itemsPerPage));
             
             // 验证页码范围
@@ -341,8 +405,8 @@ class DisplayService {
             const pageSubmissions = validSubmissions.slice(startIndex, endIndex);
             
             // 构建展示内容
-            const embed = await this.buildFullDisplayEmbed(pageSubmissions, targetPage, totalPages, validSubmissions.length);
-            const components = this.buildFullDisplayComponents(targetPage, totalPages, contestChannelId);
+            const embed = await this.buildFullDisplayEmbed(pageSubmissions, targetPage, totalPages, validSubmissions.length, itemsPerPage);
+            const components = this.buildFullDisplayComponents(targetPage, totalPages, contestChannelId, itemsPerPage);
             
             await interaction.editReply({
                 embeds: [embed],
@@ -390,7 +454,7 @@ class DisplayService {
                 });
             }
             
-            const itemsPerPage = 5;
+            const itemsPerPage = 5; // 默认每页5个
             const totalPages = Math.max(1, Math.ceil(validSubmissions.length / itemsPerPage));
             const currentPage = 1;
             
@@ -400,8 +464,8 @@ class DisplayService {
             const pageSubmissions = validSubmissions.slice(startIndex, endIndex);
             
             // 构建展示内容
-            const embed = await this.buildFullDisplayEmbed(pageSubmissions, currentPage, totalPages, validSubmissions.length);
-            const components = this.buildFullDisplayComponents(currentPage, totalPages, contestChannelId);
+            const embed = await this.buildFullDisplayEmbed(pageSubmissions, currentPage, totalPages, validSubmissions.length, itemsPerPage);
+            const components = this.buildFullDisplayComponents(currentPage, totalPages, contestChannelId, itemsPerPage);
             
             await interaction.editReply({
                 embeds: [embed],
@@ -422,7 +486,7 @@ class DisplayService {
         }
     }
 
-    // 修改：处理完整作品列表的页面导航，添加首页和尾页功能
+    // 修改：处理完整作品列表的页面导航，支持动态每页显示数量
     async handleFullPageNavigation(interaction) {
         try {
             await interaction.deferUpdate();
@@ -435,12 +499,14 @@ class DisplayService {
                 return;
             }
             
+            // 获取当前的每页显示数量
+            const itemsPerPage = this.extractItemsPerPageFromMessage(interaction);
+            
             // 获取所有有效投稿
             const submissions = await getSubmissionsByChannel(contestChannelId);
             const validSubmissions = submissions.filter(sub => sub.isValid)
                 .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
             
-            const itemsPerPage = 5;
             const totalPages = Math.max(1, Math.ceil(validSubmissions.length / itemsPerPage));
             
             // 从交互消息中获取当前页码
@@ -465,8 +531,8 @@ class DisplayService {
             const pageSubmissions = validSubmissions.slice(startIndex, endIndex);
             
             // 构建展示内容
-            const embed = await this.buildFullDisplayEmbed(pageSubmissions, currentPage, totalPages, validSubmissions.length);
-            const components = this.buildFullDisplayComponents(currentPage, totalPages, contestChannelId);
+            const embed = await this.buildFullDisplayEmbed(pageSubmissions, currentPage, totalPages, validSubmissions.length, itemsPerPage);
+            const components = this.buildFullDisplayComponents(currentPage, totalPages, contestChannelId, itemsPerPage);
             
             await interaction.editReply({
                 embeds: [embed],
