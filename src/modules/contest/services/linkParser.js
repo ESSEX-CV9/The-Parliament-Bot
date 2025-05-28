@@ -259,17 +259,17 @@ function extractMessagePreview(message) {
 /**
  * 检查重复投稿
  */
-async function checkDuplicateSubmission(contestChannelId, messageId, submitterId) {
+async function checkDuplicateSubmission(contestChannelId, messageId, submitterId, guildId, channelId) {
     try {
         const { getSubmissionsByChannel } = require('../utils/contestDatabase');
         const submissions = await getSubmissionsByChannel(contestChannelId);
         
-        // 检查是否已经投稿过相同的消息
+        // 检查是否已经投稿过相同的消息（需要完整匹配 guildId + channelId + messageId）
         const duplicateMessage = submissions.find(sub => 
             sub.isValid && 
             sub.parsedInfo.messageId === messageId &&
-            sub.parsedInfo.guildId && 
-            sub.parsedInfo.channelId
+            sub.parsedInfo.guildId === guildId && 
+            sub.parsedInfo.channelId === channelId
         );
         
         if (duplicateMessage) {

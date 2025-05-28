@@ -64,7 +64,9 @@ async function processContestSubmission(interaction) {
         const duplicateCheck = await checkDuplicateSubmission(
             contestChannelId,
             validationResult.parsedInfo.messageId,
-            interaction.user.id
+            interaction.user.id,
+            validationResult.parsedInfo.guildId,
+            validationResult.parsedInfo.channelId
         );
         
         if (duplicateCheck.isDuplicate) {
