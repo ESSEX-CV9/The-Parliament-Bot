@@ -75,7 +75,7 @@ class DisplayService {
             // 检查是否为外部服务器投稿
             if (submission.isExternal) {
                 // 外部服务器投稿的特殊格式
-                description += `${submissionNumber}. @${workUrl}\n`;
+                description += `${submissionNumber}. ${workUrl}\n`;
                 description += `👤投稿者: ${authorMention}\n`;
                 description += `📅投稿时间：<t:${publishTime}:f>\n`;
                 description += `📝作品介绍: ${content}\n`;
