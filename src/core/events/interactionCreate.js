@@ -222,11 +222,16 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('contest_view_all_')) {
                 // 查看所有投稿作品按钮
                 await displayService.handleViewAllSubmissions(interaction);
-            } else if (interaction.customId.startsWith('contest_full_prev_') || 
+            } else if (interaction.customId.startsWith('contest_full_first_') || 
+                       interaction.customId.startsWith('contest_full_prev_') || 
                        interaction.customId.startsWith('contest_full_next_') || 
+                       interaction.customId.startsWith('contest_full_last_') || 
                        interaction.customId.startsWith('contest_full_refresh_')) {
-                // 完整作品列表翻页按钮
+                // 完整作品列表翻页按钮（包括首页和尾页）
                 await displayService.handleFullPageNavigation(interaction);
+            } else if (interaction.customId.startsWith('contest_full_page_jump_')) {
+                // 页面跳转按钮
+                await displayService.handlePageJumpButton(interaction);
             }
             return;
         }
@@ -259,6 +264,9 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('rejection_reason_')) {
                 // 拒稿说明模态窗口提交
                 await processRejectionModal(interaction);
+            } else if (interaction.customId.startsWith('contest_page_jump_')) {
+                // 页面跳转模态窗口提交
+                await displayService.handlePageJumpSubmission(interaction);
             }
             return;
         }

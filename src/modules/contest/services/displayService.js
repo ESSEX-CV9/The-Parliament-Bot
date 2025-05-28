@@ -176,7 +176,7 @@ class DisplayService {
         return embed;
     }
     
-    // 新增：构建完整作品列表的组件
+    // 修改：构建完整作品列表的组件，添加首页、尾页和页面跳转功能
     buildFullDisplayComponents(currentPage, totalPages, contestChannelId) {
         if (totalPages <= 1) {
             // 只有一页，显示刷新按钮
@@ -194,6 +194,15 @@ class DisplayService {
         const components = [];
         const navigationRow = new ActionRowBuilder();
         
+        // 首页按钮
+        navigationRow.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`contest_full_first_${contestChannelId}`)
+                .setLabel('⏮️ 首页')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage <= 1)
+        );
+        
         // 上一页按钮
         navigationRow.addComponents(
             new ButtonBuilder()
@@ -203,13 +212,12 @@ class DisplayService {
                 .setDisabled(currentPage <= 1)
         );
         
-        // 页码显示按钮
+        // 页码显示按钮（可点击跳转）
         navigationRow.addComponents(
             new ButtonBuilder()
-                .setCustomId(`contest_full_page_${contestChannelId}`)
+                .setCustomId(`contest_full_page_jump_${contestChannelId}`)
                 .setLabel(`${currentPage} / ${totalPages}`)
                 .setStyle(ButtonStyle.Secondary)
-                .setDisabled(true)
         );
         
         // 下一页按钮
@@ -221,17 +229,139 @@ class DisplayService {
                 .setDisabled(currentPage >= totalPages)
         );
         
-        // 刷新按钮
+        // 尾页按钮
         navigationRow.addComponents(
             new ButtonBuilder()
-                .setCustomId(`contest_full_refresh_${contestChannelId}`)
-                .setLabel('🔄 刷新')
+                .setCustomId(`contest_full_last_${contestChannelId}`)
+                .setLabel('尾页 ⏭️')
                 .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage >= totalPages)
         );
         
         components.push(navigationRow);
         
+        // 第二行：刷新按钮
+        const actionRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`contest_full_refresh_${contestChannelId}`)
+                    .setLabel('🔄 刷新')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        
+        components.push(actionRow);
+        
         return components;
+    }
+
+    // 新增：处理页面跳转按钮
+    async handlePageJumpButton(interaction) {
+        try {
+            const customId = interaction.customId;
+            const contestChannelId = customId.split('_').slice(-1)[0];
+            
+            // 从交互消息中获取当前页码和总页数
+            const footerText = interaction.message.embeds[0].footer.text;
+            const pageMatch = footerText.match(/第 (\d+) 页 \/ 共 (\d+) 页/);
+            
+            if (!pageMatch) {
+                return interaction.reply({
+                    content: '❌ 无法获取页面信息。',
+                    ephemeral: true
+                });
+            }
+            
+            const currentPage = parseInt(pageMatch[1]);
+            const totalPages = parseInt(pageMatch[2]);
+            
+            const { createPageJumpModal } = require('../components/pageJumpModal');
+            const modal = createPageJumpModal(contestChannelId, currentPage, totalPages);
+            
+            await interaction.showModal(modal);
+            
+        } catch (error) {
+            console.error('处理页面跳转按钮时出错:', error);
+            try {
+                await interaction.reply({
+                    content: '❌ 处理页面跳转时出现错误。',
+                    ephemeral: true
+                });
+            } catch (replyError) {
+                console.error('回复错误信息失败:', replyError);
+            }
+        }
+    }
+
+    // 新增：处理页面跳转模态框提交
+    async handlePageJumpSubmission(interaction) {
+        try {
+            await interaction.deferUpdate();
+            
+            const customId = interaction.customId;
+            const contestChannelId = customId.replace('contest_page_jump_', '');
+            
+            const targetPageInput = interaction.fields.getTextInputValue('target_page').trim();
+            const targetPage = parseInt(targetPageInput);
+            
+            // 验证输入
+            if (isNaN(targetPage) || targetPage < 1) {
+                return interaction.followUp({
+                    content: '❌ 请输入有效的页码（大于0的数字）。',
+                    ephemeral: true
+                });
+            }
+            
+            const contestChannelData = await getContestChannel(contestChannelId);
+            if (!contestChannelData) {
+                return interaction.followUp({
+                    content: '❌ 找不到比赛数据。',
+                    ephemeral: true
+                });
+            }
+            
+            // 获取所有有效投稿
+            const submissions = await getSubmissionsByChannel(contestChannelId);
+            const validSubmissions = submissions.filter(sub => sub.isValid)
+                .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
+            
+            const itemsPerPage = 6;
+            const totalPages = Math.max(1, Math.ceil(validSubmissions.length / itemsPerPage));
+            
+            // 验证页码范围
+            if (targetPage > totalPages) {
+                return interaction.followUp({
+                    content: `❌ 页码超出范围。总共只有 ${totalPages} 页。`,
+                    ephemeral: true
+                });
+            }
+            
+            // 计算目标页的投稿范围
+            const startIndex = (targetPage - 1) * itemsPerPage;
+            const endIndex = Math.min(startIndex + itemsPerPage, validSubmissions.length);
+            const pageSubmissions = validSubmissions.slice(startIndex, endIndex);
+            
+            // 构建展示内容
+            const embed = await this.buildFullDisplayEmbed(pageSubmissions, targetPage, totalPages, validSubmissions.length);
+            const components = this.buildFullDisplayComponents(targetPage, totalPages, contestChannelId);
+            
+            await interaction.editReply({
+                embeds: [embed],
+                components: components
+            });
+            
+            console.log(`页面跳转完成 - 频道: ${contestChannelId}, 跳转到页码: ${targetPage}, 用户: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('处理页面跳转提交时出错:', error);
+            try {
+                await interaction.followUp({
+                    content: '❌ 页面跳转时出现错误。',
+                    ephemeral: true
+                });
+            } catch (replyError) {
+                console.error('回复错误信息失败:', replyError);
+            }
+        }
     }
 
     // 新增：处理查看所有作品按钮
@@ -292,7 +422,7 @@ class DisplayService {
         }
     }
 
-    // 新增：处理完整作品列表的页面导航
+    // 修改：处理完整作品列表的页面导航，添加首页和尾页功能
     async handleFullPageNavigation(interaction) {
         try {
             await interaction.deferUpdate();
@@ -317,10 +447,14 @@ class DisplayService {
             const currentPageMatch = interaction.message.embeds[0].footer.text.match(/第 (\d+) 页/);
             let currentPage = currentPageMatch ? parseInt(currentPageMatch[1]) : 1;
             
-            if (customId.includes('_full_prev_')) {
+            if (customId.includes('_full_first_')) {
+                currentPage = 1;
+            } else if (customId.includes('_full_prev_')) {
                 currentPage = Math.max(1, currentPage - 1);
             } else if (customId.includes('_full_next_')) {
                 currentPage = Math.min(totalPages, currentPage + 1);
+            } else if (customId.includes('_full_last_')) {
+                currentPage = totalPages;
             } else if (customId.includes('_full_refresh_')) {
                 // 刷新当前页，不改变页码
             }
