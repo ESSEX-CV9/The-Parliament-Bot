@@ -144,7 +144,10 @@ async function interactionCreateHandler(interaction) {
                 });
             } else if (interaction.customId.startsWith('proceed_channel_creation_')) {
                 // 继续设置频道详情按钮
-                const applicationId = interaction.customId.replace('proceed_channel_creation_', '');
+                const customIdParts = interaction.customId.replace('proceed_channel_creation_', '').split('_');
+                const applicationId = customIdParts[0];
+                const allowExternalServers = customIdParts[1] === 'true';
+                
                 const applicationData = await getContestApplication(applicationId);
                 
                 if (!applicationData) {
@@ -153,10 +156,6 @@ async function interactionCreateHandler(interaction) {
                         flags: MessageFlags.Ephemeral
                     });
                 }
-                
-                // 从之前的选择中获取外部服务器设置
-                // 这里需要从某个地方获取用户的选择，我们可以使用临时存储或从消息中解析
-                const allowExternalServers = interaction.message.components[1].components[0].disabled === false;
                 
                 const modal = createConfirmChannelModal(applicationData, allowExternalServers);
                 await interaction.showModal(modal);
