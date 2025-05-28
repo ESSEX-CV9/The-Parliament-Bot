@@ -143,31 +143,18 @@ async function updateSubmissionDisplay(client, contestChannelData) {
         
         // 获取所有有效投稿
         const submissions = await getSubmissionsByChannel(contestChannelData.channelId);
-        const validSubmissions = submissions.filter(sub => sub.isValid)
-            .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt)); // 按时间正序，先投稿的在前
-        
-        const totalSubmissions = validSubmissions.length;
-        const itemsPerPage = contestChannelData.itemsPerPage || 6;
-        const totalPages = Math.max(1, Math.ceil(totalSubmissions / itemsPerPage));
-        const currentPage = Math.min(contestChannelData.currentPage || 1, totalPages);
-        
-        // 更新当前页码
-        if (contestChannelData.currentPage !== currentPage) {
-            await updateContestChannel(contestChannelData.channelId, {
-                currentPage: currentPage
-            });
-        }
+        const validSubmissions = submissions.filter(sub => sub.isValid);
         
         const { displayService } = require('./displayService');
         await displayService.updateDisplayMessage(
             displayMessage,
             validSubmissions,
-            currentPage,
-            itemsPerPage,
+            1, // 不再需要页码
+            5, // 固定显示最近5个
             contestChannelData.channelId
         );
         
-        console.log(`作品展示已更新 - 频道: ${contestChannelData.channelId}, 作品数: ${totalSubmissions}`);
+        console.log(`作品展示已更新 - 频道: ${contestChannelData.channelId}, 作品数: ${validSubmissions.length}`);
         
     } catch (error) {
         console.error('更新作品展示时出错:', error);

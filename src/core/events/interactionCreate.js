@@ -219,6 +219,14 @@ async function interactionCreateHandler(interaction) {
                        interaction.customId.startsWith('contest_refresh_')) {
                 // 作品展示翻页按钮
                 await displayService.handlePageNavigation(interaction);
+            } else if (interaction.customId.startsWith('contest_view_all_')) {
+                // 查看所有投稿作品按钮
+                await displayService.handleViewAllSubmissions(interaction);
+            } else if (interaction.customId.startsWith('contest_full_prev_') || 
+                       interaction.customId.startsWith('contest_full_next_') || 
+                       interaction.customId.startsWith('contest_full_refresh_')) {
+                // 完整作品列表翻页按钮
+                await displayService.handleFullPageNavigation(interaction);
             }
             return;
         }
