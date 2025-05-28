@@ -3,7 +3,8 @@ const { ChannelType, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, Button
 const { 
     getContestApplication,
     updateContestApplication,
-    saveContestChannel 
+    saveContestChannel,
+    getContestSettings
 } = require('../utils/contestDatabase');
 const { sendChannelCreatedNotification } = require('./notificationService');
 const { ensureContestStatusTags, updateThreadStatusTag } = require('../utils/forumTagManager');
@@ -46,6 +47,16 @@ async function processChannelConfirmation(interaction) {
         const channelName = interaction.fields.getTextInputValue('channel_name');
         const channelContent = interaction.fields.getTextInputValue('channel_content');
         
+        // 获取外部服务器选项（如果存在）
+        let allowExternalServers = false;
+        try {
+            const externalServersInput = interaction.fields.getTextInputValue('external_servers');
+            allowExternalServers = externalServersInput && externalServersInput.trim().toLowerCase() === '是';
+        } catch (error) {
+            // 如果没有这个字段，默认为false
+            allowExternalServers = false;
+        }
+        
         await interaction.editReply({
             content: '⏳ 正在创建赛事频道...'
         });
@@ -56,13 +67,15 @@ async function processChannelConfirmation(interaction) {
             interaction.guild,
             applicationData,
             channelName,
-            channelContent
+            channelContent,
+            allowExternalServers
         );
         
         // 更新申请数据，添加频道创建状态
         await updateContestApplication(applicationId, {
             channelId: contestChannel.id,
             status: 'channel_created', // 新增状态：频道已创建
+            allowExternalServers: allowExternalServers,
             updatedAt: new Date().toISOString()
         });
         
@@ -72,11 +85,13 @@ async function processChannelConfirmation(interaction) {
         // 发送私聊通知
         await sendChannelCreatedNotification(interaction.client, applicationData, contestChannel);
         
+        const externalServerText = allowExternalServers ? '\n🌐 **外部服务器投稿：** 已启用' : '';
+        
         await interaction.editReply({
-            content: `✅ **赛事频道创建成功！**\n\n🏆 **频道：** ${contestChannel}\n🔗 **链接：** ${contestChannel.url}\n\n您现在可以在频道中管理赛事和查看投稿作品了。`
+            content: `✅ **赛事频道创建成功！**\n\n🏆 **频道：** ${contestChannel}\n🔗 **链接：** ${contestChannel.url}${externalServerText}\n\n您现在可以在频道中管理赛事和查看投稿作品了。`
         });
         
-        console.log(`赛事频道创建成功 - 申请ID: ${applicationId}, 频道ID: ${contestChannel.id}`);
+        console.log(`赛事频道创建成功 - 申请ID: ${applicationId}, 频道ID: ${contestChannel.id}, 外部服务器: ${allowExternalServers}`);
         
     } catch (error) {
         console.error('处理频道确认时出错:', error);
@@ -91,9 +106,8 @@ async function processChannelConfirmation(interaction) {
     }
 }
 
-async function createContestChannel(client, guild, applicationData, channelName, channelContent) {
+async function createContestChannel(client, guild, applicationData, channelName, channelContent, allowExternalServers = false) {
     try {
-        const { getContestSettings } = require('../utils/contestDatabase');
         const settings = await getContestSettings(guild.id);
         
         if (!settings || !settings.contestCategoryId) {
@@ -111,7 +125,7 @@ async function createContestChannel(client, guild, applicationData, channelName,
             name: channelName,
             type: ChannelType.GuildText,
             parent: category.id,
-            topic: `🏆 ${applicationData.formData.title} | 申请人: ${guild.members.cache.get(applicationData.applicantId)?.displayName || '未知'}`
+            topic: `🏆 ${applicationData.formData.title} | 申请人: ${guild.members.cache.get(applicationData.applicantId)?.displayName || '未知'}${allowExternalServers ? ' | 允许外部服务器投稿' : ''}`
         });
         
         // 同步分类权限
@@ -133,7 +147,8 @@ async function createContestChannel(client, guild, applicationData, channelName,
         const { infoMessage, submissionMessage, displayMessage } = await setupChannelMessages(
             contestChannel,
             applicationData,
-            channelContent
+            channelContent,
+            allowExternalServers
         );
         
         // 保存频道数据
@@ -150,12 +165,13 @@ async function createContestChannel(client, guild, applicationData, channelName,
             itemsPerPage: settings.itemsPerPage || 6,
             totalSubmissions: 0,
             submissions: [],
+            allowExternalServers: allowExternalServers,
             createdAt: new Date().toISOString()
         };
         
         await saveContestChannel(channelData);
         
-        console.log(`赛事频道数据已保存 - 频道: ${contestChannel.id}`);
+        console.log(`赛事频道数据已保存 - 频道: ${contestChannel.id}, 外部服务器: ${allowExternalServers}`);
         
         return contestChannel;
         
@@ -165,7 +181,7 @@ async function createContestChannel(client, guild, applicationData, channelName,
     }
 }
 
-async function setupChannelMessages(contestChannel, applicationData, channelContent) {
+async function setupChannelMessages(contestChannel, applicationData, channelContent, allowExternalServers = false) {
     try {
         // 第一条消息：赛事信息
         const infoEmbed = new EmbedBuilder()
@@ -183,9 +199,15 @@ async function setupChannelMessages(contestChannel, applicationData, channelCont
         });
         
         // 第二条消息：投稿入口
+        let submissionDescription = '点击下方按钮提交您的参赛作品\n\n**投稿要求：**\n• 只能投稿自己的作品\n• 支持消息链接和频道链接\n• 确保作品符合比赛要求';
+        
+        if (allowExternalServers) {
+            submissionDescription += '\n\n⚠️ **外部服务器投稿说明：**\n• 本比赛允许外部服务器的作品投稿\n• 机器人无法验证外部服务器内容\n• 投稿者需对外部链接内容负责\n• 如有问题请联系赛事主办处理';
+        }
+        
         const submissionEmbed = new EmbedBuilder()
             .setTitle('📝 作品投稿入口')
-            .setDescription('点击下方按钮提交您的参赛作品\n\n**投稿要求：**\n• 只能投稿自己的作品\n• 支持消息链接和频道链接\n• 确保作品符合比赛要求')
+            .setDescription(submissionDescription)
             .setColor('#00FF00');
         
         const submissionButton = new ActionRowBuilder()
@@ -299,8 +321,6 @@ ${applicationData.reviewData.reason ? `💬 **审核意见：** ${applicationDat
         
         // 更新标签状态
         await updateThreadStatusTag(thread, 'CHANNEL_CREATED', tagMap);
-        
-        // 不再更新标题 - 保持当前标题不变
         
         console.log(`频道创建状态已更新 - 帖子: ${thread.id}`);
         

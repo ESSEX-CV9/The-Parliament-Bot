@@ -72,24 +72,30 @@ class DisplayService {
                 content = content.substring(0, 300) + '.....';
             }
             
-            // 构建新格式的展示（移除多余的缩进）
-            description += `${submissionNumber}.  ${workUrl}\n`;
-            description += `👤作者：${authorMention}\n`;
-            description += `📅发布时间：<t:${publishTime}:f>\n`;
-            description += `📝作品介绍: ${content}\n`;
-            description += `🆔投稿ID：\`${submission.id}\`\n`;
+            // 检查是否为外部服务器投稿
+            if (submission.isExternal) {
+                // 外部服务器投稿的特殊格式
+                description += `${submissionNumber}. @${workUrl}\n`;
+                description += `👤投稿者: ${authorMention}\n`;
+                description += `📅投稿时间：<t:${publishTime}:f>\n`;
+                description += `📝作品介绍: ${content}\n`;
+                description += `🆔投稿ID：\`${submission.id}\`\n`;
+                description += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
+            } else {
+                // 本服务器投稿的正常格式
+                description += `${submissionNumber}.  ${workUrl}\n`;
+                description += `👤作者：${authorMention}\n`;
+                description += `📅发布时间：<t:${publishTime}:f>\n`;
+                description += `📝作品介绍: ${content}\n`;
+                description += `🆔投稿ID：\`${submission.id}\`\n`;
+            }
             
             if (i < submissions.length - 1) {
                 description += '\n';
             }
         }
-        
+         
         embed.setDescription(description);
-        
-        // 如果有图片，设置缩略图为第一个作品的图片
-        if (submissions.length > 0 && submissions[0].cachedPreview.imageUrl) {
-            embed.setThumbnail(submissions[0].cachedPreview.imageUrl);
-        }
         
         return embed;
     }
@@ -186,7 +192,7 @@ class DisplayService {
             // 重新获取和显示数据
             const submissions = await getSubmissionsByChannel(contestChannelId);
             const validSubmissions = submissions.filter(sub => sub.isValid)
-                .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+                .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
             
             await this.updateDisplayMessage(
                 interaction.message,

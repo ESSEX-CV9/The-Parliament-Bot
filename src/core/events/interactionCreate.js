@@ -130,7 +130,11 @@ async function interactionCreateHandler(interaction) {
                     });
                 }
                 
-                const modal = createConfirmChannelModal(applicationData);
+                // 获取外部服务器列表
+                const contestSettings = await getContestSettings(interaction.guild.id);
+                const allowedExternalServers = contestSettings?.allowedExternalServers || [];
+                
+                const modal = createConfirmChannelModal(applicationData, allowedExternalServers);
                 await interaction.showModal(modal);
             } else if (interaction.customId.startsWith('contest_cancel_')) {
                 // 撤销办理按钮
@@ -155,7 +159,7 @@ async function interactionCreateHandler(interaction) {
                 const { getSubmissionsByChannel } = require('../../modules/contest/utils/contestDatabase');
                 const submissions = await getSubmissionsByChannel(contestChannelId);
                 const validSubmissions = submissions.filter(sub => sub.isValid)
-                    .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+                    .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt));
                 
                 const { showSubmissionManagementPage } = require('../../modules/contest/services/submissionManagementService');
                 await showSubmissionManagementPage(interaction, validSubmissions, page, contestChannelId);

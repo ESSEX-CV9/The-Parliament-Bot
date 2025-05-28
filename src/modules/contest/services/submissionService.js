@@ -38,17 +38,25 @@ async function processContestSubmission(interaction) {
             content: '⏳ 正在验证投稿链接...'
         });
         
-        // 验证链接
+        // 验证链接，传递contestChannelId参数
         const validationResult = await validateSubmissionLink(
             interaction.client,
             submissionLink,
             interaction.user.id,
-            interaction.guild.id
+            interaction.guild.id,
+            contestChannelId
         );
         
         if (!validationResult.success) {
             return interaction.editReply({
                 content: `❌ ${validationResult.error}`
+            });
+        }
+        
+        // 如果是外部服务器投稿，显示警告
+        if (validationResult.isExternal) {
+            await interaction.editReply({
+                content: '⚠️ **外部服务器投稿警告**\n\n您提交的是外部服务器的链接。机器人无法验证外部服务器的内容，请确保：\n• 链接内容真实有效\n• 作品确实为您本人创作\n• 如有问题您将承担相应责任\n\n正在保存投稿信息...'
             });
         }
         
@@ -85,7 +93,8 @@ async function processContestSubmission(interaction) {
             cachedPreview: validationResult.preview,
             submissionDescription: submissionDescription,
             submittedAt: new Date().toISOString(),
-            isValid: true
+            isValid: true,
+            isExternal: validationResult.isExternal || false
         };
         
         await saveContestSubmission(submissionData);
@@ -100,11 +109,13 @@ async function processContestSubmission(interaction) {
         // 更新作品展示
         await updateSubmissionDisplay(interaction.client, contestChannelData);
         
+        const externalWarning = validationResult.isExternal ? '\n\n⚠️ **注意：** 这是外部服务器投稿，机器人无法验证内容。' : '';
+        
         await interaction.editReply({
-            content: `✅ **投稿成功！**\n\n🎨 **作品：** ${validationResult.preview.title}\n📝 **投稿ID：** \`${submissionId}\`\n\n您的作品已添加到展示列表中。`
+            content: `✅ **投稿成功！**\n\n🎨 **作品：** ${validationResult.preview.title}\n📝 **投稿ID：** \`${submissionId}\`\n\n您的作品已添加到展示列表中。${externalWarning}`
         });
         
-        console.log(`投稿成功 - ID: ${submissionId}, 用户: ${interaction.user.tag}, 频道: ${contestChannelId}`);
+        console.log(`投稿成功 - ID: ${submissionId}, 用户: ${interaction.user.tag}, 频道: ${contestChannelId}, 外部: ${validationResult.isExternal}`);
         
     } catch (error) {
         console.error('处理投稿时出错:', error);
@@ -132,7 +143,7 @@ async function updateSubmissionDisplay(client, contestChannelData) {
         // 获取所有有效投稿
         const submissions = await getSubmissionsByChannel(contestChannelData.channelId);
         const validSubmissions = submissions.filter(sub => sub.isValid)
-            .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)); // 按时间倒序
+            .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt)); // 按时间正序，先投稿的在前
         
         const totalSubmissions = validSubmissions.length;
         const itemsPerPage = contestChannelData.itemsPerPage || 6;

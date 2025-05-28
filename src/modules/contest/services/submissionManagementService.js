@@ -37,7 +37,7 @@ async function processSubmissionManagement(interaction) {
         // 获取所有有效投稿
         const submissions = await getSubmissionsByChannel(contestChannelId);
         const validSubmissions = submissions.filter(sub => sub.isValid)
-            .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)); // 按时间倒序
+            .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt)); // 按时间正序，先投稿的在前
         
         if (validSubmissions.length === 0) {
             return interaction.editReply({
