@@ -8,7 +8,7 @@ const http = require('http');
 
 // 附件存储配置
 const ATTACHMENTS_DIR = path.join(__dirname, '../../../../data/attachments');
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB 限制
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB 限制
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mov', '.avi', '.pdf', '.txt', '.doc', '.docx', '.zip', '.rar'];
 
 // 🔥 新增：媒体文件扩展名（需要添加剧透效果的文件类型）
@@ -282,11 +282,45 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
                 attachmentFieldValue += '\n\n⚠️ **注意**: 媒体文件（图片、视频等）已自动添加剧透效果，点击查看时请注意内容适宜性。';
             }
             
-            embed.addFields({
-                name: '📎 附件',
-                value: attachmentFieldValue,
-                inline: false
-            });
+            // 检查字段值长度，如果超过1024字符则截断
+            const MAX_FIELD_LENGTH = 1024;
+            if (attachmentFieldValue.length > MAX_FIELD_LENGTH) {
+                const truncated = attachmentFieldValue.substring(0, MAX_FIELD_LENGTH - 50);
+                attachmentFieldValue = truncated + '\n\n... (内容过长已截断)';
+            }
+            
+            // 如果附件太多，只显示摘要
+            if (attachmentResults.length > 5) {
+                const successCount = attachmentResults.filter(r => r.startsWith('✅')).length;
+                const failCount = attachmentResults.filter(r => r.startsWith('❌')).length;
+                
+                embed.addFields({
+                    name: '📎 附件摘要',
+                    value: `总计 ${attachmentResults.length} 个附件\n✅ 成功保存: ${successCount}\n❌ 下载失败: ${failCount}`,
+                    inline: false
+                });
+                
+                // 如果有失败的附件，单独显示失败列表
+                if (failCount > 0) {
+                    const failedAttachments = attachmentResults
+                        .filter(r => r.startsWith('❌'))
+                        .slice(0, 3) // 最多显示3个失败的
+                        .join('\n');
+                    
+                    embed.addFields({
+                        name: '❌ 下载失败的附件',
+                        value: failedAttachments + (failCount > 3 ? '\n...' : ''),
+                        inline: false
+                    });
+                }
+            } else {
+                // 附件不多时，正常显示
+                embed.addFields({
+                    name: '📎 附件',
+                    value: attachmentFieldValue,
+                    inline: false
+                });
+            }
         }
         
         // 如果消息有嵌入内容，记录嵌入数量

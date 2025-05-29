@@ -97,7 +97,7 @@ function getTimeRangeDescription() {
 
 // 禁言时长配置（分钟）- 原始配置保持不变
 const BASE_MUTE_DURATIONS = {
-    LEVEL_1: { threshold: 15, duration: 10 },   // 15个⚠️ -> 10分钟
+    LEVEL_1: { threshold: 1, duration: 10 },   // 15个⚠️ -> 10分钟
     LEVEL_2: { threshold: 30, duration: 20 },   // 30个⚠️ -> 20分钟  
     LEVEL_3: { threshold: 60, duration: 40 },   // 60个⚠️ -> 40分钟
     LEVEL_4: { threshold: 80, duration: 60 },  // 80个⚠️ -> 1小时
@@ -105,7 +105,7 @@ const BASE_MUTE_DURATIONS = {
 };
 
 // 删除消息阈值 - 原始配置
-const BASE_DELETE_THRESHOLD = 10; // 10个⚠️删除消息
+const BASE_DELETE_THRESHOLD = 1; // 10个⚠️删除消息
 
 // 动态获取当前时段的禁言配置
 const MUTE_DURATIONS = new Proxy(BASE_MUTE_DURATIONS, {

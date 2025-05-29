@@ -138,9 +138,22 @@ async function deleteAndArchiveMessage(client, voteData) {
             console.error('归档消息失败，但继续执行删除:', archiveError);
         }
         
-        // 删除消息
-        await message.delete();
+        // 删除消息前先检查消息是否还存在
+        const messageStillExists = await channel.messages.fetch(targetMessageId).catch(() => null);
+        if (!messageStillExists) {
+            console.log(`消息 ${targetMessageId} 已被删除，跳过删除操作`);
+            return {
+                success: true,
+                action: 'delete',
+                alreadyDeleted: true,
+                messageInfo,
+                reactionCount: currentReactionCount,
+                archived: archiveResult
+            };
+        }
         
+        // 删除消息
+        await messageStillExists.delete();
         console.log(`成功删除消息: ${targetMessageId}，归档状态: ${archiveResult}`);
         
         return {
