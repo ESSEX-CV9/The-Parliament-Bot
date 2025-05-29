@@ -63,6 +63,7 @@ const initContestTagsCommand = require('../modules/contest/commands/initContestT
 const manageAllowedForumsCommand = require('../modules/contest/commands/manageAllowedForums');
 const manageExternalServersCommand = require('../modules/contest/commands/manageExternalServers');
 const cacheStats = require('../modules/contest/commands/cacheStats');
+const regenerateContestMessagesCommand = require('../modules/contest/commands/regenerateContestMessages');
 
 const client = new Client({ 
     intents: [
@@ -122,6 +123,7 @@ client.commands.set(initContestTagsCommand.data.name, initContestTagsCommand);
 client.commands.set(manageAllowedForumsCommand.data.name, manageAllowedForumsCommand);
 client.commands.set(manageExternalServersCommand.data.name, manageExternalServersCommand);
 client.commands.set(cacheStats.data.name, cacheStats);
+client.commands.set(regenerateContestMessagesCommand.data.name, regenerateContestMessagesCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);

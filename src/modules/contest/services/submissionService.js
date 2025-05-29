@@ -140,24 +140,27 @@ async function processContestSubmission(interaction) {
 async function updateSubmissionDisplay(client, contestChannelData) {
     try {
         const contestChannel = await client.channels.fetch(contestChannelData.channelId);
-        const displayMessage = await contestChannel.messages.fetch(contestChannelData.displayMessage);
-        
-        if (!displayMessage) {
-            console.error(`找不到展示消息: ${contestChannelData.displayMessage}`);
-            return;
-        }
         
         // 获取所有有效投稿
         const submissions = await getSubmissionsByChannel(contestChannelData.channelId);
         const validSubmissions = submissions.filter(sub => sub.isValid);
+
+        // 更新数据库中记录的展示消息
+        const displayMessage = await contestChannel.messages.fetch(contestChannelData.displayMessage);
         
-        await displayService.updateDisplayMessage(
-            displayMessage,
-            validSubmissions,
-            1, // 不再需要页码
-            5, // 固定显示最近5个
-            contestChannelData.channelId
-        );
+        if (displayMessage) {
+            await displayService.updateDisplayMessage(
+                displayMessage,
+                validSubmissions,
+                1,
+                5,
+                contestChannelData.channelId
+            );
+            console.log(`主展示消息已更新 - 消息ID: ${displayMessage.id}`);
+        }
+
+        // 查找并更新所有可能的展示消息（通过检查消息标题和按钮）
+        await updateAllDisplayMessages(contestChannel, validSubmissions, contestChannelData.channelId);
         
         // 清除缓存以确保显示最新数据
         displayService.clearCache(contestChannelData.channelId);
@@ -166,6 +169,45 @@ async function updateSubmissionDisplay(client, contestChannelData) {
         
     } catch (error) {
         console.error('更新作品展示时出错:', error);
+    }
+}
+
+/**
+ * 更新频道中所有的作品展示消息
+ */
+async function updateAllDisplayMessages(contestChannel, validSubmissions, contestChannelId) {
+    try {
+        // 获取频道中的固定消息
+        const pinnedMessages = await contestChannel.messages.fetchPinned();
+        
+        // 查找所有作品展示消息（通过标题识别）
+        const displayMessages = pinnedMessages.filter(message => {
+            if (!message.embeds || message.embeds.length === 0) return false;
+            const embed = message.embeds[0];
+            return embed.title && (
+                embed.title.includes('🎨 最近投稿作品展示') || 
+                embed.title.includes('🎨 参赛作品展示')
+            );
+        });
+
+        // 更新所有找到的展示消息
+        for (const message of displayMessages.values()) {
+            try {
+                await displayService.updateDisplayMessage(
+                    message,
+                    validSubmissions,
+                    1,
+                    5,
+                    contestChannelId
+                );
+                console.log(`展示消息已同步 - 消息ID: ${message.id}`);
+            } catch (updateError) {
+                console.error(`更新展示消息失败 - 消息ID: ${message.id}`, updateError);
+            }
+        }
+
+    } catch (error) {
+        console.error('批量更新展示消息时出错:', error);
     }
 }
 
