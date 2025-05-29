@@ -192,18 +192,9 @@ async function setupChannelMessages(contestChannel, applicationData, channelCont
                     .setStyle(ButtonStyle.Primary)
             );
         
-        // 为主办人添加稿件管理按钮
-        const managementButton = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`contest_manage_${contestChannel.id}`)
-                    .setLabel('🗂️ 稿件管理')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-        
         const submissionMessage = await contestChannel.send({
             embeds: [submissionEmbed],
-            components: [submissionButton, managementButton]
+            components: [submissionButton]
         });
         
         // 第三条消息：作品展示区域
@@ -216,6 +207,17 @@ async function setupChannelMessages(contestChannel, applicationData, channelCont
         const displayMessage = await contestChannel.send({
             embeds: [displayEmbed]
         });
+        
+        // 自动标注三条关键消息
+        try {
+            await infoMessage.pin();
+            await submissionMessage.pin();
+            await displayMessage.pin();
+            console.log(`三条关键消息已标注 - 频道: ${contestChannel.id}`);
+        } catch (pinError) {
+            console.error('标注消息失败:', pinError);
+            // 不抛出错误，避免影响主流程
+        }
         
         console.log(`赛事频道消息已创建 - 频道: ${contestChannel.id}`);
         

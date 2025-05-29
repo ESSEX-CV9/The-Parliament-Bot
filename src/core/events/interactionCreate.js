@@ -331,7 +331,7 @@ async function interactionCreateHandler(interaction) {
                     components: updatedComponents
                 });
             } else if (interaction.customId.startsWith('manage_select_submission_')) {
-                // 投稿选择下拉菜单
+                // 投稿选择下拉菜单（在展示界面中的管理功能）
                 await displayService.handleSubmissionSelect(interaction);
             }
             return;
