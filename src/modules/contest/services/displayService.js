@@ -1079,7 +1079,7 @@ class DisplayService {
         }
     }
 
-    // 新增：处理移除获奖作品
+    // 修复：处理移除获奖作品
     async handleRemoveAward(interaction, contestChannelId) {
         // 获取用户选择的投稿
         const selectedGlobalId = await this.getSelectedSubmissionFromMessage(interaction);
@@ -1090,6 +1090,7 @@ class DisplayService {
             });
         }
         
+        // 确保只在有选择的情况下才 defer reply
         await interaction.deferReply({ ephemeral: true });
         
         try {
@@ -1130,14 +1131,15 @@ class DisplayService {
             
             console.log(`移除获奖信息成功 - 全局ID: ${selectedGlobalId}, 原奖项: ${oldAwardName}, 用户: ${interaction.user.tag}`);
             
-            // 新增：处理完赛按钮（第一次点击完赛按钮，显示获奖清单）
-            await this.handleFinishContest(interaction, contestChannelId);
-            
         } catch (error) {
             console.error('移除获奖作品时出错:', error);
-            await interaction.editReply({
-                content: '❌ 移除获奖作品时出现错误，请稍后重试。'
-            });
+            try {
+                await interaction.editReply({
+                    content: '❌ 移除获奖作品时出现错误，请稍后重试。'
+                });
+            } catch (replyError) {
+                console.error('回复错误信息失败:', replyError);
+            }
         }
     }
 

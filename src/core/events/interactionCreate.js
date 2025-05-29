@@ -281,6 +281,7 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('finish_contest_close_')) {
                 // 关闭完赛清单按钮
                 await interaction.update({
+                    content: '✅ 已关闭获奖清单预览。\n\n您可以继续管理比赛，或稍后重新查看完赛选项。',
                     embeds: [],
                     components: []
                 });
@@ -365,8 +366,7 @@ async function interactionCreateHandler(interaction) {
                 await interaction.update({
                     embeds: [{
                         ...interaction.message.embeds[0].data,
-                        description: `**赛事名称：** ${interaction.message.embeds[0].data.description.split('\n')[0].replace('**赛事名称：** ', '')}\n\n✅ **外部服务器投稿：** ${selectionText}\n\n请点击下方按钮继续设置频道详情。`
-                    }],
+                        description: `**赛事名称：** ${interaction.message.embeds[0].data.description.split('\n')[0].replace('**赛事名称：** ', '')}\n\n✅ **外部服务器投稿：** ${selectionText}\n\n请点击下方按钮继续设置频道详情。`                    }],
                     components: updatedComponents
                 });
             } else if (interaction.customId.startsWith('manage_select_submission_')) {
