@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getContestChannel, updateContestChannel, getContestApplication, getSubmissionsByChannel } = require('../utils/contestDatabase');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
+const { checkContestManagePermission, getManagePermissionDeniedMessage } = require('../utils/contestPermissions');
 
 const data = new SlashCommandBuilder()
     .setName('生成赛事频道初始信息')
@@ -30,16 +31,6 @@ async function execute(interaction) {
             });
         }
 
-        // 检查用户权限
-        const hasPermission = checkAdminPermission(interaction.member);
-        
-        if (!hasPermission) {
-            return interaction.reply({
-                content: getPermissionDeniedMessage(),
-                flags: MessageFlags.Ephemeral
-            });
-        }
-
         // 立即defer以防止超时
         await interaction.deferReply({ ephemeral: true });
 
@@ -51,6 +42,15 @@ async function execute(interaction) {
         if (!contestChannelData) {
             return interaction.editReply({
                 content: '❌ 未找到指定的赛事频道数据。请确认频道ID是否正确。'
+            });
+        }
+
+        // 检查用户权限（管理员或申请人）
+        const hasPermission = checkContestManagePermission(interaction.member, contestChannelData);
+        
+        if (!hasPermission) {
+            return interaction.editReply({
+                content: getManagePermissionDeniedMessage()
             });
         }
 
@@ -133,9 +133,14 @@ async function execute(interaction) {
             'display': '作品展示'
         };
 
+        // 判断用户类型用于显示
+        const isAdmin = checkAdminPermission(interaction.member);
+        const userType = isAdmin ? '管理员' : '主办人';
+
         let resultText = '✅ **赛事频道消息生成完成！**\n\n';
         resultText += `📍 **目标频道：** <#${contestChannelId}>\n`;
-        resultText += `🎯 **生成类型：** ${messageType === 'all' ? '全部消息' : typeNames[messageType]}\n\n`;
+        resultText += `🎯 **生成类型：** ${messageType === 'all' ? '全部消息' : typeNames[messageType]}\n`;
+        resultText += `👤 **操作者：** ${userType}\n\n`;
         
         if (messageType === 'all') {
             resultText += '**生成的消息：**\n';
@@ -156,7 +161,7 @@ async function execute(interaction) {
             content: resultText
         });
 
-        console.log(`赛事频道消息重新生成完成 - 频道: ${contestChannelId}, 类型: ${messageType}, 操作者: ${interaction.user.tag}`);
+        console.log(`赛事频道消息重新生成完成 - 频道: ${contestChannelId}, 类型: ${messageType}, 操作者: ${interaction.user.tag} (${userType})`);
 
     } catch (error) {
         console.error('生成赛事频道消息时出错:', error);
