@@ -59,6 +59,12 @@ async function processChannelConfirmation(interaction) {
             completedAt: new Date().toISOString()
         });
         
+        // 更新审核帖子状态为"赛事已开启"
+        await updateChannelCreatedThreadStatus(interaction.client, applicationData, contestChannel);
+        
+        // 发送频道创建成功通知
+        await sendChannelCreatedNotification(interaction.client, applicationData, contestChannel);
+        
         const externalServerText = allowExternalServers ? '\n🌐 **外部服务器投稿：** 已启用' : '';
         
         await interaction.editReply({
