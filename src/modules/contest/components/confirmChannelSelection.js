@@ -22,7 +22,7 @@ function createConfirmChannelSelection(applicationData, allowedExternalServers =
         .addOptions([
             {
                 label: '否 - 仅允许本服务器投稿',
-                description: '只有本服务器的成员可以投稿',
+                description: '只有本服务器的链接可以投稿',
                 value: 'no',
                 emoji: '🏠'
             },
