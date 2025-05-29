@@ -14,6 +14,10 @@ const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.
 // 🔥 新增：媒体文件扩展名（需要添加剧透效果的文件类型）
 const MEDIA_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv'];
 
+// 🔥 新增：附件字段长度控制
+const MAX_EMBED_FIELD_LENGTH = 300; // 在embed中显示的最大字符数
+const FULL_TEXT_THRESHOLD = 300; // 超过此长度时创建txt文件
+
 // 🔥 新增：清理配置
 const CLEANUP_INTERVAL_HOURS = 1; // 每小时清理一次
 const CLEANUP_FILE_AGE_HOURS = 24; // 删除24小时前的文件
@@ -161,6 +165,93 @@ function getSpoilerFilename(filename) {
 }
 
 /**
+ * 🔥 新增：创建消息内容详情txt文件
+ * @param {string} content - 完整的消息内容
+ * @param {string} messageId - 消息ID
+ * @param {string} type - 文件类型 ('content' | 'attachment')
+ * @returns {Promise<{success: boolean, localPath?: string, error?: string}>}
+ */
+async function createContentDetailsFile(content, messageId, type = 'content') {
+    try {
+        await ensureAttachmentsDir();
+        
+        // 生成txt文件名
+        const timestamp = Date.now();
+        const typeMap = {
+            'content': '消息内容',
+            'attachment': '附件详情'
+        };
+        const filename = `${messageId}_${timestamp}_${typeMap[type] || '详情'}.txt`;
+        const fullPath = path.join(ATTACHMENTS_DIR, filename);
+        
+        // 构建完整的文件内容
+        const fullContent = [
+            `# ${typeMap[type] || '详情'}`,
+            `消息ID: ${messageId}`,
+            `归档时间: ${new Date().toLocaleString('zh-CN')}`,
+            `内容长度: ${content.length} 字符`,
+            ``,
+            `## 完整内容:`,
+            ``,
+            content
+        ].join('\n');
+        
+        // 写入文件
+        await fs.writeFile(fullPath, fullContent, 'utf8');
+        
+        console.log(`✅ 创建${typeMap[type]}文件: ${filename}`);
+        return {
+            success: true,
+            localPath: filename
+        };
+        
+    } catch (error) {
+        console.error(`创建${typeMap[type] || '详情'}文件失败:`, error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
+/**
+ * 🔥 新增：处理可能超长的字段内容
+ * @param {string} content - 原始内容
+ * @param {string} messageId - 消息ID
+ * @param {string} fieldType - 字段类型
+ * @param {Array} attachmentFiles - 附件文件数组（引用传递）
+ * @returns {Promise<string>} 处理后的显示内容
+ */
+async function processLongContent(content, messageId, fieldType, attachmentFiles) {
+    if (!content || content.length <= FULL_TEXT_THRESHOLD) {
+        return content || '*（无内容）*';
+    }
+    
+    console.log(`${fieldType}内容过长 (${content.length} 字符)，创建详情文件...`);
+    
+    // 创建txt文件
+    const detailsFileResult = await createContentDetailsFile(content, messageId, fieldType);
+    
+    if (detailsFileResult.success) {
+        // 添加txt文件到附件列表
+        const detailsFilePath = path.join(ATTACHMENTS_DIR, detailsFileResult.localPath);
+        attachmentFiles.push(new AttachmentBuilder(detailsFilePath, { name: detailsFileResult.localPath }));
+        
+        // 返回截断版本 + 文件引用
+        const truncatedContent = content.substring(0, MAX_EMBED_FIELD_LENGTH);
+        const result = truncatedContent + '\n\n... (内容过长已截断)\n\n📄 完整内容请查看附件: ' + detailsFileResult.localPath;
+        
+        console.log(`📄 ${fieldType}详情已保存到文件: ${detailsFileResult.localPath}`);
+        return result;
+    } else {
+        console.error(`创建${fieldType}详情文件失败，使用截断显示:`, detailsFileResult.error);
+        // 如果创建文件失败，仍然截断显示
+        const truncatedContent = content.substring(0, MAX_EMBED_FIELD_LENGTH);
+        return truncatedContent + '\n\n... (内容过长已截断)';
+    }
+}
+
+/**
  * 归档被删除的消息
  * @param {Client} client - Discord客户端
  * @param {object} messageInfo - 消息信息
@@ -192,6 +283,17 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
             ? '因达到⚠️反应阈值被自助管理系统删除' 
             : '因禁言用户投票达到阈值被删除';
         
+        // 🔥 初始化附件文件数组
+        const attachmentFiles = [];
+        
+        // 🔥 处理消息内容（可能超长）
+        const processedContent = await processLongContent(
+            messageInfo.content, 
+            messageInfo.messageId, 
+            'content', 
+            attachmentFiles
+        );
+        
         // 构建归档嵌入消息
         const embed = new EmbedBuilder()
             .setTitle(`📁 消息归档记录 ${actionIcon}`)
@@ -199,7 +301,7 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
             .addFields(
                 {
                     name: '📝 原消息内容',
-                    value: messageInfo.content || '*（无文字内容或内容为空）*',
+                    value: processedContent,
                     inline: false
                 },
                 {
@@ -238,12 +340,11 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
                     inline: false
                 }
             )
-            .setColor(type === 'delete' ? '#FF6B6B' : '#FF8C00') // 🔥 不同类型不同颜色
+            .setColor(type === 'delete' ? '#FF6B6B' : '#FF8C00')
             .setTimestamp();
         
         // 处理附件下载和归档
-        const attachmentFiles = [];
-        let hasMediaFiles = false; // 🔥 新增：标记是否包含媒体文件
+        let hasMediaFiles = false;
         
         if (messageInfo.attachments && messageInfo.attachments.length > 0) {
             const attachmentResults = [];
@@ -254,17 +355,14 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
                 const downloadResult = await downloadAttachment(att.url, att.name, messageInfo.messageId);
                 
                 if (downloadResult.success) {
-                    // 🔥 检查是否为媒体文件
                     const isMedia = isMediaFile(att.name);
                     if (isMedia) {
                         hasMediaFiles = true;
                     }
                     
-                    // 🔥 为媒体文件添加剧透标记
                     const displayName = isMedia ? `🔞 ${att.name} (媒体文件，已添加剧透效果)` : att.name;
                     attachmentResults.push(`✅ [${displayName}](attachment://${downloadResult.localPath}) (${formatFileSize(att.size)}) - 已保存`);
                     
-                    // 🔥 添加到要发送的文件列表，媒体文件使用剧透文件名
                     const fullPath = path.join(ATTACHMENTS_DIR, downloadResult.localPath);
                     const spoilerFilename = getSpoilerFilename(downloadResult.localPath);
                     attachmentFiles.push(new AttachmentBuilder(fullPath, { name: spoilerFilename }));
@@ -276,51 +374,24 @@ async function archiveDeletedMessage(client, messageInfo, voteData) {
                 }
             }
             
-            // 🔥 修改附件字段，添加媒体文件说明
+            // 🔥 使用新的处理函数处理附件信息
             let attachmentFieldValue = attachmentResults.join('\n');
             if (hasMediaFiles) {
                 attachmentFieldValue += '\n\n⚠️ **注意**: 媒体文件（图片、视频等）已自动添加剧透效果，点击查看时请注意内容适宜性。';
             }
             
-            // 检查字段值长度，如果超过1024字符则截断
-            const MAX_FIELD_LENGTH = 1024;
-            if (attachmentFieldValue.length > MAX_FIELD_LENGTH) {
-                const truncated = attachmentFieldValue.substring(0, MAX_FIELD_LENGTH - 50);
-                attachmentFieldValue = truncated + '\n\n... (内容过长已截断)';
-            }
+            const processedAttachmentContent = await processLongContent(
+                attachmentFieldValue,
+                messageInfo.messageId,
+                'attachment',
+                attachmentFiles
+            );
             
-            // 如果附件太多，只显示摘要
-            if (attachmentResults.length > 5) {
-                const successCount = attachmentResults.filter(r => r.startsWith('✅')).length;
-                const failCount = attachmentResults.filter(r => r.startsWith('❌')).length;
-                
-                embed.addFields({
-                    name: '📎 附件摘要',
-                    value: `总计 ${attachmentResults.length} 个附件\n✅ 成功保存: ${successCount}\n❌ 下载失败: ${failCount}`,
-                    inline: false
-                });
-                
-                // 如果有失败的附件，单独显示失败列表
-                if (failCount > 0) {
-                    const failedAttachments = attachmentResults
-                        .filter(r => r.startsWith('❌'))
-                        .slice(0, 3) // 最多显示3个失败的
-                        .join('\n');
-                    
-                    embed.addFields({
-                        name: '❌ 下载失败的附件',
-                        value: failedAttachments + (failCount > 3 ? '\n...' : ''),
-                        inline: false
-                    });
-                }
-            } else {
-                // 附件不多时，正常显示
-                embed.addFields({
-                    name: '📎 附件',
-                    value: attachmentFieldValue,
-                    inline: false
-                });
-            }
+            embed.addFields({
+                name: '📎 附件',
+                value: processedAttachmentContent,
+                inline: false
+            });
         }
         
         // 如果消息有嵌入内容，记录嵌入数量
@@ -580,5 +651,7 @@ module.exports = {
     stopAttachmentCleanupScheduler,
     getCleanupStatus,
     isMediaFile,
-    getSpoilerFilename
+    getSpoilerFilename,
+    createContentDetailsFile,
+    processLongContent
 };
