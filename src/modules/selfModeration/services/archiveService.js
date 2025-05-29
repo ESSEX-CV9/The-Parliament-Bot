@@ -18,9 +18,9 @@ const MEDIA_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mo
 const MAX_EMBED_FIELD_LENGTH = 300; // 在embed中显示的最大字符数
 const FULL_TEXT_THRESHOLD = 300; // 超过此长度时创建txt文件
 
-// 🔥 新增：清理配置
-const CLEANUP_INTERVAL_HOURS = 1; // 每小时清理一次
-const CLEANUP_FILE_AGE_HOURS = 24; // 删除24小时前的文件
+// 🔥 修改：清理配置 - 更频繁的清理
+const CLEANUP_INTERVAL_HOURS = 0.5; // 每半小时清理一次
+const CLEANUP_FILE_AGE_HOURS = 0.5; // 删除半小时前的文件
 let cleanupTimer = null;
 
 /**
@@ -516,7 +516,7 @@ function startAttachmentCleanupScheduler(client = null) {
         clearInterval(cleanupTimer);
     }
     
-    // 设置每小时执行一次清理
+    // 设置每半小时执行一次清理
     const intervalMs = CLEANUP_INTERVAL_HOURS * 60 * 60 * 1000; // 转换为毫秒
     
     cleanupTimer = setInterval(async () => {
