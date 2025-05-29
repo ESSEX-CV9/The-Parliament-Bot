@@ -274,28 +274,58 @@ async function processDeleteConfirmation(interaction) {
 async function sendRejectionNotification(client, submission, reason) {
     try {
         const user = await client.users.fetch(submission.submitterId);
-        if (!user) return;
+        if (!user) {
+            console.log(`无法找到用户 ${submission.submitterId}`);
+            return;
+        }
         
-        // 构建作品链接
-        const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
+        // 获取比赛信息
+        const { getContestChannel } = require('../utils/contestDatabase');
+        const contestChannelData = await getContestChannel(submission.contestChannelId);
+        const contestTitle = contestChannelData?.contestTitle || '未知比赛';
+        const contestChannelLink = `<#${submission.contestChannelId}>`;
+        
+        // 构建作品链接 - 使用频道链接格式，不包含消息ID
+        const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}`;
+        
+        // 根据拒稿理由调整消息内容
+        let title = '📝 投稿拒稿退回通知';
+        let description = `您在 **${contestTitle}** 比赛中的投稿作品已被主办人拒稿退回。`;
+        let reasonText = reason || '无具体说明';
+        
+        if (reason === '主办人拒稿退回了您的投稿') {
+            reasonText = '主办人进行了直接拒稿操作，未提供具体理由';
+            description = `您在 **${contestTitle}** 比赛中的投稿作品已被主办人拒稿退回。如有疑问，请联系比赛主办人了解详情。`;
+        }
         
         const embed = new EmbedBuilder()
-            .setTitle('📝 投稿被删除通知')
-            .setDescription(`您的投稿作品已被主办人删除。`)
+            .setTitle(title)
+            .setDescription(description)
             .addFields(
-                { name: '🔗 作品链接', value: workUrl, inline: false },
+                { name: '🏆 比赛频道', value: contestChannelLink, inline: false },
+                { name: '🎨 投稿作品链接', value: workUrl, inline: false },
+                { name: '🆔 投稿ID', value: `\`${submission.contestSubmissionId}\``, inline: true },
                 { name: '📅 投稿时间', value: `<t:${Math.floor(new Date(submission.submittedAt).getTime() / 1000)}:f>`, inline: true },
-                { name: '🗑️ 删除原因', value: reason || '无具体说明', inline: false }
+                { name: '📝 拒稿理由', value: reasonText, inline: false }
             )
             .setColor('#FF6B6B')
+            .setFooter({ 
+                text: '如有疑问，请联系比赛主办人 | 您的原作品不会受到任何影响' 
+            })
             .setTimestamp();
         
         await user.send({ embeds: [embed] });
         
-        console.log(`拒稿通知已发送 - 用户: ${user.tag}, 投稿ID: ${submission.contestSubmissionId}`);
+        console.log(`拒稿通知已发送 - 用户: ${user.tag}, 投稿ID: ${submission.contestSubmissionId}, 比赛: ${contestTitle}, 理由: ${reason}`);
         
     } catch (error) {
         console.error('发送拒稿通知时出错:', error);
+        
+        // 如果是权限错误（用户关闭了私聊），记录特殊日志
+        if (error.code === 50007) {
+            console.log(`用户 ${submission.submitterId} 已关闭私聊，无法发送拒稿通知`);
+        }
+        
         // 不抛出错误，避免影响主流程
     }
 }
@@ -311,7 +341,7 @@ async function processRejectionModal(interaction) {
         const submissionId = parts[2];
         const contestChannelId = parts[3];
         
-        const rejectionReason = interaction.fields.getTextInputValue('rejection_reason').trim() || '主办人删除了您的投稿';
+        const rejectionReason = interaction.fields.getTextInputValue('rejection_reason').trim() || '主办人拒稿退回了您的投稿';
         
         await deleteSubmissionWithReason(interaction, submissionId, contestChannelId, rejectionReason);
         
@@ -319,8 +349,8 @@ async function processRejectionModal(interaction) {
         const { displayService } = require('./displayService');
         displayService.clearUserSelection(interaction.user.id, contestChannelId);
         
-        // 自动刷新界面
-        await displayService.refreshSubmissionList(interaction, contestChannelId);
+        // 移除自动刷新调用，改为提示用户手动刷新
+        // await displayService.refreshSubmissionList(interaction, contestChannelId);
         
     } catch (error) {
         console.error('处理拒稿模态框时出错:', error);
@@ -349,10 +379,8 @@ async function deleteSubmissionWithReason(interaction, globalId, contestChannelI
             });
         }
         
-        // 发送拒稿通知
-        if (reason !== '主办人删除了您的投稿') {
-            await sendRejectionNotification(interaction.client, submission, reason);
-        }
+        // 始终发送拒稿通知
+        await sendRejectionNotification(interaction.client, submission, reason);
         
         // 删除投稿数据
         await deleteContestSubmission(globalId);
@@ -373,17 +401,17 @@ async function deleteSubmissionWithReason(interaction, globalId, contestChannelI
         });
         
         await interaction.editReply({
-            content: `✅ **投稿已删除**\n\n🆔 **投稿ID：** \`${submission.contestSubmissionId}\`\n📝 **理由：** ${reason}`
+            content: `✅ **投稿已拒稿退回**\n\n🆔 **投稿ID：** \`${submission.contestSubmissionId}\`\n📝 **退回理由：** ${reason}\n📨 **通知状态：** 已向投稿者发送退回通知`
         });
         
-        console.log(`投稿已删除 - 比赛内ID: ${submission.contestSubmissionId}, 全局ID: ${globalId}, 主办人: ${interaction.user.tag}, 原因: ${reason}`);
+        console.log(`投稿已拒稿退回 - 比赛内ID: ${submission.contestSubmissionId}, 全局ID: ${globalId}, 主办人: ${interaction.user.tag}, 理由: ${reason}`);
         
     } catch (error) {
-        console.error('删除投稿时出错:', error);
+        console.error('拒稿退回投稿时出错:', error);
         
         try {
             await interaction.editReply({
-                content: `❌ 删除投稿时出现错误：${error.message}`
+                content: `❌ 拒稿退回时出现错误：${error.message}`
             });
         } catch (replyError) {
             console.error('回复错误信息失败:', replyError);

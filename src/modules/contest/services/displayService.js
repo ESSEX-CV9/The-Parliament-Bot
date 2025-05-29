@@ -288,15 +288,15 @@ class DisplayService {
                 .addComponents(
                     new ButtonBuilder()
                         .setCustomId(`manage_quick_delete_${contestChannelId}`)
-                        .setLabel('🗑️ 直接删除')
+                        .setLabel('🗑️ 直接拒稿')
                         .setStyle(ButtonStyle.Danger),
                     new ButtonBuilder()
                         .setCustomId(`manage_delete_with_reason_${contestChannelId}`)
-                        .setLabel('📝 删除并提供理由')
+                        .setLabel('📝 拒稿并说明理由')
                         .setStyle(ButtonStyle.Secondary),
                     new ButtonBuilder()
                         .setCustomId(`manage_delete_page_${contestChannelId}`)
-                        .setLabel('🗂️ 删除整页稿件')
+                        .setLabel('🗂️ 拒稿整页稿件')
                         .setStyle(ButtonStyle.Danger)
                 );
             
@@ -706,7 +706,7 @@ class DisplayService {
         return contestCacheManager.getCacheStats();
     }
 
-    // 处理投稿选择下拉菜单
+    // 处理投稿选择下拉菜单（修改版）
     async handleSubmissionSelect(interaction) {
         try {
             await interaction.deferUpdate();
@@ -734,12 +734,6 @@ class DisplayService {
             }, 5 * 60 * 1000); // 5分钟
             
             console.log(`主办人选择了投稿 - 全局ID: ${selectedGlobalId}, 频道: ${contestChannelId}, 用户: ${interaction.user.tag}`);
-            
-            // 可选：给用户一个视觉反馈
-            await interaction.followUp({
-                content: `✅ 已选择要操作的投稿（ID: ${selectedGlobalId}），请点击下方的操作按钮。`,
-                ephemeral: true
-            });
             
         } catch (error) {
             console.error('处理投稿选择时出错:', error);
@@ -782,13 +776,13 @@ class DisplayService {
         }
     }
 
-    // 快速删除投稿（修复版）
+    // 快速拒稿投稿
     async handleQuickDelete(interaction, contestChannelId) {
         // 获取用户选择的投稿
         const selectedGlobalId = await this.getSelectedSubmissionFromMessage(interaction);
         if (!selectedGlobalId) {
             return interaction.reply({
-                content: '❌ 请先从下拉菜单中选择要删除的投稿作品，然后再点击删除按钮。',
+                content: '❌ 请先从下拉菜单中选择要拒稿的投稿作品，然后再点击拒稿按钮。',
                 ephemeral: true
             });
         }
@@ -797,32 +791,27 @@ class DisplayService {
         
         try {
             const { deleteSubmissionWithReason } = require('./submissionManagementService');
-            await deleteSubmissionWithReason(interaction, selectedGlobalId, contestChannelId, '主办人删除了您的投稿');
+            await deleteSubmissionWithReason(interaction, selectedGlobalId, contestChannelId, '主办人拒稿退回了您的投稿');
             
             // 清除用户选择
             this.clearUserSelection(interaction.user.id, contestChannelId);
             
-            // 删除成功提示，建议用户手动刷新
-            await interaction.editReply({
-                content: '✅ **投稿删除成功！**\n\n💡 **提示：** 请点击界面上的 🔄 刷新按钮来查看最新的投稿列表。'
-            });
-            
-            console.log(`投稿删除成功 - 全局ID: ${selectedGlobalId}, 用户: ${interaction.user.tag}`);
+            console.log(`投稿拒稿成功 - 全局ID: ${selectedGlobalId}, 用户: ${interaction.user.tag}`);
             
         } catch (error) {
-            console.error('删除投稿时出错:', error);
+            console.error('拒稿投稿时出错:', error);
             await interaction.editReply({
-                content: '❌ 删除投稿时出现错误，请稍后重试。'
+                content: '❌ 拒稿投稿时出现错误，请稍后重试。'
             });
         }
     }
 
-    // 删除并提供理由
+    // 拒稿并提供理由
     async handleDeleteWithReason(interaction, contestChannelId) {
         const selectedGlobalId = await this.getSelectedSubmissionFromMessage(interaction);
         if (!selectedGlobalId) {
             return interaction.reply({
-                content: '❌ 请先从下拉菜单中选择要删除的投稿作品，然后再点击删除按钮。',
+                content: '❌ 请先从下拉菜单中选择要拒稿的投稿作品，然后再点击拒稿按钮。',
                 ephemeral: true
             });
         }
@@ -834,7 +823,7 @@ class DisplayService {
         // 注意：这里不清除选择，因为用户还需要在模态框中完成操作
     }
 
-    // 删除整页稿件（修复版）
+    // 拒稿整页稿件
     async handleDeletePage(interaction, contestChannelId) {
         await interaction.deferReply({ ephemeral: true });
         
@@ -848,14 +837,14 @@ class DisplayService {
         
         try {
             const { deleteSubmissionWithReason } = require('./submissionManagementService');
-            let deletedCount = 0;
+            let rejectedCount = 0;
             
             for (const submission of currentPageSubmissions) {
                 try {
-                    await deleteSubmissionWithReason(interaction, submission.globalId, contestChannelId, '主办人批量删除了投稿');
-                    deletedCount++;
+                    await deleteSubmissionWithReason(interaction, submission.globalId, contestChannelId, '主办人批量拒稿退回了投稿');
+                    rejectedCount++;
                 } catch (error) {
-                    console.error(`删除投稿失败 - ID: ${submission.globalId}`, error);
+                    console.error(`拒稿投稿失败 - ID: ${submission.globalId}`, error);
                 }
             }
             
@@ -863,15 +852,15 @@ class DisplayService {
             this.clearUserSelection(interaction.user.id, contestChannelId);
             
             await interaction.editReply({
-                content: `✅ **批量删除成功！**\n\n📊 **删除统计：** 已成功删除 ${deletedCount} 个投稿作品\n\n💡 **提示：** 请点击界面上的 🔄 刷新按钮来查看最新的投稿列表。`
+                content: `✅ **批量拒稿成功！**\n\n📊 **拒稿统计：** 已成功拒稿退回 ${rejectedCount} 个投稿作品\n\n💡 **提示：** 请点击界面上的 🔄 刷新按钮来查看最新的投稿列表。`
             });
             
-            console.log(`批量删除成功 - 删除数量: ${deletedCount}, 用户: ${interaction.user.tag}`);
+            console.log(`批量拒稿成功 - 拒稿数量: ${rejectedCount}, 用户: ${interaction.user.tag}`);
             
         } catch (error) {
-            console.error('批量删除投稿时出错:', error);
+            console.error('批量拒稿投稿时出错:', error);
             await interaction.editReply({
-                content: '❌ 批量删除时出现错误，请稍后重试。'
+                content: '❌ 批量拒稿时出现错误，请稍后重试。'
             });
         }
     }
