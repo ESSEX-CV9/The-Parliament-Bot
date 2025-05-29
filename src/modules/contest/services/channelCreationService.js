@@ -94,11 +94,12 @@ async function createContestChannel(client, guild, applicationData, channelName,
             throw new Error('指定的赛事分类不存在或类型错误');
         }
         
-        // 创建赛事频道
+        // 创建赛事频道（添加年龄限制）
         const contestChannel = await guild.channels.create({
             name: channelName,
             type: ChannelType.GuildText,
             parent: category.id,
+            nsfw: true, // 设置为有年龄限制的频道
             topic: `🏆 ${applicationData.formData.title} | 申请人: ${guild.members.cache.get(applicationData.applicantId)?.displayName || '未知'}${allowExternalServers ? ' | 允许外部服务器投稿' : ''}`
         });
         
@@ -145,7 +146,7 @@ async function createContestChannel(client, guild, applicationData, channelName,
         
         await saveContestChannel(channelData);
         
-        console.log(`赛事频道数据已保存 - 频道: ${contestChannel.id}, 外部服务器: ${allowExternalServers}`);
+        console.log(`赛事频道数据已保存 - 频道: ${contestChannel.id} (年龄限制已启用), 外部服务器: ${allowExternalServers}`);
         
         return contestChannel;
         
