@@ -31,6 +31,13 @@ async function processContestSubmission(interaction) {
             });
         }
         
+        // 检查比赛是否已完赛
+        if (contestChannelData.isFinished) {
+            return interaction.editReply({
+                content: '❌ 本次比赛已结束，不再接受新的投稿。感谢您的参与！'
+            });
+        }
+        
         // 获取提交的链接和稿件说明
         const submissionLink = interaction.fields.getTextInputValue('submission_link').trim();
         const submissionDescription = interaction.fields.getTextInputValue('submission_description')?.trim() || '';

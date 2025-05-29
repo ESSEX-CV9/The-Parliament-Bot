@@ -97,6 +97,15 @@ class DisplayService {
                 description += `📅投稿时间：<t:${publishTime}:f>\n`;
                 description += `📝作品介绍: ${content}\n`;
                 description += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
+                
+                // 新增：获奖信息显示
+                if (submission.awardInfo && submission.awardInfo.awardName) {
+                    description += `🏆 **获奖信息：** ${submission.awardInfo.awardName}\n`;
+                    if (submission.awardInfo.awardMessage) {
+                        description += `💬 ${submission.awardInfo.awardMessage}\n`;
+                    }
+                }
+                
                 description += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
             } else {
                 // 本服务器投稿的正常格式
@@ -105,6 +114,14 @@ class DisplayService {
                 description += `📅发布时间：<t:${publishTime}:f>\n`;
                 description += `📝作品介绍: ${content}\n`;
                 description += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
+                
+                // 新增：获奖信息显示
+                if (submission.awardInfo && submission.awardInfo.awardName) {
+                    description += `🏆 **获奖信息：** ${submission.awardInfo.awardName}\n`;
+                    if (submission.awardInfo.awardMessage) {
+                        description += `💬 ${submission.awardInfo.awardMessage}\n`;
+                    }
+                }
             }
             
             if (i < recentSubmissions.length - 1) {
@@ -167,6 +184,15 @@ class DisplayService {
                 description += `📅投稿时间：<t:${publishTime}:f>\n`;
                 description += `📝作品介绍: ${truncatedDescription}\n`;
                 description += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
+                
+                // 新增：获奖信息显示
+                if (submission.awardInfo && submission.awardInfo.awardName) {
+                    description += `🏆 **获奖信息：** ${submission.awardInfo.awardName}\n`;
+                    if (submission.awardInfo.awardMessage) {
+                        description += `💬 ${submission.awardInfo.awardMessage}\n`;
+                    }
+                }
+                
                 description += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
             } else {
                 // 本服务器投稿的正常格式
@@ -175,6 +201,14 @@ class DisplayService {
                 description += `📅发布时间：<t:${publishTime}:f>\n`;
                 description += `📝作品介绍: ${truncatedDescription}\n`;
                 description += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
+                
+                // 新增：获奖信息显示
+                if (submission.awardInfo && submission.awardInfo.awardName) {
+                    description += `🏆 **获奖信息：** ${submission.awardInfo.awardName}\n`;
+                    if (submission.awardInfo.awardMessage) {
+                        description += `💬 ${submission.awardInfo.awardMessage}\n`;
+                    }
+                }
             }
             
             if (i < pageData.length - 1) {
@@ -301,6 +335,25 @@ class DisplayService {
                 );
             
             components.push(managementRow);
+            
+            // 第五行：新增的获奖管理按钮
+            const awardManagementRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`award_set_${contestChannelId}`)
+                        .setLabel('🏆 设置获奖作品')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`award_remove_${contestChannelId}`)
+                        .setLabel('❌ 移除获奖作品')
+                        .setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder()
+                        .setCustomId(`contest_finish_${contestChannelId}`)
+                        .setLabel('🏁 完赛')
+                        .setStyle(ButtonStyle.Primary)
+                );
+            
+            components.push(awardManagementRow);
         }
         
         return components;
@@ -949,6 +1002,289 @@ class DisplayService {
         }
         
         return stats;
+    }
+
+    // 新增：处理设置获奖作品
+    async handleSetAward(interaction, contestChannelId) {
+        // 获取用户选择的投稿
+        const selectedGlobalId = await this.getSelectedSubmissionFromMessage(interaction);
+        if (!selectedGlobalId) {
+            return interaction.reply({
+                content: '❌ 请先从下拉菜单中选择要设置获奖的投稿作品，然后再点击设置获奖作品按钮。',
+                ephemeral: true
+            });
+        }
+        
+        try {
+            const { createAwardModal } = require('../components/awardModal');
+            const modal = createAwardModal(contestChannelId, selectedGlobalId);
+            await interaction.showModal(modal);
+            
+            // 清除用户选择
+            this.clearUserSelection(interaction.user.id, contestChannelId);
+            
+        } catch (error) {
+            console.error('处理设置获奖作品时出错:', error);
+            await interaction.reply({
+                content: '❌ 设置获奖作品时出现错误，请稍后重试。',
+                ephemeral: true
+            });
+        }
+    }
+
+    // 新增：处理获奖模态框提交
+    async handleAwardModalSubmission(interaction) {
+        try {
+            await interaction.deferReply({ ephemeral: true });
+            
+            const customId = interaction.customId;
+            const parts = customId.replace('award_modal_', '').split('_');
+            const contestChannelId = parts[0];
+            const submissionGlobalId = parts[1];
+            
+            const awardName = interaction.fields.getTextInputValue('award_name').trim();
+            const awardMessage = interaction.fields.getTextInputValue('award_message').trim();
+            
+            const { setSubmissionAward, getContestSubmissionByGlobalId } = require('../utils/contestDatabase');
+            
+            // 设置获奖信息
+            const updatedSubmission = await setSubmissionAward(submissionGlobalId, awardName, awardMessage);
+            if (!updatedSubmission) {
+                return interaction.editReply({
+                    content: '❌ 找不到指定的投稿作品。'
+                });
+            }
+            
+            // 获取作品信息用于确认消息
+            const submission = await getContestSubmissionByGlobalId(submissionGlobalId);
+            const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
+            
+            const confirmMessage = `✅ **获奖作品设置成功！**\n\n🏆 **奖项：** ${awardName}\n📝 **作品：** ${workUrl}\n🆔 **投稿ID：** \`${submission.contestSubmissionId}\`${awardMessage ? `\n💬 **备注：** ${awardMessage}` : ''}`;
+            
+            await interaction.editReply({
+                content: confirmMessage
+            });
+            
+            console.log(`设置获奖作品成功 - 全局ID: ${submissionGlobalId}, 奖项: ${awardName}, 用户: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('处理获奖模态框提交时出错:', error);
+            try {
+                await interaction.editReply({
+                    content: '❌ 设置获奖作品时出现错误，请稍后重试。'
+                });
+            } catch (replyError) {
+                console.error('回复错误信息失败:', replyError);
+            }
+        }
+    }
+
+    // 新增：处理移除获奖作品
+    async handleRemoveAward(interaction, contestChannelId) {
+        // 获取用户选择的投稿
+        const selectedGlobalId = await this.getSelectedSubmissionFromMessage(interaction);
+        if (!selectedGlobalId) {
+            return interaction.reply({
+                content: '❌ 请先从下拉菜单中选择要移除获奖的投稿作品，然后再点击移除获奖作品按钮。',
+                ephemeral: true
+            });
+        }
+        
+        await interaction.deferReply({ ephemeral: true });
+        
+        try {
+            const { removeSubmissionAward, getContestSubmissionByGlobalId } = require('../utils/contestDatabase');
+            
+            // 检查作品是否已设置获奖
+            const submission = await getContestSubmissionByGlobalId(selectedGlobalId);
+            if (!submission) {
+                return interaction.editReply({
+                    content: '❌ 找不到指定的投稿作品。'
+                });
+            }
+            
+            if (!submission.awardInfo || !submission.awardInfo.awardName) {
+                return interaction.editReply({
+                    content: '❌ 该作品尚未设置获奖信息，无需移除。'
+                });
+            }
+            
+            const oldAwardName = submission.awardInfo.awardName;
+            
+            // 移除获奖信息
+            const updatedSubmission = await removeSubmissionAward(selectedGlobalId);
+            if (!updatedSubmission) {
+                return interaction.editReply({
+                    content: '❌ 移除获奖信息失败。'
+                });
+            }
+            
+            const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
+            
+            await interaction.editReply({
+                content: `✅ **获奖信息移除成功！**\n\n📝 **作品：** ${workUrl}\n🆔 **投稿ID：** \`${submission.contestSubmissionId}\`\n🏆 **已移除奖项：** ${oldAwardName}`
+            });
+            
+            // 清除用户选择
+            this.clearUserSelection(interaction.user.id, contestChannelId);
+            
+            console.log(`移除获奖信息成功 - 全局ID: ${selectedGlobalId}, 原奖项: ${oldAwardName}, 用户: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('移除获奖作品时出错:', error);
+            await interaction.editReply({
+                content: '❌ 移除获奖作品时出现错误，请稍后重试。'
+            });
+        }
+    }
+
+    // 新增：处理完赛按钮
+    async handleFinishContest(interaction, contestChannelId) {
+        await interaction.deferReply({ ephemeral: true });
+        
+        try {
+            const { getAwardedSubmissions } = require('../utils/contestDatabase');
+            
+            // 获取所有获奖作品
+            const awardedSubmissions = await getAwardedSubmissions(contestChannelId);
+            
+            const { createFinishContestConfirmation } = require('../components/finishContestModal');
+            const { embed, components } = createFinishContestConfirmation(contestChannelId, awardedSubmissions);
+            
+            await interaction.editReply({
+                embeds: [embed],
+                components: components
+            });
+            
+            console.log(`显示完赛确认 - 频道: ${contestChannelId}, 获奖作品数: ${awardedSubmissions.length}, 用户: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('处理完赛按钮时出错:', error);
+            await interaction.editReply({
+                content: '❌ 处理完赛时出现错误，请稍后重试。'
+            });
+        }
+    }
+
+    // 新增：处理完赛确认
+    async handleFinishContestConfirm(interaction, contestChannelId) {
+        await interaction.deferReply({ ephemeral: true });
+        
+        try {
+            const { 
+                getAwardedSubmissions, 
+                setContestFinished, 
+                getContestChannel,
+                updateContestChannel 
+            } = require('../utils/contestDatabase');
+            
+            // 设置比赛为完赛状态
+            await setContestFinished(contestChannelId, true);
+            
+            // 获取获奖作品
+            const awardedSubmissions = await getAwardedSubmissions(contestChannelId);
+            
+            // 获取比赛频道
+            const contestChannel = await interaction.client.channels.fetch(contestChannelId);
+            const contestChannelData = await getContestChannel(contestChannelId);
+            
+            if (contestChannel && contestChannelData) {
+                // 禁用投稿入口按钮
+                await this.disableSubmissionEntry(contestChannel, contestChannelData);
+                
+                // 如果有获奖作品，发布获奖清单
+                if (awardedSubmissions.length > 0) {
+                    await this.publishAwardList(contestChannel, awardedSubmissions, contestChannelData);
+                }
+            }
+            
+            await interaction.editReply({
+                content: `✅ **比赛已完赛！**\n\n📊 **统计信息：**\n• 获奖作品数量：${awardedSubmissions.length}\n• 投稿入口已关闭\n${awardedSubmissions.length > 0 ? '• 获奖清单已发布并置顶' : ''}\n\n感谢所有参赛者的参与！`
+            });
+            
+            console.log(`比赛完赛成功 - 频道: ${contestChannelId}, 获奖作品数: ${awardedSubmissions.length}, 用户: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('处理完赛确认时出错:', error);
+            await interaction.editReply({
+                content: '❌ 完赛处理时出现错误，请稍后重试。'
+            });
+        }
+    }
+
+    // 新增：禁用投稿入口
+    async disableSubmissionEntry(contestChannel, contestChannelData) {
+        try {
+            const submissionMessage = await contestChannel.messages.fetch(contestChannelData.submissionEntry);
+            
+            if (submissionMessage) {
+                // 更新嵌入消息
+                const embed = submissionMessage.embeds[0];
+                const updatedEmbed = new EmbedBuilder(embed.toJSON())
+                    .setTitle('📝 作品投稿入口（已关闭）')
+                    .setDescription('本次比赛已结束，投稿入口已关闭。\n\n感谢所有参赛者的参与！')
+                    .setColor('#808080'); // 灰色表示已关闭
+                
+                // 禁用按钮
+                const disabledButton = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`contest_submit_disabled_${contestChannel.id}`)
+                            .setLabel('📝 投稿已结束')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setDisabled(true)
+                    );
+                
+                await submissionMessage.edit({
+                    embeds: [updatedEmbed],
+                    components: [disabledButton]
+                });
+                
+                console.log(`投稿入口已禁用 - 频道: ${contestChannel.id}`);
+            }
+            
+        } catch (error) {
+            console.error('禁用投稿入口时出错:', error);
+        }
+    }
+
+    // 新增：发布获奖清单
+    async publishAwardList(contestChannel, awardedSubmissions, contestChannelData) {
+        try {
+            const embed = new EmbedBuilder()
+                .setTitle('🏆 获奖作品清单')
+                .setDescription('恭喜以下获奖作品和参赛者！')
+                .setColor('#FFD700')
+                .setTimestamp();
+            
+            let awardList = '';
+            awardedSubmissions.forEach((submission, index) => {
+                const workUrl = `https://discord.com/channels/${submission.parsedInfo.guildId}/${submission.parsedInfo.channelId}/${submission.parsedInfo.messageId}`;
+                const authorMention = `<@${submission.submitterId}>`;
+                
+                awardList += `${index + 1}. **${submission.awardInfo.awardName}**\n`;
+                awardList += `   ${workUrl}\n`;
+                awardList += `   ${authorMention}\n`;
+                if (submission.awardInfo.awardMessage) {
+                    awardList += `   ${submission.awardInfo.awardMessage}\n`;
+                }
+                awardList += '\n';
+            });
+            
+            embed.setDescription(`恭喜以下获奖作品和参赛者！\n\n${awardList}感谢所有参赛者的精彩作品！`);
+            
+            const awardMessage = await contestChannel.send({
+                embeds: [embed]
+            });
+            
+            // 置顶获奖清单
+            await awardMessage.pin();
+            
+            console.log(`获奖清单已发布 - 频道: ${contestChannel.id}, 消息ID: ${awardMessage.id}`);
+            
+        } catch (error) {
+            console.error('发布获奖清单时出错:', error);
+        }
     }
 }
 

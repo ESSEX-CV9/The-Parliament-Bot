@@ -265,6 +265,31 @@ async function interactionCreateHandler(interaction) {
                 await displayService.handleManagementAction(interaction);
             }
             
+            // 新增：获奖管理相关按钮
+            if (interaction.customId.startsWith('award_set_')) {
+                // 设置获奖作品按钮
+                const contestChannelId = interaction.customId.replace('award_set_', '');
+                await displayService.handleSetAward(interaction, contestChannelId);
+            } else if (interaction.customId.startsWith('award_remove_')) {
+                // 移除获奖作品按钮
+                const contestChannelId = interaction.customId.replace('award_remove_', '');
+                await displayService.handleRemoveAward(interaction, contestChannelId);
+            } else if (interaction.customId.startsWith('contest_finish_')) {
+                // 完赛按钮
+                const contestChannelId = interaction.customId.replace('contest_finish_', '');
+                await displayService.handleFinishContest(interaction, contestChannelId);
+            } else if (interaction.customId.startsWith('finish_contest_close_')) {
+                // 关闭完赛清单按钮
+                await interaction.update({
+                    embeds: [],
+                    components: []
+                });
+            } else if (interaction.customId.startsWith('finish_contest_confirm_')) {
+                // 确认完赛按钮
+                const contestChannelId = interaction.customId.replace('finish_contest_confirm_', '');
+                await displayService.handleFinishContestConfirm(interaction, contestChannelId);
+            }
+            
             return;
         }
         
@@ -299,6 +324,10 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('contest_page_jump_')) {
                 // 页面跳转模态窗口提交
                 await displayService.handlePageJumpSubmission(interaction);
+            }
+            // 新增：获奖作品设置模态框
+            if (interaction.customId.startsWith('award_modal_')) {
+                await displayService.handleAwardModalSubmission(interaction);
             }
             return;
         }

@@ -253,6 +253,58 @@ async function deleteContestSubmission(globalId) {
     return false;
 }
 
+// 新增：获取频道的获奖作品
+async function getAwardedSubmissions(contestChannelId) {
+    const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
+    return Object.values(submissions).filter(sub => 
+        sub.contestChannelId === contestChannelId && 
+        sub.isValid && 
+        sub.awardInfo && 
+        sub.awardInfo.awardName
+    );
+}
+
+// 新增：设置作品获奖信息
+async function setSubmissionAward(globalId, awardName, awardMessage = '') {
+    const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
+    if (submissions[globalId]) {
+        submissions[globalId].awardInfo = {
+            awardName: awardName,
+            awardMessage: awardMessage,
+            awardedAt: new Date().toISOString()
+        };
+        writeJsonFile(CONTEST_SUBMISSIONS_FILE, submissions);
+        console.log(`设置获奖信息 - 全局ID: ${globalId}, 奖项: ${awardName}`);
+        return submissions[globalId];
+    }
+    return null;
+}
+
+// 新增：移除作品获奖信息
+async function removeSubmissionAward(globalId) {
+    const submissions = readJsonFile(CONTEST_SUBMISSIONS_FILE);
+    if (submissions[globalId] && submissions[globalId].awardInfo) {
+        delete submissions[globalId].awardInfo;
+        writeJsonFile(CONTEST_SUBMISSIONS_FILE, submissions);
+        console.log(`移除获奖信息 - 全局ID: ${globalId}`);
+        return submissions[globalId];
+    }
+    return null;
+}
+
+// 新增：设置比赛完赛状态
+async function setContestFinished(contestChannelId, finished = true) {
+    const channels = readJsonFile(CONTEST_CHANNELS_FILE);
+    if (channels[contestChannelId]) {
+        channels[contestChannelId].isFinished = finished;
+        channels[contestChannelId].finishedAt = finished ? new Date().toISOString() : null;
+        writeJsonFile(CONTEST_CHANNELS_FILE, channels);
+        console.log(`设置比赛完赛状态 - 频道: ${contestChannelId}, 状态: ${finished}`);
+        return channels[contestChannelId];
+    }
+    return null;
+}
+
 module.exports = {
     // 设置相关
     saveContestSettings,
@@ -277,5 +329,11 @@ module.exports = {
     getContestSubmissionByGlobalId,
     getSubmissionsByChannel,
     updateContestSubmission,
-    deleteContestSubmission
+    deleteContestSubmission,
+    
+    // 新增导出
+    getAwardedSubmissions,
+    setSubmissionAward,
+    removeSubmissionAward,
+    setContestFinished
 };
