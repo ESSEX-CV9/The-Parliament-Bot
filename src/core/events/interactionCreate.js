@@ -130,6 +130,14 @@ async function interactionCreateHandler(interaction) {
                     });
                 }
                 
+                // 检查权限：只有申请人可以确认建立频道
+                if (applicationData.applicantId !== interaction.user.id) {
+                    return interaction.reply({
+                        content: '❌ 只有申请人才能确认建立频道。',
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+                
                 // 获取外部服务器列表
                 const contestSettings = await getContestSettings(interaction.guild.id);
                 const allowedExternalServers = contestSettings?.allowedExternalServers || [];
@@ -153,6 +161,14 @@ async function interactionCreateHandler(interaction) {
                 if (!applicationData) {
                     return interaction.reply({
                         content: '❌ 找不到对应的申请记录。',
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+                
+                // 检查权限：只有申请人可以确认建立频道
+                if (applicationData.applicantId !== interaction.user.id) {
+                    return interaction.reply({
+                        content: '❌ 只有申请人才能确认建立频道。',
                         flags: MessageFlags.Ephemeral
                     });
                 }
