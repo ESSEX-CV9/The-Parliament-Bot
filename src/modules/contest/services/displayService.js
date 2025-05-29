@@ -1130,6 +1130,9 @@ class DisplayService {
             
             console.log(`移除获奖信息成功 - 全局ID: ${selectedGlobalId}, 原奖项: ${oldAwardName}, 用户: ${interaction.user.tag}`);
             
+            // 新增：处理完赛按钮（第一次点击完赛按钮，显示获奖清单）
+            await this.handleFinishContest(interaction, contestChannelId);
+            
         } catch (error) {
             console.error('移除获奖作品时出错:', error);
             await interaction.editReply({
@@ -1138,7 +1141,7 @@ class DisplayService {
         }
     }
 
-    // 新增：处理完赛按钮
+    // 新增：处理完赛按钮（第一次点击完赛按钮，显示获奖清单）
     async handleFinishContest(interaction, contestChannelId) {
         await interaction.deferReply({ ephemeral: true });
         
@@ -1166,8 +1169,36 @@ class DisplayService {
         }
     }
 
-    // 新增：处理完赛确认
+    // 修改：处理完赛确认（第一次确认，现在改为显示二次确认）
     async handleFinishContestConfirm(interaction, contestChannelId) {
+        await interaction.deferReply({ ephemeral: true });
+        
+        try {
+            const { getAwardedSubmissions } = require('../utils/contestDatabase');
+            
+            // 获取获奖作品数量
+            const awardedSubmissions = await getAwardedSubmissions(contestChannelId);
+            
+            const { createFinalConfirmation } = require('../components/finalConfirmModal');
+            const { embed, components } = createFinalConfirmation(contestChannelId, awardedSubmissions.length);
+            
+            await interaction.editReply({
+                embeds: [embed],
+                components: components
+            });
+            
+            console.log(`显示最终确认 - 频道: ${contestChannelId}, 获奖作品数: ${awardedSubmissions.length}, 用户: ${interaction.user.tag}`);
+            
+        } catch (error) {
+            console.error('显示最终确认时出错:', error);
+            await interaction.editReply({
+                content: '❌ 显示确认界面时出现错误，请稍后重试。'
+            });
+        }
+    }
+
+    // 新增：处理最终完赛确认（真正的完赛操作）
+    async handleFinalConfirmProceed(interaction, contestChannelId) {
         await interaction.deferReply({ ephemeral: true });
         
         try {
@@ -1199,17 +1230,32 @@ class DisplayService {
             }
             
             await interaction.editReply({
-                content: `✅ **比赛已完赛！**\n\n📊 **统计信息：**\n• 获奖作品数量：${awardedSubmissions.length}\n• 投稿入口已关闭\n${awardedSubmissions.length > 0 ? '• 获奖清单已发布并置顶' : ''}\n\n感谢所有参赛者的参与！`
+                content: `🎉 **比赛已成功完赛！**\n\n📊 **最终统计：**\n• 🏆 获奖作品数量：${awardedSubmissions.length}\n• 🚫 投稿入口已永久关闭\n${awardedSubmissions.length > 0 ? '• 📌 获奖清单已发布并置顶' : ''}\n• ⏰ 完赛时间：<t:${Math.floor(Date.now() / 1000)}:f>\n\n🎊 感谢所有参赛者的精彩参与！比赛圆满结束！`
             });
             
-            console.log(`比赛完赛成功 - 频道: ${contestChannelId}, 获奖作品数: ${awardedSubmissions.length}, 用户: ${interaction.user.tag}`);
+            console.log(`比赛最终完赛成功 - 频道: ${contestChannelId}, 获奖作品数: ${awardedSubmissions.length}, 用户: ${interaction.user.tag}`);
             
         } catch (error) {
-            console.error('处理完赛确认时出错:', error);
+            console.error('处理最终完赛确认时出错:', error);
             await interaction.editReply({
-                content: '❌ 完赛处理时出现错误，请稍后重试。'
+                content: '❌ 完赛处理时出现错误，请稍后重试。如果问题持续存在，请联系管理员。'
             });
         }
+    }
+
+    // 新增：处理取消最终确认
+    async handleFinalConfirmCancel(interaction, contestChannelId) {
+        await interaction.update({
+            embeds: [{
+                title: '✅ 操作已取消',
+                description: '完赛操作已取消，比赛继续进行中。\n\n您可以继续管理投稿作品，或稍后再进行完赛操作。',
+                color: 0x00FF00,
+                timestamp: new Date().toISOString()
+            }],
+            components: []
+        });
+        
+        console.log(`完赛操作已取消 - 频道: ${contestChannelId}, 用户: ${interaction.user.tag}`);
     }
 
     // 新增：禁用投稿入口
@@ -1263,8 +1309,8 @@ class DisplayService {
                 const authorMention = `<@${submission.submitterId}>`;
                 
                 awardList += `${index + 1}. **${submission.awardInfo.awardName}**\n`;
-                awardList += `   ${workUrl}\n`;
-                awardList += `   ${authorMention}\n`;
+                awardList += `${workUrl}\n`;
+                awardList += `${authorMention}\n`;
                 if (submission.awardInfo.awardMessage) {
                     awardList += `   ${submission.awardInfo.awardMessage}\n`;
                 }

@@ -285,9 +285,19 @@ async function interactionCreateHandler(interaction) {
                     components: []
                 });
             } else if (interaction.customId.startsWith('finish_contest_confirm_')) {
-                // 确认完赛按钮
+                // 确认完赛按钮（第一次确认，现在显示二次确认）
                 const contestChannelId = interaction.customId.replace('finish_contest_confirm_', '');
                 await displayService.handleFinishContestConfirm(interaction, contestChannelId);
+            
+            // 新增：最终确认相关按钮
+            } else if (interaction.customId.startsWith('final_confirm_proceed_')) {
+                // 最终确认完赛按钮（真正的完赛操作）
+                const contestChannelId = interaction.customId.replace('final_confirm_proceed_', '');
+                await displayService.handleFinalConfirmProceed(interaction, contestChannelId);
+            } else if (interaction.customId.startsWith('final_confirm_cancel_')) {
+                // 取消最终确认按钮
+                const contestChannelId = interaction.customId.replace('final_confirm_cancel_', '');
+                await displayService.handleFinalConfirmCancel(interaction, contestChannelId);
             }
             
             return;
