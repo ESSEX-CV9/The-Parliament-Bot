@@ -298,11 +298,10 @@ async function processEditApplicationSubmission(interaction) {
 async function updateReviewThreadContent(client, threadId, formData, applicant, applicationId, originalStatus) {
     try {
         const thread = await client.channels.fetch(threadId);
-        const messages = await thread.messages.fetch({ limit: 10 });
-        const firstMessage = messages.first();
+        const firstMessage = await thread.fetchStarterMessage();
         
         if (!firstMessage) {
-            throw new Error('找不到要更新的消息');
+            throw new Error('找不到要更新的初始消息');
         }
 
         const updatedContent = `👤 **申请人：** <@${applicant.id}>

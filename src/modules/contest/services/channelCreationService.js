@@ -246,11 +246,10 @@ async function setupChannelMessages(contestChannel, applicationData, channelCont
 async function updateChannelCreatedThreadStatus(client, applicationData, contestChannel) {
     try {
         const thread = await client.channels.fetch(applicationData.threadId);
-        const messages = await thread.messages.fetch({ limit: 10 });
-        const firstMessage = messages.first();
+        const firstMessage = await thread.fetchStarterMessage();
         
         if (!firstMessage) {
-            throw new Error('找不到要更新的消息');
+            throw new Error('找不到要更新的初始消息');
         }
         
         // 确保论坛标签
