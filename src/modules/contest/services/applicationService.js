@@ -299,7 +299,7 @@ async function updateReviewThreadContent(client, threadId, formData, applicant, 
     try {
         const thread = await client.channels.fetch(threadId);
         const messages = await thread.messages.fetch({ limit: 10 });
-        const firstMessage = messages.last();
+        const firstMessage = messages.first();
         
         if (!firstMessage) {
             throw new Error('找不到要更新的消息');
