@@ -42,7 +42,12 @@
 
 1. 克隆仓库
 2. 安装依赖: `npm install`
-3. 配置环境变量
+3. 配置环境变量，具体需要配置的环境变量为：
+```
+DISCORD_TOKEN=<从 Bot 栏获得的 Token>
+CLIENT_ID=<从 General Information 栏获得的 Application ID>
+GUILD_ID=<与这个 Bot 相关的服务器ID>
+```
 4. 启动机器人: `npm start`
 
 ## 使用说明
