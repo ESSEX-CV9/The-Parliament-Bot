@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } = require('discord.js');
 const { RateLimiter } = require('../services/rateLimiter');
 const { FullServerScanner } = require('../services/fullServerScanner');
 const { ProgressTracker } = require('../services/progressTracker');
@@ -70,23 +70,62 @@ module.exports = {
                 });
             }
 
+            // 检查机器人权限
+            const botMember = interaction.guild.members.me;
+            const requiredPermissions = ['ManageMessages', 'ReadMessageHistory', 'ViewChannel'];
+            const threadPermissions = ['ManageThreads']; // 管理帖子的权限
+            
+            const missingPermissions = requiredPermissions.filter(perm => !botMember.permissions.has(perm));
+            const missingThreadPermissions = threadPermissions.filter(perm => !botMember.permissions.has(perm));
+            
+            if (missingPermissions.length > 0) {
+                const embed = new EmbedBuilder()
+                    .setTitle('❌ 权限不足')
+                    .setDescription(`机器人缺少必要的权限来执行全服务器清理。`)
+                    .addFields({
+                        name: '缺少的权限',
+                        value: missingPermissions.map(perm => `• ${perm}`).join('\n')
+                    })
+                    .setColor(0xff0000);
+
+                return await interaction.editReply({
+                    embeds: [embed]
+                });
+            }
+
+            // 显示权限警告（如果缺少帖子管理权限）
+            let permissionWarning = '';
+            if (missingThreadPermissions.length > 0) {
+                permissionWarning = '\n⚠️ **注意**：机器人缺少"管理帖子"权限，无法处理锁定的帖子。';
+            }
+
             // 获取服务器统计信息
             const channels = await interaction.guild.channels.fetch();
             const textChannels = channels.filter(channel => 
                 channel.isTextBased() && 
-                !channel.isThread() && 
+                channel.viewable
+            );
+            
+            // 统计论坛频道数量
+            const forumChannels = channels.filter(channel => 
+                channel.type === ChannelType.GuildForum && 
                 channel.viewable
             );
 
             // 显示确认信息
             const confirmEmbed = new EmbedBuilder()
                 .setTitle('⚠️ 全服务器清理确认')
-                .setDescription(`即将开始扫描服务器 **${interaction.guild.name}** 中的所有消息并清理违规内容。`)
+                .setDescription(`即将开始扫描服务器 **${interaction.guild.name}** 中的所有消息并清理违规内容。${permissionWarning}`)
                 .addFields(
-                    { name: '📊 扫描范围', value: `${textChannels.size} 个文字频道`, inline: true },
+                    { name: '📊 扫描范围', value: `${textChannels.size} 个文字频道\n${forumChannels.size} 个论坛频道（包含子帖子）`, inline: true },
                     { name: '🎯 违禁关键字', value: `${bannedKeywords.length} 个`, inline: true },
                     { name: '⏱️ 预计时间', value: '可能需要数分钟到数小时', inline: true },
-                    { name: '⚠️ 重要提醒', value: '• 此操作将暂停自动清理功能\n• 被删除的消息无法恢复\n• 过程中请勿关闭机器人\n• 可以随时使用停止命令中断', inline: false }
+                    { 
+                        name: '🔍 扫描内容', 
+                        value: '• 普通文字频道\n• 论坛帖子（活跃+归档）\n• 子帖子和私人帖子\n• 🔒 **锁定帖子**（临时解锁删除后重新锁定）\n• 公告频道等', 
+                        inline: false 
+                    },
+                    { name: '⚠️ 重要提醒', value: '• 此操作将暂停自动清理功能\n• 被删除的消息无法恢复\n• 锁定的帖子会被临时解锁\n• 过程中请勿关闭机器人\n• 可以随时使用停止命令中断', inline: false }
                 )
                 .setColor(0xffa500)
                 .setTimestamp();

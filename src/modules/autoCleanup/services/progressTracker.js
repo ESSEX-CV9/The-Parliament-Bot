@@ -8,6 +8,7 @@ class ProgressTracker {
         this.completedChannels = 0;
         this.totalScanned = 0;
         this.totalDeleted = 0;
+        this.totalUnlockOperations = 0;
         this.startTime = Date.now();
         this.progressMessage = null;
         this.currentChannel = null;
@@ -57,6 +58,7 @@ class ProgressTracker {
     async completeChannel(channelId, stats) {
         this.completedChannels++;
         this.totalDeleted += stats.deleted;
+        this.totalUnlockOperations += stats.unlockOperations || 0;
         await this.updateProgressDisplay();
     }
 
@@ -90,8 +92,8 @@ class ProgressTracker {
                 .setDescription(`正在扫描服务器 **${this.guild.name}** 中的所有消息...`)
                 .addFields(
                     { 
-                        name: '📊 频道进度', 
-                        value: `${this.completedChannels}/${this.totalChannels} (${progress}%)${estimatedRemaining}`, 
+                        name: '📊 扫描进度', 
+                        value: `${this.completedChannels}/${this.totalChannels} 个目标 (${progress}%)${estimatedRemaining}`, 
                         inline: true 
                     },
                     { 
@@ -110,7 +112,7 @@ class ProgressTracker {
                         inline: true 
                     },
                     { 
-                        name: '📍 当前频道', 
+                        name: '📍 当前目标', 
                         value: this.currentChannel || '准备中...', 
                         inline: true 
                     },
@@ -123,11 +125,27 @@ class ProgressTracker {
                 .setColor(0x00ff00)
                 .setTimestamp();
 
+            // 如果有解锁操作，显示统计
+            if (this.totalUnlockOperations > 0) {
+                embed.addFields({
+                    name: '🔓 解锁操作',
+                    value: `${this.totalUnlockOperations} 次`,
+                    inline: true
+                });
+            }
+
             // 添加进度条
             const progressBarLength = 20;
             const filledLength = Math.round((progress / 100) * progressBarLength);
             const progressBar = '█'.repeat(filledLength) + '░'.repeat(progressBarLength - filledLength);
             embed.addFields({ name: '📈 进度条', value: `\`${progressBar}\` ${progress}%`, inline: false });
+
+            // 添加扫描目标说明
+            embed.addFields({
+                name: '📋 扫描范围',
+                value: '包括：文字频道、论坛帖子、子帖子、公告频道等\n🔒 **锁定帖子将被临时解锁以删除违规内容**\n⏭️ **豁免频道已自动跳过**',
+                inline: false
+            });
 
             await this.progressMessage.edit({ embeds: [embed] });
         } catch (error) {
@@ -152,7 +170,7 @@ class ProgressTracker {
                 .setTitle('✅ 全服务器清理完成')
                 .setDescription(`服务器 **${this.guild.name}** 的消息清理已完成！`)
                 .addFields(
-                    { name: '📊 扫描频道', value: `${finalStats.totalChannelsScanned}/${this.totalChannels}`, inline: true },
+                    { name: '📊 扫描目标', value: `${finalStats.totalChannelsScanned}/${this.totalChannels}`, inline: true },
                     { name: '🔍 总扫描消息', value: finalStats.totalMessagesScanned.toLocaleString(), inline: true },
                     { name: '🗑️ 总删除消息', value: finalStats.totalMessagesDeleted.toLocaleString(), inline: true },
                     { name: '📈 清理率', value: `${successRate}%`, inline: true },
@@ -162,8 +180,17 @@ class ProgressTracker {
                 .setColor(0x00ff00)
                 .setTimestamp();
 
+            // 显示解锁操作统计
+            if (this.totalUnlockOperations > 0) {
+                embed.addFields({
+                    name: '🔓 解锁操作统计',
+                    value: `执行了 ${this.totalUnlockOperations} 次临时解锁操作来删除锁定帖子中的违规内容`,
+                    inline: false
+                });
+            }
+
             if (!finalStats.completedNormally) {
-                embed.addFields({ name: '⚠️ 注意', value: '清理任务被手动停止，可能未完成所有频道的扫描。', inline: false });
+                embed.addFields({ name: '⚠️ 注意', value: '清理任务被手动停止，可能未完成所有目标的扫描。', inline: false });
             }
 
             await this.progressMessage.edit({ embeds: [embed] });

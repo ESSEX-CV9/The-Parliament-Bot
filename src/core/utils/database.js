@@ -963,6 +963,7 @@ async function getAutoCleanupSettings(guildId) {
     return settings[guildId] || {
         bannedKeywords: [],
         monitorChannels: [],
+        exemptChannels: [],
         cleanupRole: null,
         isEnabled: false,
         autoCleanupEnabled: true
@@ -1070,6 +1071,48 @@ async function getActiveCleanupTask(guildId) {
     return null;
 }
 
+// 添加豁免频道
+async function addExemptChannel(guildId, channelId) {
+    const settings = await getAutoCleanupSettings(guildId);
+    if (!settings.exemptChannels) {
+        settings.exemptChannels = [];
+    }
+    if (!settings.exemptChannels.includes(channelId)) {
+        settings.exemptChannels.push(channelId);
+        await saveAutoCleanupSettings(guildId, settings);
+    }
+    return settings;
+}
+
+// 移除豁免频道
+async function removeExemptChannel(guildId, channelId) {
+    const settings = await getAutoCleanupSettings(guildId);
+    if (!settings.exemptChannels) {
+        settings.exemptChannels = [];
+    }
+    settings.exemptChannels = settings.exemptChannels.filter(id => id !== channelId);
+    await saveAutoCleanupSettings(guildId, settings);
+    return settings;
+}
+
+// 获取豁免频道列表
+async function getExemptChannels(guildId) {
+    const settings = await getAutoCleanupSettings(guildId);
+    return settings.exemptChannels || [];
+}
+
+// 检查频道是否被豁免
+async function isChannelExempt(guildId, channelId) {
+    const exemptChannels = await getExemptChannels(guildId);
+    return exemptChannels.includes(channelId);
+}
+
+// 检查论坛的子帖子是否被豁免（通过父论坛豁免）
+async function isForumThreadExempt(guildId, thread) {
+    if (!thread.parent) return false;
+    return await isChannelExempt(guildId, thread.parent.id);
+}
+
 module.exports = {
     saveSettings,
     getSettings,
@@ -1149,4 +1192,10 @@ module.exports = {
     updateCleanupTask,
     deleteCleanupTask,
     getActiveCleanupTask,
+    // 豁免频道相关
+    addExemptChannel,
+    removeExemptChannel,
+    getExemptChannels,
+    isChannelExempt,
+    isForumThreadExempt,
 };
