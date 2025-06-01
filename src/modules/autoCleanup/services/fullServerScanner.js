@@ -261,6 +261,15 @@ class FullServerScanner {
         try {
             console.log(`🔍 扫描 ${target.type}: ${target.name}`);
             
+            // 检查频道权限
+            const permissionCheck = await this.checkChannelPermissions(target.channel);
+            if (!permissionCheck.canAccess) {
+                console.error(`❌ 权限不足，无法访问 ${target.type}: ${target.name}`);
+                console.error(`   缺少权限: ${permissionCheck.missingPermissions.join(', ')}`);
+                this.completedTargets++;
+                return;
+            }
+            
             await this.taskManager.updateTaskProgress(this.guild.id, this.taskId, {
                 currentChannel: {
                     id: target.id,
@@ -397,12 +406,34 @@ class FullServerScanner {
             }, 'scan');
 
             const messageArray = Array.from(result.values());
+            console.log(`📥 获取消息批次 - 频道: ${channel.name}, 消息数: ${messageArray.length}`);
+            
             return {
                 messages: messageArray,
                 lastMessageId: result.size > 0 ? result.last().id : lastMessageId,
                 hasMore: result.size === 100
             };
         } catch (error) {
+            console.error(`❌ 获取消息失败 - 频道: ${channel.name}:`, error.message);
+            
+            // 详细的错误代码处理
+            switch (error.code) {
+                case 50001:
+                    console.error(`   → 缺少访问权限 (Missing Access)`);
+                    break;
+                case 50013:
+                    console.error(`   → 权限不足 (Missing Permissions)`);
+                    break;
+                case 10003:
+                    console.error(`   → 频道不存在 (Unknown Channel)`);
+                    break;
+                case 50034:
+                    console.error(`   → 无法在此频道执行操作`);
+                    break;
+                default:
+                    console.error(`   → 未知错误: ${error.code || 'N/A'}`);
+            }
+            
             return { messages: [], lastMessageId, hasMore: false };
         }
     }
@@ -465,13 +496,28 @@ class FullServerScanner {
     async getAllScanTargets() {
         const targets = [];
         let exemptCount = 0;
+        let accessDeniedCount = 0;
         
         try {
             // 获取所有频道
             const channels = await this.guild.channels.fetch();
             
             for (const [channelId, channel] of channels) {
-                if (!channel.viewable) continue;
+                // 基础权限检查
+                if (!channel.viewable) {
+                    console.log(`⚠️ 频道不可见: ${channel.name}`);
+                    accessDeniedCount++;
+                    continue;
+                }
+
+                // 详细权限检查
+                const permissionCheck = await this.checkChannelPermissions(channel);
+                if (!permissionCheck.canAccess) {
+                    console.error(`❌ 权限不足，跳过频道: ${channel.name}`);
+                    console.error(`   缺少权限: ${permissionCheck.missingPermissions.join(', ')}`);
+                    accessDeniedCount++;
+                    continue;
+                }
 
                 // 检查频道是否被豁免
                 const isExempt = await isChannelExempt(this.guild.id, channelId);
@@ -563,6 +609,7 @@ class FullServerScanner {
 
             console.log(`📊 扫描目标统计:`);
             console.log(`⏭️ 豁免频道: ${exemptCount} 个`);
+            console.log(`❌ 权限不足频道: ${accessDeniedCount} 个`);
             
             const typeStats = {};
             targets.forEach(target => {
@@ -876,68 +923,88 @@ class FullServerScanner {
 
     async getSelectedChannelTargets(selectedChannels) {
         const targets = [];
+        let exemptCount = 0;
+        let accessDeniedCount = 0;
         
         try {
-            for (const selectedChannel of selectedChannels) {
-                // 检查频道是否被豁免
-                const isExempt = await isChannelExempt(this.guild.id, selectedChannel.id);
+            for (const channelId of selectedChannels) {
+                const channel = await this.guild.channels.fetch(channelId);
+                if (!channel) {
+                    console.error(`❌ 找不到频道: ${channelId}`);
+                    continue;
+                }
+
+                console.log(`🔍 检查选定频道: ${channel.name} (${channel.type})`);
+
+                // 详细权限检查
+                const permissionCheck = await this.checkChannelPermissions(channel);
+                if (!permissionCheck.canAccess) {
+                    console.error(`❌ 权限不足，跳过选定频道: ${channel.name}`);
+                    console.error(`   缺少权限: ${permissionCheck.missingPermissions.join(', ')}`);
+                    accessDeniedCount++;
+                    continue;
+                }
+
+                // 检查频道是否被豁免  
+                const isExempt = await isChannelExempt(this.guild.id, channelId);
                 if (isExempt) {
-                    console.log(`⏭️ 跳过豁免频道: ${selectedChannel.name}`);
+                    exemptCount++;
+                    console.log(`⏭️ 跳过豁免的选定频道: ${channel.name}`);
                     continue;
                 }
 
                 // 处理不同类型的频道
-                switch (selectedChannel.type) {
+                switch (channel.type) {
                     case ChannelType.GuildText:
                         targets.push({
-                            id: selectedChannel.id,
-                            name: selectedChannel.name,
+                            id: channelId,
+                            name: channel.name,
                             type: '文字频道',
-                            channel: selectedChannel,
+                            channel: channel,
                             isLocked: false
                         });
                         break;
 
                     case ChannelType.GuildForum:
                         // 论坛频道 - 获取其子帖子
-                        console.log(`📋 正在获取论坛频道 ${selectedChannel.name} 的子帖子...`);
-                        const forumThreads = await this.getForumThreads(selectedChannel);
+                        console.log(`📋 正在获取论坛频道 ${channel.name} 的子帖子...`);
+                        const forumThreads = await this.getForumThreads(channel);
                         targets.push(...forumThreads);
                         break;
 
                     case ChannelType.PublicThread:
                     case ChannelType.PrivateThread:
                         // 独立的子帖子
-                        const isLocked = selectedChannel.locked || selectedChannel.archived;
+                        const isLocked = channel.locked || channel.archived;
                         targets.push({
-                            id: selectedChannel.id,
-                            name: selectedChannel.name,
+                            id: channelId,
+                            name: channel.name,
                             type: isLocked ? '已锁定子帖子' : '子帖子',
-                            channel: selectedChannel,
+                            channel: channel,
                             isLocked: isLocked,
-                            originalLocked: selectedChannel.locked,
-                            originalArchived: selectedChannel.archived
+                            originalLocked: channel.locked,
+                            originalArchived: channel.archived
                         });
                         break;
 
                     case ChannelType.GuildNews:
                         targets.push({
-                            id: selectedChannel.id,
-                            name: selectedChannel.name,
+                            id: channelId,
+                            name: channel.name,
                             type: '公告频道',
-                            channel: selectedChannel,
+                            channel: channel,
                             isLocked: false
                         });
                         break;
 
                     default:
                         // 其他类型的文字频道
-                        if (selectedChannel.isTextBased()) {
+                        if (channel.isTextBased()) {
                             targets.push({
-                                id: selectedChannel.id,
-                                name: selectedChannel.name,
+                                id: channelId,
+                                name: channel.name,
                                 type: '其他文字频道',
-                                channel: selectedChannel,
+                                channel: channel,
                                 isLocked: false
                             });
                         }
@@ -946,13 +1013,11 @@ class FullServerScanner {
             }
 
             console.log(`📊 选定频道扫描目标统计:`);
-            const typeStats = {};
-            targets.forEach(target => {
-                typeStats[target.type] = (typeStats[target.type] || 0) + 1;
-            });
-            
-            for (const [type, count] of Object.entries(typeStats)) {
-                console.log(`  - ${type}: ${count} 个`);
+            if (exemptCount > 0) {
+                console.log(`⏭️ 豁免频道: ${exemptCount} 个`);
+            }
+            if (accessDeniedCount > 0) {
+                console.log(`❌ 权限不足频道: ${accessDeniedCount} 个`);
             }
 
         } catch (error) {
@@ -960,6 +1025,59 @@ class FullServerScanner {
         }
 
         return targets;
+    }
+
+    // 新增权限检查方法
+    async checkChannelPermissions(channel) {
+        try {
+            const botMember = await channel.guild.members.fetch(channel.guild.members.me.id);
+            const permissions = channel.permissionsFor(botMember);
+            
+            const requiredPermissions = [
+                'ViewChannel',
+                'ReadMessageHistory',
+                'ManageMessages'
+            ];
+            
+            const missingPermissions = [];
+            let canAccess = true;
+            
+            for (const permission of requiredPermissions) {
+                if (!permissions.has(permission)) {
+                    missingPermissions.push(permission);
+                    canAccess = false;
+                }
+            }
+            
+            // 额外检查：尝试获取一条消息来验证实际访问能力
+            if (canAccess) {
+                try {
+                    await channel.messages.fetch({ limit: 1 });
+                    console.log(`✅ 权限验证通过: ${channel.name}`);
+                } catch (error) {
+                    console.error(`⚠️ 权限验证失败: ${channel.name} - ${error.message}`);
+                    if (error.code === 50001) { // Missing Access
+                        missingPermissions.push('实际访问权限');
+                        canAccess = false;
+                    } else if (error.code === 50013) { // Missing Permissions
+                        missingPermissions.push('缺少必要权限');
+                        canAccess = false;
+                    }
+                }
+            }
+            
+            return {
+                canAccess,
+                missingPermissions
+            };
+            
+        } catch (error) {
+            console.error(`权限检查失败:`, error);
+            return {
+                canAccess: false,
+                missingPermissions: ['权限检查失败']
+            };
+        }
     }
 }
 
