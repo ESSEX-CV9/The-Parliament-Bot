@@ -106,7 +106,7 @@ async function createContestChannel(client, guild, applicationData, channelName,
             type: ChannelType.GuildText,
             parent: category.id,
             nsfw: true, // 设置为有年龄限制的频道
-            topic: `🏆 ${applicationData.formData.title} | 申请人: ${guild.members.cache.get(applicationData.applicantId)?.displayName || '未知'}${allowExternalServers ? ' | 允许外部服务器投稿' : ''}`
+            topic: `🏆 ${applicationData.formData.title} | 主办: ${guild.members.cache.get(applicationData.applicantId)?.displayName || '未知'}${allowExternalServers ? ' | 允许外部服务器投稿' : ''}`
         });
         
         // 同步分类权限
