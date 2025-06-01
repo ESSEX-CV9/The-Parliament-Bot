@@ -273,17 +273,25 @@ module.exports = {
                     progressTracker
                 );
 
-                // 启动指定频道扫描任务
-                const taskData = await taskManager.startSelectedChannelsCleanup(interaction.guild, {
-                    userId: userId,
-                    channelId: interaction.channel.id,
-                    selectedChannels: validChannels.map(ch => ch.id)
-                });
+                // 收集选择的频道（在现有代码中约第200行之后的部分）
+                // 在创建任务数据时，确保传递频道对象而不是ID
+                const taskData = {
+                    type: 'selectedChannels',
+                    selectedChannels: validChannels, // 传递Channel对象数组，而不是ID数组
+                    bannedKeywords,
+                    guildId,
+                    userId,
+                    totalChannels: validChannels.length,
+                    startTime: new Date()
+                };
 
-                console.log(`🚀 启动指定频道清理 - Guild: ${guildId}, User: ${interaction.user.tag}, Task: ${taskData.taskId}, Channels: ${validChannels.length}`);
+                // 启动指定频道扫描任务
+                const taskDataResult = await taskManager.startSelectedChannelsCleanup(interaction.guild, taskData);
+
+                console.log(`🚀 启动指定频道清理 - Guild: ${guildId}, User: ${interaction.user.tag}, Task: ${taskDataResult.taskId}, Channels: ${validChannels.length}`);
 
                 // 在后台异步执行扫描
-                scanner.startSelectedChannels(taskData, validChannels).catch(error => {
+                scanner.startSelectedChannels(taskDataResult, validChannels).catch(error => {
                     console.error('指定频道扫描出错:', error);
                 });
 
@@ -292,7 +300,7 @@ module.exports = {
                     .setTitle('🚀 指定频道清理已启动')
                     .setDescription('清理任务已开始，进度信息将在下方显示。')
                     .addFields(
-                        { name: '任务ID', value: `\`${taskData.taskId}\``, inline: true },
+                        { name: '任务ID', value: `\`${taskDataResult.taskId}\``, inline: true },
                         { name: '清理范围', value: `${validChannels.length} 个频道`, inline: true },
                         { name: '状态', value: '运行中', inline: true },
                         { name: '💡 提示', value: '使用 `/停止清理任务` 可以中断清理过程', inline: false }

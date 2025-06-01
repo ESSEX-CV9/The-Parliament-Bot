@@ -927,8 +927,24 @@ class FullServerScanner {
         let accessDeniedCount = 0;
         
         try {
-            for (const channelId of selectedChannels) {
-                const channel = await this.guild.channels.fetch(channelId);
+            for (const channelInput of selectedChannels) {
+                let channel;
+                let channelId;
+                
+                // 处理不同的输入格式
+                if (typeof channelInput === 'string') {
+                    // 如果是字符串，可能包含提及格式 <#123456789>
+                    channelId = channelInput.replace(/[<#>]/g, ''); // 移除 <# > 字符
+                    channel = await this.guild.channels.fetch(channelId);
+                } else if (channelInput && channelInput.id) {
+                    // 如果是Discord.js Channel对象
+                    channel = channelInput;
+                    channelId = channel.id;
+                } else {
+                    console.error(`❌ 无效的频道输入:`, channelInput);
+                    continue;
+                }
+                
                 if (!channel) {
                     console.error(`❌ 找不到频道: ${channelId}`);
                     continue;
@@ -956,6 +972,7 @@ class FullServerScanner {
                 // 处理不同类型的频道
                 switch (channel.type) {
                     case ChannelType.GuildText:
+                        // 普通文字频道
                         targets.push({
                             id: channelId,
                             name: channel.name,
@@ -966,15 +983,15 @@ class FullServerScanner {
                         break;
 
                     case ChannelType.GuildForum:
-                        // 论坛频道 - 获取其子帖子
-                        console.log(`📋 正在获取论坛频道 ${channel.name} 的子帖子...`);
+                        // 论坛频道 - 需要获取其子帖子
+                        console.log(`📋 正在获取选定论坛频道 ${channel.name} 的子帖子...`);
                         const forumThreads = await this.getForumThreads(channel);
                         targets.push(...forumThreads);
                         break;
 
                     case ChannelType.PublicThread:
                     case ChannelType.PrivateThread:
-                        // 独立的子帖子
+                        // 子帖子
                         const isLocked = channel.locked || channel.archived;
                         targets.push({
                             id: channelId,
@@ -982,12 +999,25 @@ class FullServerScanner {
                             type: isLocked ? '已锁定子帖子' : '子帖子',
                             channel: channel,
                             isLocked: isLocked,
-                            originalLocked: channel.locked,
-                            originalArchived: channel.archived
+                            parentForum: channel.parent ? channel.parent.name : null
                         });
                         break;
 
+                    case ChannelType.GuildVoice:
+                        // 语音频道中的消息（如果有的话）
+                        if (channel.isTextBased()) {
+                            targets.push({
+                                id: channelId,
+                                name: channel.name,
+                                type: '语音频道文字',
+                                channel: channel,
+                                isLocked: false
+                            });
+                        }
+                        break;
+
                     case ChannelType.GuildNews:
+                        // 公告频道
                         targets.push({
                             id: channelId,
                             name: channel.name,
@@ -997,18 +1027,21 @@ class FullServerScanner {
                         });
                         break;
 
-                    default:
-                        // 其他类型的文字频道
+                    case ChannelType.GuildStageVoice:
+                        // 舞台频道中的消息（如果有的话）
                         if (channel.isTextBased()) {
                             targets.push({
                                 id: channelId,
                                 name: channel.name,
-                                type: '其他文字频道',
+                                type: '舞台频道文字',
                                 channel: channel,
                                 isLocked: false
                             });
                         }
                         break;
+
+                    default:
+                        console.log(`⚠️ 不支持的频道类型: ${channel.name} (${channel.type})`);
                 }
             }
 
@@ -1018,6 +1051,15 @@ class FullServerScanner {
             }
             if (accessDeniedCount > 0) {
                 console.log(`❌ 权限不足频道: ${accessDeniedCount} 个`);
+            }
+
+            const typeStats = {};
+            targets.forEach(target => {
+                typeStats[target.type] = (typeStats[target.type] || 0) + 1;
+            });
+            
+            for (const [type, count] of Object.entries(typeStats)) {
+                console.log(`  - ${type}: ${count} 个`);
             }
 
         } catch (error) {
