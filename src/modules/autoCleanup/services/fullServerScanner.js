@@ -306,20 +306,22 @@ class FullServerScanner {
         let hasMoreMessages = true;
         let scannedCount = 0;
         let violatingCount = 0;
+        let batchNumber = 0;
+
+        console.log(`🔍 开始扫描 ${target.type}: ${target.name}`);
 
         while (hasMoreMessages && !this.shouldStop) {
             try {
-                // 激进的消息收集：对于帖子，尝试收集更多批次
-                const isThread = target.type.includes('帖子');
-                const batchCount = isThread ? 5 : 3; // 帖子使用更多批次
+                batchNumber++;
+                console.log(`📥 获取第 ${batchNumber} 批消息 - ${target.name}`);
                 
-                const collectionResult = await this.collectMessageBatchesAggressive(
-                    target.channel, 
-                    lastMessageId, 
-                    batchCount
-                );
+                // 简化：使用单次批量获取，避免复杂的并发逻辑
+                const collectionResult = await this.collectSingleBatch(target.channel, lastMessageId);
+                
+                console.log(`📦 获得 ${collectionResult.messages.length} 条消息 - ${target.name}`);
                 
                 if (collectionResult.messages.length === 0) {
+                    console.log(`📭 没有更多消息 - ${target.name}`);
                     hasMoreMessages = false;
                     break;
                 }
@@ -336,67 +338,37 @@ class FullServerScanner {
                 lastMessageId = collectionResult.lastMessageId;
                 hasMoreMessages = collectionResult.hasMore;
 
+                // 每处理一批消息就输出进度
+                console.log(`📊 批次 ${batchNumber} 完成 - ${target.name}: 本批 ${batchStats.scanned} 条，累计 ${scannedCount} 条，违规 ${violatingCount} 条`);
+
+                // 更新总计数器
+                this.totalScanned += batchStats.scanned;
+
+                // 定期更新进度
+                if (batchNumber % 5 === 0 || Date.now() - this.lastStatsUpdate > 3000) {
+                    await this.updateProgress();
+                    this.lastStatsUpdate = Date.now();
+                }
+
             } catch (error) {
-                console.error(`处理消息时出错:`, error);
+                console.error(`❌ 处理第 ${batchNumber} 批消息时出错 - ${target.name}:`, error);
                 if (this.isFatalError(error)) {
+                    console.error(`💀 遇到致命错误，停止扫描 - ${target.name}`);
                     break;
                 }
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // 非致命错误，等待后继续
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
 
+        console.log(`✅ 扫描完成 - ${target.name}: 总计 ${scannedCount} 条消息，${violatingCount} 条违规`);
         return { scanned: scannedCount, violating: violatingCount };
-    }
-
-    async collectMessageBatchesAggressive(channel, lastMessageId, batchCount) {
-        // 对于大帖子，更激进的预获取
-        const promises = [];
-        let currentLastId = lastMessageId;
-        
-        // 创建更多并发请求
-        for (let i = 0; i < batchCount; i++) {
-            const promise = this.rateLimiter.execute(async () => {
-                const options = { limit: 100 };
-                if (currentLastId) {
-                    options.before = currentLastId;
-                }
-                
-                const messages = await channel.messages.fetch(options);
-                return Array.from(messages.values());
-            }, 'scan');
-
-            promises.push(promise);
-            
-            // 快速推进ID
-            if (i === 0) {
-                try {
-                    const firstBatch = await promise;
-                    if (firstBatch.length > 0) {
-                        currentLastId = firstBatch[firstBatch.length - 1].id;
-                    }
-                } catch (error) {
-                    // 忽略错误，继续
-                }
-            }
-        }
-
-        try {
-            const results = await Promise.all(promises);
-            const allMessages = results.flat();
-            
-            return {
-                messages: allMessages,
-                lastMessageId: allMessages.length > 0 ? allMessages[allMessages.length - 1].id : lastMessageId,
-                hasMore: results.some(r => r.length === 100)
-            };
-        } catch (error) {
-            console.error('激进批量收集失败:', error);
-            return { messages: [], lastMessageId, hasMore: false };
-        }
     }
 
     async collectSingleBatch(channel, lastMessageId) {
         try {
+            console.log(`🔄 正在获取消息 - 频道: ${channel.name}${lastMessageId ? `, 从消息ID: ${lastMessageId}` : ' (最新消息)'}`);
+            
             const result = await this.rateLimiter.execute(async () => {
                 const options = { limit: 100 };
                 if (lastMessageId) {
@@ -406,7 +378,7 @@ class FullServerScanner {
             }, 'scan');
 
             const messageArray = Array.from(result.values());
-            console.log(`📥 获取消息批次 - 频道: ${channel.name}, 消息数: ${messageArray.length}`);
+            console.log(`📥 成功获取 ${messageArray.length} 条消息 - 频道: ${channel.name}`);
             
             return {
                 messages: messageArray,
@@ -442,9 +414,14 @@ class FullServerScanner {
         let scannedCount = 0;
         let violatingCount = 0;
 
+        console.log(`🔍 开始检查 ${messages.length} 条消息 - ${target.name}`);
+
         // 快速批量检查，不执行删除
         for (const message of messages) {
-            if (this.shouldStop) break;
+            if (this.shouldStop) {
+                console.log(`⏹️ 收到停止信号，中断消息检查 - ${target.name}`);
+                break;
+            }
 
             scannedCount++;
 
@@ -457,10 +434,16 @@ class FullServerScanner {
                     await this.messageCache.addViolatingMessage(message, checkResult.matchedKeywords, target);
                 }
             } catch (error) {
-                console.error(`检查消息时出错:`, error);
+                console.error(`检查消息时出错 (${message.id}):`, error);
+            }
+
+            // 每检查100条消息输出一次进度
+            if (scannedCount % 100 === 0) {
+                console.log(`🔍 已检查 ${scannedCount}/${messages.length} 条消息 - ${target.name}, 发现 ${violatingCount} 条违规`);
             }
         }
 
+        console.log(`✅ 消息检查完成 - ${target.name}: ${scannedCount} 条已检查，${violatingCount} 条违规`);
         return { scanned: scannedCount, violating: violatingCount };
     }
 
