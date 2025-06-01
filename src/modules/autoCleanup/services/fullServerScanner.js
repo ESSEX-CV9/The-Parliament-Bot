@@ -1,4 +1,5 @@
 const { KeywordDetector } = require('./keywordDetector');
+const { MessageCache } = require('./messageCache');
 const { getBannedKeywords, isChannelExempt, isForumThreadExempt } = require('../../../core/utils/database');
 const { ChannelType } = require('discord.js');
 
@@ -9,9 +10,17 @@ class FullServerScanner {
         this.taskManager = taskManager;
         this.progressTracker = progressTracker;
         this.keywordDetector = new KeywordDetector();
+        this.messageCache = new MessageCache(rateLimiter, 3000); // 3000条消息批量删除
         this.isRunning = false;
         this.shouldStop = false;
         this.taskId = null;
+        
+        // 并行处理相关
+        this.maxConcurrentThreads = 10; // 最大并行帖子数
+        this.scanningThreads = new Set(); // 正在扫描的帖子
+        this.completedTargets = 0;
+        this.totalScanned = 0;
+        this.lastStatsUpdate = 0;
     }
 
     async start(taskData) {
@@ -26,85 +35,52 @@ class FullServerScanner {
         try {
             console.log(`🔍 开始全服务器扫描 - Guild: ${this.guild.id}`);
             
-            // 获取违禁关键字
             const bannedKeywords = await getBannedKeywords(this.guild.id);
             if (bannedKeywords.length === 0) {
                 throw new Error('没有设置违禁关键字，无法进行清理');
             }
 
-            // 获取所有可扫描的频道和子帖子
             const scanTargets = await this.getAllScanTargets();
-
-            console.log(`📋 找到 ${scanTargets.length} 个可扫描的目标（包括频道、论坛帖子等）`);
+            console.log(`📋 找到 ${scanTargets.length} 个可扫描的目标`);
             
-            // 更新任务进度
             await this.taskManager.updateTaskProgress(this.guild.id, this.taskId, {
                 totalChannels: scanTargets.length
             });
 
-            // 通知开始扫描
             if (this.progressTracker) {
                 await this.progressTracker.setTotalChannels(scanTargets.length);
             }
 
-            let totalDeleted = 0;
-            let totalScanned = 0;
-            let completedTargets = 0;
+            // 分组处理：普通频道 vs 帖子
+            const regularChannels = scanTargets.filter(target => 
+                !target.type.includes('帖子') && !target.type.includes('论坛帖子')
+            );
+            const threads = scanTargets.filter(target => 
+                target.type.includes('帖子') || target.type.includes('论坛帖子')
+            );
 
-            // 扫描每个目标
-            for (const target of scanTargets) {
-                if (this.shouldStop) {
-                    console.log('⏹️ 扫描被用户停止');
-                    break;
-                }
+            console.log(`📊 分组统计：${regularChannels.length} 个普通频道，${threads.length} 个帖子`);
 
-                try {
-                    console.log(`🔍 扫描 ${target.type}: ${target.name} (${target.id})`);
-                    
-                    // 更新当前扫描的目标
-                    await this.taskManager.updateTaskProgress(this.guild.id, this.taskId, {
-                        currentChannel: {
-                            id: target.id,
-                            name: target.name,
-                            type: target.type
-                        }
-                    });
-
-                    if (this.progressTracker) {
-                        await this.progressTracker.updateCurrentChannel(`${target.type}: ${target.name}`);
-                    }
-
-                    const targetStats = await this.scanTarget(target, bannedKeywords);
-                    
-                    totalDeleted += targetStats.deleted;
-                    totalScanned += targetStats.scanned;
-                    completedTargets++;
-
-                    // 更新进度
-                    await this.taskManager.updateTaskProgress(this.guild.id, this.taskId, {
-                        completedChannels: completedTargets,
-                        totalMessages: totalScanned,
-                        scannedMessages: totalScanned,
-                        deletedMessages: totalDeleted
-                    });
-
-                    if (this.progressTracker) {
-                        await this.progressTracker.completeChannel(target.id, targetStats);
-                    }
-
-                    console.log(`✅ ${target.type} ${target.name} 扫描完成 - 扫描: ${targetStats.scanned}, 删除: ${targetStats.deleted}`);
-
-                } catch (error) {
-                    console.error(`❌ 扫描 ${target.type} ${target.name} 时出错:`, error);
-                    completedTargets++; // 仍然计入完成数，避免进度卡住
-                }
+            // 先扫描普通频道（单线程，但快速）
+            for (const target of regularChannels) {
+                if (this.shouldStop) break;
+                await this.scanSingleTarget(target, bannedKeywords);
             }
 
+            // 并行扫描帖子
+            await this.scanThreadsInParallel(threads, bannedKeywords);
+
+            // 扫描完成，执行最终删除
+            console.log(`🔄 扫描完成，开始最终删除批次...`);
+            await this.messageCache.finalFlush();
+
             // 完成任务
+            const cacheStats = this.messageCache.getStats();
             const finalStats = {
-                totalChannelsScanned: completedTargets,
-                totalMessagesScanned: totalScanned,
-                totalMessagesDeleted: totalDeleted,
+                totalChannelsScanned: this.completedTargets,
+                totalMessagesScanned: this.totalScanned,
+                totalMessagesDeleted: cacheStats.totalDeleted,
+                totalUnlockOperations: cacheStats.unlockOperations,
                 completedNormally: !this.shouldStop
             };
 
@@ -118,7 +94,7 @@ class FullServerScanner {
                 await this.progressTracker.complete(finalStats);
             }
 
-            console.log(`🎉 全服务器扫描完成 - 扫描 ${totalScanned} 条消息，删除 ${totalDeleted} 条违规消息`);
+            console.log(`🎉 全服务器扫描完成 - 扫描 ${this.totalScanned} 条消息，删除 ${cacheStats.totalDeleted} 条违规消息`);
             
             return finalStats;
 
@@ -135,6 +111,249 @@ class FullServerScanner {
         } finally {
             this.isRunning = false;
         }
+    }
+
+    async scanThreadsInParallel(threads, bannedKeywords) {
+        console.log(`🚀 开始并行扫描 ${threads.length} 个帖子，最大并发数：${this.maxConcurrentThreads}`);
+
+        const threadPromises = [];
+        
+        for (let i = 0; i < threads.length; i += this.maxConcurrentThreads) {
+            if (this.shouldStop) break;
+
+            const batch = threads.slice(i, i + this.maxConcurrentThreads);
+            const batchPromises = batch.map(thread => this.scanSingleTarget(thread, bannedKeywords));
+            
+            // 并行处理当前批次
+            await Promise.all(batchPromises);
+            
+            console.log(`📈 并行批次完成：${Math.min(i + this.maxConcurrentThreads, threads.length)}/${threads.length} 个帖子`);
+        }
+    }
+
+    async scanSingleTarget(target, bannedKeywords) {
+        try {
+            console.log(`🔍 扫描 ${target.type}: ${target.name}`);
+            
+            await this.taskManager.updateTaskProgress(this.guild.id, this.taskId, {
+                currentChannel: {
+                    id: target.id,
+                    name: target.name,
+                    type: target.type
+                }
+            });
+
+            if (this.progressTracker) {
+                await this.progressTracker.updateCurrentChannel(`${target.type}: ${target.name}`);
+            }
+
+            const targetStats = await this.scanTargetOptimized(target, bannedKeywords);
+            
+            this.totalScanned += targetStats.scanned;
+            this.completedTargets++;
+
+            // 定期更新进度
+            if (Date.now() - this.lastStatsUpdate > 2000) {
+                await this.updateProgress();
+                this.lastStatsUpdate = Date.now();
+            }
+
+            console.log(`✅ ${target.type} ${target.name} 扫描完成 - 扫描: ${targetStats.scanned}, 发现违规: ${targetStats.violating}`);
+
+        } catch (error) {
+            console.error(`❌ 扫描 ${target.type} ${target.name} 时出错:`, error);
+            this.completedTargets++;
+        }
+    }
+
+    async scanTargetOptimized(target, bannedKeywords) {
+        let lastMessageId = null;
+        let hasMoreMessages = true;
+        let scannedCount = 0;
+        let violatingCount = 0;
+
+        while (hasMoreMessages && !this.shouldStop) {
+            try {
+                // 激进的消息收集：对于帖子，尝试收集更多批次
+                const isThread = target.type.includes('帖子');
+                const batchCount = isThread ? 5 : 3; // 帖子使用更多批次
+                
+                const collectionResult = await this.collectMessageBatchesAggressive(
+                    target.channel, 
+                    lastMessageId, 
+                    batchCount
+                );
+                
+                if (collectionResult.messages.length === 0) {
+                    hasMoreMessages = false;
+                    break;
+                }
+
+                // 快速处理消息（只检测，不删除）
+                const batchStats = await this.processMessagesForCache(
+                    collectionResult.messages, 
+                    bannedKeywords, 
+                    target
+                );
+                
+                scannedCount += batchStats.scanned;
+                violatingCount += batchStats.violating;
+                lastMessageId = collectionResult.lastMessageId;
+                hasMoreMessages = collectionResult.hasMore;
+
+            } catch (error) {
+                console.error(`处理消息时出错:`, error);
+                if (this.isFatalError(error)) {
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        }
+
+        return { scanned: scannedCount, violating: violatingCount };
+    }
+
+    async collectMessageBatchesAggressive(channel, lastMessageId, batchCount) {
+        const allMessages = [];
+        let currentLastMessageId = lastMessageId;
+        
+        // 创建多个并发请求
+        const promises = [];
+        
+        for (let i = 0; i < batchCount; i++) {
+            const promise = this.rateLimiter.execute(async () => {
+                const options = { limit: 100 };
+                if (currentLastMessageId) {
+                    options.before = currentLastMessageId;
+                }
+                
+                try {
+                    const messages = await channel.messages.fetch(options);
+                    
+                    if (messages.size > 0) {
+                        // 更新下一批次的起始ID
+                        currentLastMessageId = messages.last().id;
+                        return Array.from(messages.values());
+                    } else {
+                        return [];
+                    }
+                } catch (error) {
+                    if (error.code === 50013 || error.code === 50001) {
+                        return []; // 权限错误，返回空数组
+                    }
+                    throw error;
+                }
+            }, 'scan');
+
+            promises.push(promise);
+            
+            // 为下一个请求准备不同的起始ID
+            if (i === 0) {
+                await promise.then(messages => {
+                    if (messages.length > 0) {
+                        currentLastMessageId = messages[messages.length - 1].id;
+                    }
+                }).catch(() => {});
+            }
+        }
+
+        try {
+            const results = await Promise.all(promises);
+            
+            let finalLastMessageId = lastMessageId;
+            let hasMore = false;
+
+            for (const messageArray of results) {
+                if (messageArray.length > 0) {
+                    allMessages.push(...messageArray);
+                    finalLastMessageId = messageArray[messageArray.length - 1].id;
+                    hasMore = messageArray.length === 100;
+                }
+                
+                if (messageArray.length < 100) {
+                    hasMore = false;
+                    break;
+                }
+            }
+
+            return {
+                messages: allMessages,
+                lastMessageId: finalLastMessageId,
+                hasMore: hasMore && allMessages.length > 0
+            };
+
+        } catch (error) {
+            console.error('激进批量收集失败，回退到单批次:', error);
+            return this.collectSingleBatch(channel, lastMessageId);
+        }
+    }
+
+    async collectSingleBatch(channel, lastMessageId) {
+        try {
+            const result = await this.rateLimiter.execute(async () => {
+                const options = { limit: 100 };
+                if (lastMessageId) {
+                    options.before = lastMessageId;
+                }
+                return await channel.messages.fetch(options);
+            }, 'scan');
+
+            const messageArray = Array.from(result.values());
+            return {
+                messages: messageArray,
+                lastMessageId: result.size > 0 ? result.last().id : lastMessageId,
+                hasMore: result.size === 100
+            };
+        } catch (error) {
+            return { messages: [], lastMessageId, hasMore: false };
+        }
+    }
+
+    async processMessagesForCache(messages, bannedKeywords, target) {
+        let scannedCount = 0;
+        let violatingCount = 0;
+
+        // 快速批量检查，不执行删除
+        for (const message of messages) {
+            if (this.shouldStop) break;
+
+            scannedCount++;
+
+            try {
+                const checkResult = await this.keywordDetector.checkMessageAdvanced(message, bannedKeywords);
+                
+                if (checkResult.shouldDelete) {
+                    violatingCount++;
+                    // 添加到删除缓存，而不是立即删除
+                    await this.messageCache.addViolatingMessage(message, checkResult.matchedKeywords, target);
+                }
+            } catch (error) {
+                console.error(`检查消息时出错:`, error);
+            }
+        }
+
+        return { scanned: scannedCount, violating: violatingCount };
+    }
+
+    async updateProgress() {
+        const cacheStats = this.messageCache.getStats();
+        
+        await this.taskManager.updateTaskProgress(this.guild.id, this.taskId, {
+            completedChannels: this.completedTargets,
+            totalMessages: this.totalScanned,
+            scannedMessages: this.totalScanned,
+            deletedMessages: cacheStats.totalDeleted,
+            pendingDeletions: cacheStats.pendingDeletions
+        });
+
+        if (this.progressTracker) {
+            await this.progressTracker.updateProgressWithCache(this.totalScanned, cacheStats);
+        }
+    }
+
+    isFatalError(error) {
+        const fatalErrorCodes = [50013, 50001, 10003];
+        return fatalErrorCodes.includes(error.code);
     }
 
     async getAllScanTargets() {
@@ -316,210 +535,6 @@ class FullServerScanner {
         }
 
         return threads;
-    }
-
-    async scanTarget(target, bannedKeywords) {
-        let lastMessageId = null;
-        let hasMoreMessages = true;
-        let scannedCount = 0;
-        let deletedCount = 0;
-        let permissionErrors = 0;
-
-        while (hasMoreMessages && !this.shouldStop) {
-            try {
-                // 获取消息，遵守API限制
-                const messages = await this.rateLimiter.execute(async () => {
-                    const options = { limit: 100 };
-                    if (lastMessageId) {
-                        options.before = lastMessageId;
-                    }
-                    return await target.channel.messages.fetch(options);
-                });
-
-                if (messages.size === 0) {
-                    hasMoreMessages = false;
-                    break;
-                }
-
-                // 处理这批消息
-                const batchStats = await this.processMessageBatch(messages, bannedKeywords, target);
-                scannedCount += batchStats.scanned;
-                deletedCount += batchStats.deleted;
-                permissionErrors += batchStats.permissionErrors;
-
-                // 更新lastMessageId为最后一条消息的ID
-                lastMessageId = messages.last().id;
-
-                // 更新进度
-                if (this.progressTracker) {
-                    await this.progressTracker.updateProgress(target.id, batchStats.scanned);
-                }
-
-                // 小延迟避免过快请求
-                await new Promise(resolve => setTimeout(resolve, 200));
-
-            } catch (error) {
-                console.error(`处理 ${target.type} ${target.name} 中的消息时出错:`, error);
-                
-                // 如果是权限错误，记录并跳过
-                if (error.code === 50013) {
-                    console.log(`⚠️ 没有权限访问 ${target.type} ${target.name}，跳过`);
-                    break;
-                } else if (error.code === 50001) {
-                    console.log(`⚠️ 缺少访问权限 ${target.type} ${target.name}，跳过`);
-                    break;
-                } else if (error.code === 10003) {
-                    console.log(`⚠️ ${target.type} ${target.name} 不存在或已被删除，跳过`);
-                    break;
-                }
-                
-                // 其他错误也跳过这个目标
-                break;
-            }
-        }
-
-        // 如果有权限错误，在日志中说明
-        if (permissionErrors > 0) {
-            console.log(`⚠️ ${target.type} ${target.name}: ${permissionErrors} 条消息因权限不足无法删除`);
-        }
-
-        return { scanned: scannedCount, deleted: deletedCount, permissionErrors };
-    }
-
-    async processMessageBatch(messages, bannedKeywords, target) {
-        let scannedCount = 0;
-        let deletedCount = 0;
-        let permissionErrors = 0;
-        let unlockOperations = 0;
-
-        for (const [messageId, message] of messages) {
-            if (this.shouldStop) break;
-
-            scannedCount++;
-
-            try {
-                // 检查消息是否包含违禁关键字
-                const checkResult = await this.keywordDetector.checkMessageAdvanced(message, bannedKeywords);
-                
-                if (checkResult.shouldDelete) {
-                    try {
-                        // 检查帖子是否锁定，如果是则先解锁
-                        const wasLocked = await this.handleLockedThreadDeletion(message, target);
-                        if (wasLocked) unlockOperations++;
-                        
-                        deletedCount++;
-                        
-                        const channelInfo = target.parentForum ? `${target.parentForum}/${target.name}` : target.name;
-                        const lockStatus = wasLocked ? ' (解锁后删除)' : '';
-                        console.log(`🗑️ 删除违规消息${lockStatus} - ${target.type}: ${channelInfo}, 作者: ${message.author.tag}, 关键字: ${checkResult.matchedKeywords.join(', ')}`);
-                        
-                    } catch (deleteError) {
-                        // 记录删除失败的原因
-                        if (deleteError.code === 50013) {
-                            permissionErrors++;
-                            console.log(`⚠️ 权限不足，无法删除消息 - ${target.type}: ${target.name}, 作者: ${message.author.tag}`);
-                        } else if (deleteError.code === 10008) {
-                            console.log(`⚠️ 消息已不存在 - ${target.type}: ${target.name}, ID: ${messageId}`);
-                        } else {
-                            console.error(`❌ 删除消息失败 - ${target.type}: ${target.name}, ID: ${messageId}:`, deleteError);
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error(`处理消息 ${messageId} 时出错:`, error);
-                // 继续处理其他消息
-            }
-        }
-
-        if (unlockOperations > 0) {
-            console.log(`🔓 ${target.type} ${target.name}: 执行了 ${unlockOperations} 次解锁操作来删除违规消息`);
-        }
-
-        return { scanned: scannedCount, deleted: deletedCount, permissionErrors, unlockOperations };
-    }
-
-    async handleLockedThreadDeletion(message, target) {
-        // 检查是否是帖子类型且被锁定
-        const isThread = message.channel.isThread && message.channel.isThread();
-        if (!isThread || !target.isLocked) {
-            // 普通删除
-            await this.rateLimiter.execute(async () => {
-                await message.delete();
-            });
-            return false;
-        }
-
-        const thread = message.channel;
-        let wasLocked = false;
-
-        try {
-            // 检查机器人权限
-            const permissions = thread.permissionsFor(this.guild.members.me);
-            if (!permissions.has(['ManageThreads', 'ManageMessages'])) {
-                console.log(`⚠️ 权限不足，无法管理锁定帖子: ${thread.name}`);
-                throw new Error('权限不足，无法管理锁定帖子');
-            }
-
-            // 记录原始锁定状态
-            const originalLocked = thread.locked;
-            const originalArchived = thread.archived;
-            
-            if (originalLocked || originalArchived) {
-                wasLocked = true;
-                
-                // 步骤1: 解锁/恢复帖子
-                await this.rateLimiter.execute(async () => {
-                    if (originalArchived) {
-                        await thread.setArchived(false, '临时恢复以删除违规消息');
-                        console.log(`🔓 临时恢复归档帖子: ${thread.name}`);
-                    }
-                    if (originalLocked) {
-                        await thread.setLocked(false, '临时解锁以删除违规消息');
-                        console.log(`🔓 临时解锁帖子: ${thread.name}`);
-                    }
-                });
-
-                // 小延迟确保状态更新
-                await new Promise(resolve => setTimeout(resolve, 500));
-            }
-
-            // 步骤2: 删除违规消息
-            await this.rateLimiter.execute(async () => {
-                await message.delete();
-            });
-
-            // 步骤3: 恢复原始锁定状态
-            if (wasLocked) {
-                await this.rateLimiter.execute(async () => {
-                    if (originalLocked) {
-                        await thread.setLocked(true, '恢复锁定状态');
-                        console.log(`🔒 重新锁定帖子: ${thread.name}`);
-                    }
-                    if (originalArchived) {
-                        await thread.setArchived(true, '恢复归档状态');
-                        console.log(`📦 重新归档帖子: ${thread.name}`);
-                    }
-                });
-            }
-
-            return wasLocked;
-
-        } catch (error) {
-            // 如果删除失败，确保帖子恢复到原始状态
-            if (wasLocked) {
-                try {
-                    console.log(`⚠️ 删除失败，尝试恢复帖子状态: ${thread.name}`);
-                    await this.rateLimiter.execute(async () => {
-                        if (thread.locked !== target.isLocked) {
-                            await thread.setLocked(target.isLocked, '恢复原始锁定状态');
-                        }
-                    });
-                } catch (restoreError) {
-                    console.error(`❌ 恢复帖子状态失败: ${thread.name}:`, restoreError);
-                }
-            }
-            throw error;
-        }
     }
 
     stop() {

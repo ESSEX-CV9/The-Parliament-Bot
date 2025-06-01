@@ -5,63 +5,176 @@ class RateLimiter {
         this.operationsThisSecond = 0;
         this.lastReset = Date.now();
         this.maxOperationsPerSecond = 5; // Discord API限制
+        
+        // 新增：智能调度相关
+        this.operationTypes = {
+            scan: [],      // 扫描操作队列
+            delete: [],    // 删除操作队列
+            other: []      // 其他操作队列
+        };
+        this.callHistory = []; // API调用历史
+        this.lastCallTime = 0; // 上次调用时间
     }
 
-    async execute(operation) {
+    async execute(operation, type = 'other') {
         return new Promise((resolve, reject) => {
-            this.queue.push({ operation, resolve, reject });
-            this.processQueue();
+            const operationItem = { operation, resolve, reject, timestamp: Date.now() };
+            
+            // 根据类型分类入队
+            if (this.operationTypes[type]) {
+                this.operationTypes[type].push(operationItem);
+            } else {
+                this.operationTypes.other.push(operationItem);
+            }
+            
+            this.processQueueIntelligent();
         });
     }
 
-    async processQueue() {
-        if (this.processing || this.queue.length === 0) {
-            return;
-        }
-
+    async processQueueIntelligent() {
+        if (this.processing) return;
         this.processing = true;
 
-        while (this.queue.length > 0) {
+        while (this.hasOperations()) {
             const now = Date.now();
             
-            // 每秒重置操作计数
-            if (now - this.lastReset >= 1000) {
-                this.operationsThisSecond = 0;
-                this.lastReset = now;
-            }
-
-            // 如果达到限制，等待到下一秒
-            if (this.operationsThisSecond >= this.maxOperationsPerSecond) {
-                const waitTime = 1000 - (now - this.lastReset);
-                if (waitTime > 0) {
-                    await new Promise(resolve => setTimeout(resolve, waitTime));
-                }
-                continue;
-            }
-
-            const { operation, resolve, reject } = this.queue.shift();
+            // 清理过期的API调用历史
+            this.callHistory = this.callHistory.filter(time => now - time < 1000);
             
-            try {
-                this.operationsThisSecond++;
-                const result = await operation();
-                resolve(result);
-            } catch (error) {
-                reject(error);
+            // 检查是否可以执行新的操作
+            if (this.callHistory.length >= this.maxOperationsPerSecond) {
+                const waitTime = 1000 - (now - this.callHistory[0]);
+                if (waitTime > 0) {
+                    await new Promise(resolve => setTimeout(resolve, Math.min(waitTime, 100)));
+                    continue;
+                }
             }
 
-            // 在操作之间添加小延迟，确保稳定性
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // 智能选择下一个操作
+            const nextOperation = this.selectNextOperation();
+            if (!nextOperation) break;
+
+            try {
+                const startTime = Date.now();
+                const result = await nextOperation.operation();
+                const executionTime = Date.now() - startTime;
+                
+                // 记录API调用
+                this.callHistory.push(now);
+                this.lastCallTime = now;
+                
+                nextOperation.resolve(result);
+                
+                // 动态调整延迟：快速操作减少延迟，慢操作增加延迟
+                const dynamicDelay = this.calculateDynamicDelay(executionTime);
+                if (dynamicDelay > 0) {
+                    await new Promise(resolve => setTimeout(resolve, dynamicDelay));
+                }
+                
+            } catch (error) {
+                nextOperation.reject(error);
+                // 错误时稍微增加延迟
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
         }
 
         this.processing = false;
     }
 
+    selectNextOperation() {
+        const totalOperations = this.getTotalOperationsCount();
+        if (totalOperations === 0) return null;
+
+        const scanCount = this.operationTypes.scan.length;
+        const deleteCount = this.operationTypes.delete.length;
+        const otherCount = this.operationTypes.other.length;
+
+        // 其他操作最高优先级
+        if (otherCount > 0) {
+            return this.operationTypes.other.shift();
+        }
+
+        // 激进扫描策略：80%的API调用用于扫描，20%用于删除
+        const totalScanDelete = scanCount + deleteCount;
+        if (totalScanDelete === 0) return null;
+
+        const scanRatio = scanCount / totalScanDelete;
+        
+        // 如果扫描比例低于80%，优先扫描
+        if (scanRatio < 0.8 && scanCount > 0) {
+            return this.operationTypes.scan.shift();
+        }
+        
+        // 如果有删除操作且扫描比例足够，处理删除
+        if (deleteCount > 0 && scanRatio >= 0.6) {
+            return this.operationTypes.delete.shift();
+        }
+        
+        // 默认优先扫描
+        if (scanCount > 0) {
+            return this.operationTypes.scan.shift();
+        }
+        
+        if (deleteCount > 0) {
+            return this.operationTypes.delete.shift();
+        }
+
+        return null;
+    }
+
+    calculateDynamicDelay(executionTime) {
+        // 更激进的延迟策略
+        const apiUtilization = this.callHistory.length / this.maxOperationsPerSecond;
+        
+        // 基础延迟更小，让API调用更频繁
+        const baseDelay = 1000 / this.maxOperationsPerSecond * 0.6; // 120ms基础延迟
+        
+        // 利用率调整更小
+        const utilizationFactor = apiUtilization > 0.9 ? 1.3 : 
+                                apiUtilization > 0.7 ? 1.0 : 0.7;
+        
+        // 执行时间影响更小
+        const executionFactor = executionTime < 50 ? 0.3 : 
+                               executionTime < 200 ? 0.7 : 1.2;
+        
+        const dynamicDelay = baseDelay * utilizationFactor * executionFactor;
+        
+        // 更小的延迟范围（5ms-200ms）
+        return Math.max(5, Math.min(200, dynamicDelay));
+    }
+
+    hasOperations() {
+        return this.getTotalOperationsCount() > 0;
+    }
+
+    getTotalOperationsCount() {
+        return this.operationTypes.scan.length + 
+               this.operationTypes.delete.length + 
+               this.operationTypes.other.length;
+    }
+
     getQueueLength() {
-        return this.queue.length;
+        return this.getTotalOperationsCount();
     }
 
     getOperationsThisSecond() {
-        return this.operationsThisSecond;
+        return this.callHistory.length;
+    }
+
+    // 获取队列统计信息
+    getQueueStats() {
+        return {
+            scan: this.operationTypes.scan.length,
+            delete: this.operationTypes.delete.length,
+            other: this.operationTypes.other.length,
+            total: this.getTotalOperationsCount(),
+            apiCallsThisSecond: this.callHistory.length
+        };
+    }
+
+    // 向后兼容的旧方法
+    async processQueue() {
+        return this.processQueueIntelligent();
     }
 }
 

@@ -15,6 +15,7 @@ class ProgressTracker {
         this.updateInterval = null;
         this.lastUpdateTime = 0;
         this.minUpdateInterval = 5000; // 最少5秒更新一次进度
+        this.pendingDeletions = 0;
     }
 
     async setTotalChannels(count) {
@@ -70,6 +71,13 @@ class ProgressTracker {
         }
     }
 
+    async updateProgressWithCache(totalScanned, cacheStats) {
+        this.totalScanned = totalScanned;
+        this.totalDeleted = cacheStats.totalDeleted;
+        this.pendingDeletions = cacheStats.pendingDeletions;
+        await this.updateProgressDisplay();
+    }
+
     async updateProgressDisplay() {
         if (!this.progressMessage) return;
 
@@ -78,14 +86,9 @@ class ProgressTracker {
             const elapsed = Math.round((Date.now() - this.startTime) / 1000);
             const elapsedFormatted = this.formatDuration(elapsed);
 
-            // 计算预估剩余时间
-            let estimatedRemaining = '';
-            if (this.completedChannels > 0 && this.completedChannels < this.totalChannels) {
-                const avgTimePerChannel = elapsed / this.completedChannels;
-                const remainingChannels = this.totalChannels - this.completedChannels;
-                const estimatedSeconds = Math.round(avgTimePerChannel * remainingChannels);
-                estimatedRemaining = ` (预计剩余: ${this.formatDuration(estimatedSeconds)})`;
-            }
+            // 计算扫描速度
+            const scanSpeed = elapsed > 0 ? Math.round(this.totalScanned / elapsed) : 0;
+            const deleteSpeed = elapsed > 0 ? Math.round(this.totalDeleted / elapsed) : 0;
 
             const embed = new EmbedBuilder()
                 .setTitle('🔍 全服务器清理进行中')
@@ -93,22 +96,17 @@ class ProgressTracker {
                 .addFields(
                     { 
                         name: '📊 扫描进度', 
-                        value: `${this.completedChannels}/${this.totalChannels} 个目标 (${progress}%)${estimatedRemaining}`, 
+                        value: `${this.completedChannels}/${this.totalChannels} 个目标 (${progress}%)`, 
                         inline: true 
                     },
                     { 
                         name: '🔍 已扫描消息', 
-                        value: this.totalScanned.toLocaleString(), 
+                        value: `${this.totalScanned.toLocaleString()} (${scanSpeed}/秒)`, 
                         inline: true 
                     },
                     { 
                         name: '🗑️ 已删除消息', 
-                        value: this.totalDeleted.toLocaleString(), 
-                        inline: true 
-                    },
-                    { 
-                        name: '⏱️ 开始时间', 
-                        value: `<t:${Math.floor(this.startTime / 1000)}:R>`, 
+                        value: `${this.totalDeleted.toLocaleString()} (${deleteSpeed}/秒)`, 
                         inline: true 
                     },
                     { 
@@ -125,11 +123,11 @@ class ProgressTracker {
                 .setColor(0x00ff00)
                 .setTimestamp();
 
-            // 如果有解锁操作，显示统计
-            if (this.totalUnlockOperations > 0) {
+            // 显示待删除消息数量
+            if (this.pendingDeletions > 0) {
                 embed.addFields({
-                    name: '🔓 解锁操作',
-                    value: `${this.totalUnlockOperations} 次`,
+                    name: '🔄 待删除消息',
+                    value: `${this.pendingDeletions.toLocaleString()} 条`,
                     inline: true
                 });
             }
@@ -140,10 +138,10 @@ class ProgressTracker {
             const progressBar = '█'.repeat(filledLength) + '░'.repeat(progressBarLength - filledLength);
             embed.addFields({ name: '📈 进度条', value: `\`${progressBar}\` ${progress}%`, inline: false });
 
-            // 添加扫描目标说明
+            // 更新扫描策略说明
             embed.addFields({
-                name: '📋 扫描范围',
-                value: '包括：文字频道、论坛帖子、子帖子、公告频道等\n🔒 **锁定帖子将被临时解锁以删除违规内容**\n⏭️ **豁免频道已自动跳过**',
+                name: '⚡ 优化策略',
+                value: '• **并行帖子扫描**：多个帖子同时处理\n• **批量删除**：每3000条消息集中删除\n• **激进扫描**：优先快速扫描，后续删除',
                 inline: false
             });
 

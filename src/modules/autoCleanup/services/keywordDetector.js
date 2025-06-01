@@ -1,6 +1,7 @@
 class KeywordDetector {
     constructor() {
         this.cache = new Map(); // 缓存关键字设置
+        this.regexCache = new Map(); // 缓存编译的正则表达式
     }
 
     async checkMessage(message, bannedKeywords) {
@@ -24,7 +25,7 @@ class KeywordDetector {
     }
 
     async checkMessageAdvanced(message, bannedKeywords) {
-        // 支持正则表达式匹配
+        // 快速预检
         if (!message.content || bannedKeywords.length === 0) {
             return { shouldDelete: false, matchedKeywords: [] };
         }
@@ -32,16 +33,22 @@ class KeywordDetector {
         const content = message.content.toLowerCase();
         const matchedKeywords = [];
 
+        // 优化：使用缓存的正则表达式
         for (const keyword of bannedKeywords) {
             try {
                 // 检查是否为正则表达式（以/开头和结尾）
                 if (keyword.startsWith('/') && keyword.endsWith('/')) {
-                    const regex = new RegExp(keyword.slice(1, -1), 'i');
+                    let regex = this.regexCache.get(keyword);
+                    if (!regex) {
+                        regex = new RegExp(keyword.slice(1, -1), 'i');
+                        this.regexCache.set(keyword, regex);
+                    }
+                    
                     if (regex.test(content)) {
                         matchedKeywords.push(keyword);
                     }
                 } else {
-                    // 普通关键字匹配
+                    // 普通关键字匹配 - 已经是最优的
                     if (content.includes(keyword.toLowerCase())) {
                         matchedKeywords.push(keyword);
                     }
@@ -67,6 +74,11 @@ class KeywordDetector {
 
     isValidKeyword(keyword) {
         return keyword && keyword.trim().length > 0;
+    }
+
+    // 清理缓存方法（避免内存泄漏）
+    clearCache() {
+        this.regexCache.clear();
     }
 }
 
