@@ -1,21 +1,22 @@
 const { EmbedBuilder } = require('discord.js');
 
 class ProgressTracker {
-    constructor(responseChannel, guild) {
+    constructor(responseChannel, guild, isPartialCleanup = false) {
         this.responseChannel = responseChannel;
         this.guild = guild;
+        this.isPartialCleanup = isPartialCleanup;
         this.totalChannels = 0;
         this.completedChannels = 0;
         this.totalScanned = 0;
         this.totalDeleted = 0;
         this.totalUnlockOperations = 0;
+        this.pendingDeletions = 0;
         this.startTime = Date.now();
         this.progressMessage = null;
         this.currentChannel = null;
         this.updateInterval = null;
         this.lastUpdateTime = 0;
-        this.minUpdateInterval = 5000; // 最少5秒更新一次进度
-        this.pendingDeletions = 0;
+        this.minUpdateInterval = 5000;
     }
 
     async setTotalChannels(count) {
@@ -25,15 +26,20 @@ class ProgressTracker {
     }
 
     async sendInitialMessage() {
+        const title = this.isPartialCleanup ? '🔍 指定频道清理已开始' : '🔍 全服务器清理已开始';
+        const description = this.isPartialCleanup ? 
+            `正在扫描服务器 **${this.guild.name}** 中的指定频道...` :
+            `正在扫描服务器 **${this.guild.name}** 中的所有消息...`;
+
         const embed = new EmbedBuilder()
-            .setTitle('🔍 全服务器清理已开始')
-            .setDescription(`正在扫描服务器 **${this.guild.name}** 中的所有消息...`)
+            .setTitle(title)
+            .setDescription(description)
             .addFields(
-                { name: '📊 频道进度', value: `0/${this.totalChannels} (0%)`, inline: true },
+                { name: '📊 扫描进度', value: `0/${this.totalChannels} (0%)`, inline: true },
                 { name: '🔍 已扫描消息', value: '0', inline: true },
                 { name: '🗑️ 已删除消息', value: '0', inline: true },
                 { name: '⏱️ 开始时间', value: `<t:${Math.floor(this.startTime / 1000)}:R>`, inline: true },
-                { name: '📍 当前频道', value: '准备中...', inline: true },
+                { name: '📍 当前目标', value: '准备中...', inline: true },
                 { name: '⏲️ 用时', value: '0秒', inline: true }
             )
             .setColor(0x00ff00)
@@ -90,9 +96,14 @@ class ProgressTracker {
             const scanSpeed = elapsed > 0 ? Math.round(this.totalScanned / elapsed) : 0;
             const deleteSpeed = elapsed > 0 ? Math.round(this.totalDeleted / elapsed) : 0;
 
+            const title = this.isPartialCleanup ? '🔍 指定频道清理进行中' : '🔍 全服务器清理进行中';
+            const description = this.isPartialCleanup ? 
+                `正在扫描服务器 **${this.guild.name}** 中的指定频道...` :
+                `正在扫描服务器 **${this.guild.name}** 中的所有消息...`;
+
             const embed = new EmbedBuilder()
-                .setTitle('🔍 全服务器清理进行中')
-                .setDescription(`正在扫描服务器 **${this.guild.name}** 中的所有消息...`)
+                .setTitle(title)
+                .setDescription(description)
                 .addFields(
                     { 
                         name: '📊 扫描进度', 
@@ -132,16 +143,29 @@ class ProgressTracker {
                 });
             }
 
+            // 如果有解锁操作，显示统计
+            if (this.totalUnlockOperations > 0) {
+                embed.addFields({
+                    name: '🔓 解锁操作',
+                    value: `${this.totalUnlockOperations} 次`,
+                    inline: true
+                });
+            }
+
             // 添加进度条
             const progressBarLength = 20;
             const filledLength = Math.round((progress / 100) * progressBarLength);
             const progressBar = '█'.repeat(filledLength) + '░'.repeat(progressBarLength - filledLength);
             embed.addFields({ name: '📈 进度条', value: `\`${progressBar}\` ${progress}%`, inline: false });
 
-            // 更新扫描策略说明
+            // 添加扫描范围说明
+            const scopeDesc = this.isPartialCleanup ? 
+                '• **指定频道清理**：仅扫描选择的频道\n• 论坛频道包含所有子帖子\n• 🔒 **锁定帖子将被临时解锁**' :
+                '• **全服务器清理**：扫描所有频道和帖子\n• 🔒 **锁定帖子将被临时解锁**\n• ⏭️ **豁免频道已自动跳过**';
+
             embed.addFields({
-                name: '⚡ 优化策略',
-                value: '• **并行帖子扫描**：多个帖子同时处理\n• **批量删除**：每3000条消息集中删除\n• **激进扫描**：优先快速扫描，后续删除',
+                name: '📋 扫描范围',
+                value: scopeDesc + '\n⚡ **已启用智能并行优化**',
                 inline: false
             });
 
@@ -164,9 +188,14 @@ class ProgressTracker {
                 ? ((finalStats.totalMessagesDeleted / finalStats.totalMessagesScanned) * 100).toFixed(2)
                 : '0';
 
+            const title = this.isPartialCleanup ? '✅ 指定频道清理完成' : '✅ 全服务器清理完成';
+            const description = this.isPartialCleanup ? 
+                `服务器 **${this.guild.name}** 的指定频道清理已完成！` :
+                `服务器 **${this.guild.name}** 的消息清理已完成！`;
+
             const embed = new EmbedBuilder()
-                .setTitle('✅ 全服务器清理完成')
-                .setDescription(`服务器 **${this.guild.name}** 的消息清理已完成！`)
+                .setTitle(title)
+                .setDescription(description)
                 .addFields(
                     { name: '📊 扫描目标', value: `${finalStats.totalChannelsScanned}/${this.totalChannels}`, inline: true },
                     { name: '🔍 总扫描消息', value: finalStats.totalMessagesScanned.toLocaleString(), inline: true },
@@ -177,6 +206,15 @@ class ProgressTracker {
                 )
                 .setColor(0x00ff00)
                 .setTimestamp();
+
+            // 显示任务类型
+            if (finalStats.taskType === 'selectedChannels') {
+                embed.addFields({
+                    name: '📋 清理范围',
+                    value: `指定的 ${finalStats.selectedChannelsCount} 个频道`,
+                    inline: true
+                });
+            }
 
             // 显示解锁操作统计
             if (this.totalUnlockOperations > 0) {

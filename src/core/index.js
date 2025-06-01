@@ -79,6 +79,7 @@ const toggleAutoCleanupCommand = require('../modules/autoCleanup/commands/toggle
 const addExemptChannelCommand = require('../modules/autoCleanup/commands/addExemptChannel');
 const removeExemptChannelCommand = require('../modules/autoCleanup/commands/removeExemptChannel');
 const listExemptChannelsCommand = require('../modules/autoCleanup/commands/listExemptChannels');
+const cleanupSelectedChannelsCommand = require('../modules/autoCleanup/commands/cleanupSelectedChannels');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -156,6 +157,7 @@ client.commands.set(toggleAutoCleanupCommand.data.name, toggleAutoCleanupCommand
 client.commands.set(addExemptChannelCommand.data.name, addExemptChannelCommand);
 client.commands.set(removeExemptChannelCommand.data.name, removeExemptChannelCommand);
 client.commands.set(listExemptChannelsCommand.data.name, listExemptChannelsCommand);
+client.commands.set(cleanupSelectedChannelsCommand.data.name, cleanupSelectedChannelsCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);

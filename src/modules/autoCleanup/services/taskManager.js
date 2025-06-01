@@ -147,6 +147,46 @@ class TaskManager {
             }))
         };
     }
+
+    async startSelectedChannelsCleanup(guild, options = {}) {
+        const guildId = guild.id;
+        
+        // 检查是否已有活跃任务
+        const existingTask = await this.getActiveTask(guildId);
+        if (existingTask) {
+            throw new Error('服务器已有正在进行的清理任务');
+        }
+
+        // 创建新任务
+        const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const taskData = {
+            taskId,
+            guildId,
+            type: 'selectedChannels', // 新任务类型
+            status: 'running',
+            createdAt: new Date().toISOString(),
+            progress: {
+                totalChannels: 0,
+                completedChannels: 0,
+                totalMessages: 0,
+                scannedMessages: 0,
+                deletedMessages: 0,
+                currentChannel: null
+            },
+            options,
+            startedBy: options.userId || null,
+            selectedChannels: options.selectedChannels || [] // 保存选择的频道列表
+        };
+
+        await saveCleanupTask(guildId, taskData);
+        this.tasks.set(guildId, taskData);
+        
+        // 暂停自动清理
+        this.pauseAutoCleanup(guildId);
+        
+        console.log(`🚀 开始指定频道扫描任务 - Guild: ${guildId}, Task: ${taskId}, Channels: ${options.selectedChannels?.length || 0}`);
+        return taskData;
+    }
 }
 
 // 创建全局任务管理器实例

@@ -94,23 +94,23 @@ class RateLimiter {
             return this.operationTypes.other.shift();
         }
 
-        // 激进扫描策略：80%的API调用用于扫描，20%用于删除
+        // 极度激进扫描策略：95%的API调用用于扫描
         const totalScanDelete = scanCount + deleteCount;
         if (totalScanDelete === 0) return null;
 
         const scanRatio = scanCount / totalScanDelete;
         
-        // 如果扫描比例低于80%，优先扫描
-        if (scanRatio < 0.8 && scanCount > 0) {
+        // 如果扫描比例低于95%，优先扫描
+        if (scanRatio < 0.95 && scanCount > 0) {
             return this.operationTypes.scan.shift();
         }
         
-        // 如果有删除操作且扫描比例足够，处理删除
-        if (deleteCount > 0 && scanRatio >= 0.6) {
+        // 极少的删除操作
+        if (deleteCount > 0 && scanRatio >= 0.9) {
             return this.operationTypes.delete.shift();
         }
         
-        // 默认优先扫描
+        // 默认扫描
         if (scanCount > 0) {
             return this.operationTypes.scan.shift();
         }
@@ -123,24 +123,23 @@ class RateLimiter {
     }
 
     calculateDynamicDelay(executionTime) {
-        // 更激进的延迟策略
+        // 极度激进的延迟策略
         const apiUtilization = this.callHistory.length / this.maxOperationsPerSecond;
         
-        // 基础延迟更小，让API调用更频繁
-        const baseDelay = 1000 / this.maxOperationsPerSecond * 0.6; // 120ms基础延迟
+        // 更小的基础延迟
+        const baseDelay = 1000 / this.maxOperationsPerSecond * 0.3; // 60ms基础延迟
         
-        // 利用率调整更小
-        const utilizationFactor = apiUtilization > 0.9 ? 1.3 : 
-                                apiUtilization > 0.7 ? 1.0 : 0.7;
+        // 几乎无利用率调整
+        const utilizationFactor = apiUtilization > 0.95 ? 1.1 : 0.8;
         
-        // 执行时间影响更小
-        const executionFactor = executionTime < 50 ? 0.3 : 
-                               executionTime < 200 ? 0.7 : 1.2;
+        // 极小的执行时间影响
+        const executionFactor = executionTime < 30 ? 0.2 : 
+                               executionTime < 100 ? 0.5 : 1.0;
         
         const dynamicDelay = baseDelay * utilizationFactor * executionFactor;
         
-        // 更小的延迟范围（5ms-200ms）
-        return Math.max(5, Math.min(200, dynamicDelay));
+        // 极小的延迟范围（2ms-100ms）
+        return Math.max(2, Math.min(100, dynamicDelay));
     }
 
     hasOperations() {

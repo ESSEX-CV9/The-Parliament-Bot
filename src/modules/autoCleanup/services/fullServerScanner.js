@@ -114,20 +114,146 @@ class FullServerScanner {
     }
 
     async scanThreadsInParallel(threads, bannedKeywords) {
-        console.log(`🚀 开始并行扫描 ${threads.length} 个帖子，最大并发数：${this.maxConcurrentThreads}`);
+        console.log(`🚀 开始并行扫描 ${threads.length} 个帖子`);
 
-        const threadPromises = [];
+        // 智能分组：小帖子用超高并发，大帖子用适中并发
+        const { smallThreads, largeThreads } = await this.categorizeThreads(threads);
         
-        for (let i = 0; i < threads.length; i += this.maxConcurrentThreads) {
+        console.log(`📊 帖子分类：${smallThreads.length} 个小帖子，${largeThreads.length} 个大帖子`);
+
+        // 小帖子：使用极高并发（50个同时）
+        if (smallThreads.length > 0) {
+            await this.scanSmallThreadsRapidly(smallThreads, bannedKeywords);
+        }
+
+        // 大帖子：使用适中并发（5个同时）
+        if (largeThreads.length > 0) {
+            await this.scanLargeThreadsNormally(largeThreads, bannedKeywords);
+        }
+    }
+
+    async categorizeThreads(threads) {
+        const smallThreads = [];
+        const largeThreads = [];
+        
+        // 预估每个帖子的大小
+        for (const thread of threads) {
+            try {
+                // 快速获取帖子的最新消息来估算大小
+                const estimate = await this.estimateThreadSize(thread);
+                
+                if (estimate <= 50) { // 50条消息以下算小帖子
+                    smallThreads.push({ ...thread, estimatedSize: estimate });
+                } else {
+                    largeThreads.push({ ...thread, estimatedSize: estimate });
+                }
+            } catch (error) {
+                // 估算失败的归为小帖子
+                smallThreads.push({ ...thread, estimatedSize: 1 });
+            }
+        }
+        
+        return { smallThreads, largeThreads };
+    }
+
+    async estimateThreadSize(thread) {
+        try {
+            // 快速获取最新的几条消息来估算
+            const recentMessages = await this.rateLimiter.execute(async () => {
+                return await thread.channel.messages.fetch({ limit: 10 });
+            }, 'scan');
+            
+            if (recentMessages.size === 0) return 0;
+            if (recentMessages.size < 10) return recentMessages.size;
+            
+            // 基于最新和最旧消息的时间差估算
+            const newest = recentMessages.first();
+            const oldest = recentMessages.last();
+            const timeDiff = newest.createdTimestamp - oldest.createdTimestamp;
+            const avgInterval = timeDiff / (recentMessages.size - 1);
+            
+            // 估算总消息数（粗略）
+            const threadAge = Date.now() - thread.channel.createdTimestamp;
+            const estimate = Math.min(Math.max(Math.round(threadAge / avgInterval), recentMessages.size), 1000);
+            
+            return estimate;
+        } catch (error) {
+            return 1; // 默认为1
+        }
+    }
+
+    async scanSmallThreadsRapidly(smallThreads, bannedKeywords) {
+        console.log(`⚡ 快速扫描 ${smallThreads.length} 个小帖子，超高并发模式`);
+        
+        // 超高并发：50个小帖子同时处理
+        const maxConcurrency = Math.min(50, smallThreads.length);
+        
+        for (let i = 0; i < smallThreads.length; i += maxConcurrency) {
             if (this.shouldStop) break;
 
-            const batch = threads.slice(i, i + this.maxConcurrentThreads);
-            const batchPromises = batch.map(thread => this.scanSingleTarget(thread, bannedKeywords));
+            const batch = smallThreads.slice(i, i + maxConcurrency);
+            const batchPromises = batch.map(thread => this.scanSmallThreadOptimized(thread, bannedKeywords));
             
-            // 并行处理当前批次
             await Promise.all(batchPromises);
             
-            console.log(`📈 并行批次完成：${Math.min(i + this.maxConcurrentThreads, threads.length)}/${threads.length} 个帖子`);
+            console.log(`⚡ 快速批次完成：${Math.min(i + maxConcurrency, smallThreads.length)}/${smallThreads.length} 个小帖子`);
+        }
+    }
+
+    async scanSmallThreadOptimized(target, bannedKeywords) {
+        try {
+            // 小帖子优化：一次性获取所有消息
+            const allMessages = await this.rateLimiter.execute(async () => {
+                return await target.channel.messages.fetch({ limit: 100 });
+            }, 'scan');
+
+            const messageArray = Array.from(allMessages.values());
+            let violatingCount = 0;
+
+            // 快速处理所有消息
+            for (const message of messageArray) {
+                if (this.shouldStop) break;
+
+                try {
+                    const checkResult = await this.keywordDetector.checkMessageAdvanced(message, bannedKeywords);
+                    
+                    if (checkResult.shouldDelete) {
+                        violatingCount++;
+                        await this.messageCache.addViolatingMessage(message, checkResult.matchedKeywords, target);
+                    }
+                } catch (error) {
+                    console.error(`检查消息时出错:`, error);
+                }
+            }
+
+            this.totalScanned += messageArray.length;
+            this.completedTargets++;
+
+            console.log(`⚡ ${target.type} ${target.name} 快速完成 - 扫描: ${messageArray.length}, 违规: ${violatingCount}`);
+
+            return { scanned: messageArray.length, violating: violatingCount };
+
+        } catch (error) {
+            console.error(`❌ 快速扫描 ${target.type} ${target.name} 时出错:`, error);
+            this.completedTargets++;
+            return { scanned: 0, violating: 0 };
+        }
+    }
+
+    async scanLargeThreadsNormally(largeThreads, bannedKeywords) {
+        console.log(`📚 常规扫描 ${largeThreads.length} 个大帖子`);
+        
+        const maxConcurrency = Math.min(5, largeThreads.length);
+        
+        for (let i = 0; i < largeThreads.length; i += maxConcurrency) {
+            if (this.shouldStop) break;
+
+            const batch = largeThreads.slice(i, i + maxConcurrency);
+            const batchPromises = batch.map(thread => this.scanSingleTarget(thread, bannedKeywords));
+            
+            await Promise.all(batchPromises);
+            
+            console.log(`📚 常规批次完成：${Math.min(i + maxConcurrency, largeThreads.length)}/${largeThreads.length} 个大帖子`);
         }
     }
 
@@ -214,77 +340,49 @@ class FullServerScanner {
     }
 
     async collectMessageBatchesAggressive(channel, lastMessageId, batchCount) {
-        const allMessages = [];
-        let currentLastMessageId = lastMessageId;
-        
-        // 创建多个并发请求
+        // 对于大帖子，更激进的预获取
         const promises = [];
+        let currentLastId = lastMessageId;
         
+        // 创建更多并发请求
         for (let i = 0; i < batchCount; i++) {
             const promise = this.rateLimiter.execute(async () => {
                 const options = { limit: 100 };
-                if (currentLastMessageId) {
-                    options.before = currentLastMessageId;
+                if (currentLastId) {
+                    options.before = currentLastId;
                 }
                 
-                try {
-                    const messages = await channel.messages.fetch(options);
-                    
-                    if (messages.size > 0) {
-                        // 更新下一批次的起始ID
-                        currentLastMessageId = messages.last().id;
-                        return Array.from(messages.values());
-                    } else {
-                        return [];
-                    }
-                } catch (error) {
-                    if (error.code === 50013 || error.code === 50001) {
-                        return []; // 权限错误，返回空数组
-                    }
-                    throw error;
-                }
+                const messages = await channel.messages.fetch(options);
+                return Array.from(messages.values());
             }, 'scan');
 
             promises.push(promise);
             
-            // 为下一个请求准备不同的起始ID
+            // 快速推进ID
             if (i === 0) {
-                await promise.then(messages => {
-                    if (messages.length > 0) {
-                        currentLastMessageId = messages[messages.length - 1].id;
+                try {
+                    const firstBatch = await promise;
+                    if (firstBatch.length > 0) {
+                        currentLastId = firstBatch[firstBatch.length - 1].id;
                     }
-                }).catch(() => {});
+                } catch (error) {
+                    // 忽略错误，继续
+                }
             }
         }
 
         try {
             const results = await Promise.all(promises);
+            const allMessages = results.flat();
             
-            let finalLastMessageId = lastMessageId;
-            let hasMore = false;
-
-            for (const messageArray of results) {
-                if (messageArray.length > 0) {
-                    allMessages.push(...messageArray);
-                    finalLastMessageId = messageArray[messageArray.length - 1].id;
-                    hasMore = messageArray.length === 100;
-                }
-                
-                if (messageArray.length < 100) {
-                    hasMore = false;
-                    break;
-                }
-            }
-
             return {
                 messages: allMessages,
-                lastMessageId: finalLastMessageId,
-                hasMore: hasMore && allMessages.length > 0
+                lastMessageId: allMessages.length > 0 ? allMessages[allMessages.length - 1].id : lastMessageId,
+                hasMore: results.some(r => r.length === 100)
             };
-
         } catch (error) {
-            console.error('激进批量收集失败，回退到单批次:', error);
-            return this.collectSingleBatch(channel, lastMessageId);
+            console.error('激进批量收集失败:', error);
+            return { messages: [], lastMessageId, hasMore: false };
         }
     }
 
@@ -336,6 +434,11 @@ class FullServerScanner {
     }
 
     async updateProgress() {
+        // 降低更新频率到5秒
+        if (Date.now() - this.lastStatsUpdate < 5000) {
+            return;
+        }
+        
         const cacheStats = this.messageCache.getStats();
         
         await this.taskManager.updateTaskProgress(this.guild.id, this.taskId, {
@@ -346,9 +449,12 @@ class FullServerScanner {
             pendingDeletions: cacheStats.pendingDeletions
         });
 
-        if (this.progressTracker) {
+        // 减少Discord消息更新频率
+        if (this.progressTracker && Date.now() - this.lastStatsUpdate > 8000) {
             await this.progressTracker.updateProgressWithCache(this.totalScanned, cacheStats);
         }
+        
+        this.lastStatsUpdate = Date.now();
     }
 
     isFatalError(error) {
@@ -544,6 +650,316 @@ class FullServerScanner {
 
     isScanning() {
         return this.isRunning;
+    }
+
+    // 更精细的帖子分类
+
+    async categorizeThreadsAdvanced(threads) {
+        const tinyThreads = [];   // ≤10条消息
+        const smallThreads = [];  // 11-50条消息
+        const mediumThreads = []; // 51-200条消息
+        const largeThreads = [];  // >200条消息
+        
+        for (const thread of threads) {
+            const messageCount = thread.channel.messageCount || thread.channel.totalMessagesSent || 0;
+            const threadData = { 
+                ...thread, 
+                actualMessageCount: messageCount 
+            };
+            
+            if (messageCount <= 10) {
+                tinyThreads.push(threadData);
+            } else if (messageCount <= 50) {
+                smallThreads.push(threadData);
+            } else if (messageCount <= 200) {
+                mediumThreads.push(threadData);
+            } else {
+                largeThreads.push(threadData);
+            }
+        }
+        
+        console.log(`📊 精细分类完成：`);
+        console.log(`  🔹 微型帖子 (≤10条): ${tinyThreads.length} 个`);
+        console.log(`  🔸 小帖子 (11-50条): ${smallThreads.length} 个`);
+        console.log(`  🔶 中型帖子 (51-200条): ${mediumThreads.length} 个`);
+        console.log(`  🔺 大型帖子 (>200条): ${largeThreads.length} 个`);
+        
+        return { tinyThreads, smallThreads, mediumThreads, largeThreads };
+    }
+
+    async scanThreadsInParallelAdvanced(threads, bannedKeywords) {
+        console.log(`🚀 开始智能并行扫描 ${threads.length} 个帖子`);
+
+        const { tinyThreads, smallThreads, mediumThreads, largeThreads } = 
+            await this.categorizeThreadsAdvanced(threads);
+
+        // 微型帖子：超高并发（100个同时）
+        if (tinyThreads.length > 0) {
+            await this.scanTinyThreadsUltraRapid(tinyThreads, bannedKeywords);
+        }
+
+        // 小帖子：高并发（50个同时）
+        if (smallThreads.length > 0) {
+            await this.scanSmallThreadsRapidly(smallThreads, bannedKeywords);
+        }
+
+        // 中型帖子：中等并发（20个同时）
+        if (mediumThreads.length > 0) {
+            await this.scanMediumThreadsModerately(mediumThreads, bannedKeywords);
+        }
+
+        // 大型帖子：低并发（5个同时）
+        if (largeThreads.length > 0) {
+            await this.scanLargeThreadsNormally(largeThreads, bannedKeywords);
+        }
+    }
+
+    async scanTinyThreadsUltraRapid(tinyThreads, bannedKeywords) {
+        console.log(`⚡⚡ 超高速扫描 ${tinyThreads.length} 个微型帖子 (≤10条消息)`);
+        
+        // 超超高并发：100个微型帖子同时处理
+        const maxConcurrency = Math.min(100, tinyThreads.length);
+        
+        for (let i = 0; i < tinyThreads.length; i += maxConcurrency) {
+            if (this.shouldStop) break;
+
+            const batch = tinyThreads.slice(i, i + maxConcurrency);
+            const batchPromises = batch.map(thread => this.scanTinyThreadOptimized(thread, bannedKeywords));
+            
+            await Promise.all(batchPromises);
+            
+            console.log(`⚡⚡ 超高速批次完成：${Math.min(i + maxConcurrency, tinyThreads.length)}/${tinyThreads.length} 个微型帖子`);
+        }
+    }
+
+    async scanTinyThreadOptimized(target, bannedKeywords) {
+        try {
+            // 微型帖子：期望消息很少，一次性获取所有
+            const allMessages = await this.rateLimiter.execute(async () => {
+                return await target.channel.messages.fetch({ limit: Math.min(100, target.actualMessageCount + 10) });
+            }, 'scan');
+
+            const messageArray = Array.from(allMessages.values());
+            let violatingCount = 0;
+
+            // 极快处理
+            for (const message of messageArray) {
+                if (this.shouldStop) break;
+
+                const checkResult = await this.keywordDetector.checkMessageAdvanced(message, bannedKeywords);
+                
+                if (checkResult.shouldDelete) {
+                    violatingCount++;
+                    await this.messageCache.addViolatingMessage(message, checkResult.matchedKeywords, target);
+                }
+            }
+
+            this.totalScanned += messageArray.length;
+            this.completedTargets++;
+
+            // 只有在扫描数量与预期差异较大时才输出日志
+            if (Math.abs(messageArray.length - target.actualMessageCount) > 2) {
+                console.log(`⚡ ${target.name}: 预期${target.actualMessageCount}条，实际${messageArray.length}条，违规${violatingCount}条`);
+            }
+
+            return { scanned: messageArray.length, violating: violatingCount };
+
+        } catch (error) {
+            console.error(`❌ 超高速扫描 ${target.name} 失败:`, error);
+            this.completedTargets++;
+            return { scanned: 0, violating: 0 };
+        }
+    }
+
+    async startSelectedChannels(taskData, selectedChannels) {
+        if (this.isRunning) {
+            throw new Error('扫描器已在运行中');
+        }
+
+        this.isRunning = true;
+        this.shouldStop = false;
+        this.taskId = taskData.taskId;
+
+        try {
+            console.log(`🔍 开始指定频道扫描 - Guild: ${this.guild.id}, 频道数: ${selectedChannels.length}`);
+            
+            // 获取违禁关键字
+            const bannedKeywords = await getBannedKeywords(this.guild.id);
+            if (bannedKeywords.length === 0) {
+                throw new Error('没有设置违禁关键字，无法进行清理');
+            }
+
+            // 从选择的频道生成扫描目标
+            const scanTargets = await this.getSelectedChannelTargets(selectedChannels);
+
+            console.log(`📋 从 ${selectedChannels.length} 个选择频道生成 ${scanTargets.length} 个扫描目标`);
+            
+            // 更新任务进度
+            await this.taskManager.updateTaskProgress(this.guild.id, this.taskId, {
+                totalChannels: scanTargets.length
+            });
+
+            // 通知开始扫描
+            if (this.progressTracker) {
+                await this.progressTracker.setTotalChannels(scanTargets.length);
+            }
+
+            let totalDeleted = 0;
+            let totalScanned = 0;
+            let completedTargets = 0;
+
+            // 分组处理：普通频道 vs 帖子
+            const regularChannels = scanTargets.filter(target => 
+                !target.type.includes('帖子') && !target.type.includes('论坛帖子')
+            );
+            const threads = scanTargets.filter(target => 
+                target.type.includes('帖子') || target.type.includes('论坛帖子')
+            );
+
+            console.log(`📊 分组统计：${regularChannels.length} 个普通频道，${threads.length} 个帖子`);
+
+            // 先扫描普通频道
+            for (const target of regularChannels) {
+                if (this.shouldStop) break;
+                await this.scanSingleTarget(target, bannedKeywords);
+            }
+
+            // 并行扫描帖子
+            if (threads.length > 0) {
+                await this.scanThreadsInParallelAdvanced(threads, bannedKeywords);
+            }
+
+            // 扫描完成，执行最终删除
+            console.log(`🔄 指定频道扫描完成，开始最终删除批次...`);
+            await this.messageCache.finalFlush();
+
+            // 完成任务
+            const cacheStats = this.messageCache.getStats();
+            const finalStats = {
+                totalChannelsScanned: this.completedTargets,
+                totalMessagesScanned: this.totalScanned,
+                totalMessagesDeleted: cacheStats.totalDeleted,
+                totalUnlockOperations: cacheStats.unlockOperations,
+                completedNormally: !this.shouldStop,
+                taskType: 'selectedChannels',
+                selectedChannelsCount: selectedChannels.length
+            };
+
+            if (this.shouldStop) {
+                await this.taskManager.stopTask(this.guild.id, this.taskId, 'user_requested');
+            } else {
+                await this.taskManager.completeTask(this.guild.id, this.taskId, finalStats);
+            }
+
+            if (this.progressTracker) {
+                await this.progressTracker.complete(finalStats);
+            }
+
+            console.log(`🎉 指定频道扫描完成 - 扫描 ${this.totalScanned} 条消息，删除 ${cacheStats.totalDeleted} 条违规消息`);
+            
+            return finalStats;
+
+        } catch (error) {
+            console.error('❌ 指定频道扫描时出错:', error);
+            
+            await this.taskManager.stopTask(this.guild.id, this.taskId, 'error');
+            
+            if (this.progressTracker) {
+                await this.progressTracker.error(error);
+            }
+            
+            throw error;
+        } finally {
+            this.isRunning = false;
+        }
+    }
+
+    async getSelectedChannelTargets(selectedChannels) {
+        const targets = [];
+        
+        try {
+            for (const selectedChannel of selectedChannels) {
+                // 检查频道是否被豁免
+                const isExempt = await isChannelExempt(this.guild.id, selectedChannel.id);
+                if (isExempt) {
+                    console.log(`⏭️ 跳过豁免频道: ${selectedChannel.name}`);
+                    continue;
+                }
+
+                // 处理不同类型的频道
+                switch (selectedChannel.type) {
+                    case ChannelType.GuildText:
+                        targets.push({
+                            id: selectedChannel.id,
+                            name: selectedChannel.name,
+                            type: '文字频道',
+                            channel: selectedChannel,
+                            isLocked: false
+                        });
+                        break;
+
+                    case ChannelType.GuildForum:
+                        // 论坛频道 - 获取其子帖子
+                        console.log(`📋 正在获取论坛频道 ${selectedChannel.name} 的子帖子...`);
+                        const forumThreads = await this.getForumThreads(selectedChannel);
+                        targets.push(...forumThreads);
+                        break;
+
+                    case ChannelType.PublicThread:
+                    case ChannelType.PrivateThread:
+                        // 独立的子帖子
+                        const isLocked = selectedChannel.locked || selectedChannel.archived;
+                        targets.push({
+                            id: selectedChannel.id,
+                            name: selectedChannel.name,
+                            type: isLocked ? '已锁定子帖子' : '子帖子',
+                            channel: selectedChannel,
+                            isLocked: isLocked,
+                            originalLocked: selectedChannel.locked,
+                            originalArchived: selectedChannel.archived
+                        });
+                        break;
+
+                    case ChannelType.GuildNews:
+                        targets.push({
+                            id: selectedChannel.id,
+                            name: selectedChannel.name,
+                            type: '公告频道',
+                            channel: selectedChannel,
+                            isLocked: false
+                        });
+                        break;
+
+                    default:
+                        // 其他类型的文字频道
+                        if (selectedChannel.isTextBased()) {
+                            targets.push({
+                                id: selectedChannel.id,
+                                name: selectedChannel.name,
+                                type: '其他文字频道',
+                                channel: selectedChannel,
+                                isLocked: false
+                            });
+                        }
+                        break;
+                }
+            }
+
+            console.log(`📊 选定频道扫描目标统计:`);
+            const typeStats = {};
+            targets.forEach(target => {
+                typeStats[target.type] = (typeStats[target.type] || 0) + 1;
+            });
+            
+            for (const [type, count] of Object.entries(typeStats)) {
+                console.log(`  - ${type}: ${count} 个`);
+            }
+
+        } catch (error) {
+            console.error('获取选定频道扫描目标时出错:', error);
+        }
+
+        return targets;
     }
 }
 
