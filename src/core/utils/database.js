@@ -19,6 +19,8 @@ const COURT_VOTES_FILE = path.join(DATA_DIR, 'courtVotes.json');
 const SELF_MODERATION_SETTINGS_FILE = path.join(DATA_DIR, 'selfModerationSettings.json');
 const SELF_MODERATION_VOTES_FILE = path.join(DATA_DIR, 'selfModerationVotes.json');
 const ARCHIVE_SETTINGS_FILE = path.join(DATA_DIR, 'archiveSettings.json');
+const AUTO_CLEANUP_SETTINGS_FILE = path.join(DATA_DIR, 'autoCleanupSettings.json');
+const AUTO_CLEANUP_TASKS_FILE = path.join(DATA_DIR, 'autoCleanupTasks.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -54,6 +56,12 @@ if (!fs.existsSync(SELF_MODERATION_VOTES_FILE)) {
 }
 if (!fs.existsSync(ARCHIVE_SETTINGS_FILE)) {
     fs.writeFileSync(ARCHIVE_SETTINGS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(AUTO_CLEANUP_SETTINGS_FILE)) {
+    fs.writeFileSync(AUTO_CLEANUP_SETTINGS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(AUTO_CLEANUP_TASKS_FILE)) {
+    fs.writeFileSync(AUTO_CLEANUP_TASKS_FILE, '{}', 'utf8');
 }
 
 // 读取设置数据
@@ -912,6 +920,156 @@ async function clearArchiveViewRoleSettings(guildId) {
     return true;
 }
 
+// 自动清理设置相关函数
+function readAutoCleanupSettings() {
+    try {
+        const data = fs.readFileSync(AUTO_CLEANUP_SETTINGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取自动清理设置文件失败:', err);
+        return {};
+    }
+}
+
+function writeAutoCleanupSettings(data) {
+    try {
+        fs.writeFileSync(AUTO_CLEANUP_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入自动清理设置文件失败:', err);
+    }
+}
+
+function readAutoCleanupTasks() {
+    try {
+        const data = fs.readFileSync(AUTO_CLEANUP_TASKS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取自动清理任务文件失败:', err);
+        return {};
+    }
+}
+
+function writeAutoCleanupTasks(data) {
+    try {
+        fs.writeFileSync(AUTO_CLEANUP_TASKS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入自动清理任务文件失败:', err);
+    }
+}
+
+// 获取服务器的自动清理设置
+async function getAutoCleanupSettings(guildId) {
+    const settings = readAutoCleanupSettings();
+    return settings[guildId] || {
+        bannedKeywords: [],
+        monitorChannels: [],
+        cleanupRole: null,
+        isEnabled: false,
+        autoCleanupEnabled: true
+    };
+}
+
+// 保存服务器的自动清理设置
+async function saveAutoCleanupSettings(guildId, settings) {
+    const allSettings = readAutoCleanupSettings();
+    allSettings[guildId] = settings;
+    writeAutoCleanupSettings(allSettings);
+    console.log(`成功保存自动清理设置 - guildId: ${guildId}`, settings);
+    return settings;
+}
+
+// 添加违禁关键字
+async function addBannedKeyword(guildId, keyword) {
+    const settings = await getAutoCleanupSettings(guildId);
+    if (!settings.bannedKeywords.includes(keyword)) {
+        settings.bannedKeywords.push(keyword);
+        await saveAutoCleanupSettings(guildId, settings);
+    }
+    return settings;
+}
+
+// 移除违禁关键字
+async function removeBannedKeyword(guildId, keyword) {
+    const settings = await getAutoCleanupSettings(guildId);
+    settings.bannedKeywords = settings.bannedKeywords.filter(k => k !== keyword);
+    await saveAutoCleanupSettings(guildId, settings);
+    return settings;
+}
+
+// 获取违禁关键字列表
+async function getBannedKeywords(guildId) {
+    const settings = await getAutoCleanupSettings(guildId);
+    return settings.bannedKeywords;
+}
+
+// 设置清理权限角色
+async function setCleanupRole(guildId, roleId) {
+    const settings = await getAutoCleanupSettings(guildId);
+    settings.cleanupRole = roleId;
+    await saveAutoCleanupSettings(guildId, settings);
+    return settings;
+}
+
+// 设置监控频道
+async function setCleanupChannels(guildId, channelIds) {
+    const settings = await getAutoCleanupSettings(guildId);
+    settings.monitorChannels = channelIds;
+    await saveAutoCleanupSettings(guildId, settings);
+    return settings;
+}
+
+// 保存清理任务
+async function saveCleanupTask(guildId, taskData) {
+    const tasks = readAutoCleanupTasks();
+    if (!tasks[guildId]) {
+        tasks[guildId] = {};
+    }
+    tasks[guildId][taskData.taskId] = taskData;
+    writeAutoCleanupTasks(tasks);
+    return taskData;
+}
+
+// 获取清理任务
+async function getCleanupTask(guildId, taskId) {
+    const tasks = readAutoCleanupTasks();
+    return tasks[guildId]?.[taskId];
+}
+
+// 更新清理任务
+async function updateCleanupTask(guildId, taskId, updates) {
+    const tasks = readAutoCleanupTasks();
+    if (tasks[guildId]?.[taskId]) {
+        Object.assign(tasks[guildId][taskId], updates);
+        writeAutoCleanupTasks(tasks);
+    }
+    return tasks[guildId]?.[taskId];
+}
+
+// 删除清理任务
+async function deleteCleanupTask(guildId, taskId) {
+    const tasks = readAutoCleanupTasks();
+    if (tasks[guildId]?.[taskId]) {
+        delete tasks[guildId][taskId];
+        writeAutoCleanupTasks(tasks);
+        return true;
+    }
+    return false;
+}
+
+// 获取活跃的清理任务
+async function getActiveCleanupTask(guildId) {
+    const tasks = readAutoCleanupTasks();
+    if (!tasks[guildId]) return null;
+    
+    for (const taskId in tasks[guildId]) {
+        const task = tasks[guildId][taskId];
+        if (task.status === 'running') {
+            return task;
+        }
+    }
+    return null;
+}
+
 module.exports = {
     saveSettings,
     getSettings,
@@ -978,4 +1136,17 @@ module.exports = {
     saveArchiveViewRoleSettings,
     getArchiveViewRoleSettings,
     clearArchiveViewRoleSettings,
+    // 自动清理相关
+    getAutoCleanupSettings,
+    saveAutoCleanupSettings,
+    addBannedKeyword,
+    removeBannedKeyword,
+    getBannedKeywords,
+    setCleanupRole,
+    setCleanupChannels,
+    saveCleanupTask,
+    getCleanupTask,
+    updateCleanupTask,
+    deleteCleanupTask,
+    getActiveCleanupTask,
 };

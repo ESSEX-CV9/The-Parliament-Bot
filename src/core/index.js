@@ -65,6 +65,19 @@ const manageExternalServersCommand = require('../modules/contest/commands/manage
 const cacheStats = require('../modules/contest/commands/cacheStats');
 const regenerateContestMessagesCommand = require('../modules/contest/commands/regenerateContestMessages');
 
+// 自动清理系统命令
+const addBannedKeywordCommand = require('../modules/autoCleanup/commands/addBannedKeyword');
+const removeBannedKeywordCommand = require('../modules/autoCleanup/commands/removeBannedKeyword');
+const listBannedKeywordsCommand = require('../modules/autoCleanup/commands/listBannedKeywords');
+const setCleanupChannelsCommand = require('../modules/autoCleanup/commands/setCleanupChannels');
+const cleanupHistoryCommand = require('../modules/autoCleanup/commands/cleanupHistory');
+const cleanupFullServerCommand = require('../modules/autoCleanup/commands/cleanupFullServer');
+const stopCleanupTaskCommand = require('../modules/autoCleanup/commands/stopCleanupTask');
+const cleanupStatusCommand = require('../modules/autoCleanup/commands/cleanupStatus');
+const toggleAutoCleanupCommand = require('../modules/autoCleanup/commands/toggleAutoCleanup');
+
+const { messageCreateHandler } = require('./events/messageCreate');
+
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,
@@ -125,6 +138,17 @@ client.commands.set(manageExternalServersCommand.data.name, manageExternalServer
 client.commands.set(cacheStats.data.name, cacheStats);
 client.commands.set(regenerateContestMessagesCommand.data.name, regenerateContestMessagesCommand);
 
+// 自动清理系统命令
+client.commands.set(addBannedKeywordCommand.data.name, addBannedKeywordCommand);
+client.commands.set(removeBannedKeywordCommand.data.name, removeBannedKeywordCommand);
+client.commands.set(listBannedKeywordsCommand.data.name, listBannedKeywordsCommand);
+client.commands.set(setCleanupChannelsCommand.data.name, setCleanupChannelsCommand);
+client.commands.set(cleanupHistoryCommand.data.name, cleanupHistoryCommand);
+client.commands.set(cleanupFullServerCommand.data.name, cleanupFullServerCommand);
+client.commands.set(stopCleanupTaskCommand.data.name, stopCleanupTaskCommand);
+client.commands.set(cleanupStatusCommand.data.name, cleanupStatusCommand);
+client.commands.set(toggleAutoCleanupCommand.data.name, toggleAutoCleanupCommand);
+
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
     printTimeConfig();
@@ -141,9 +165,17 @@ client.once(Events.ClientReady, async (readyClient) => {
     startAttachmentCleanupScheduler(readyClient);
     console.log('✅ 附件清理定时器已启动');
     
+    // 初始化自动清理系统
+    console.log('✅ 自动清理系统已启动');
+    
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
+    console.log('�� 自动消息清理系统已加载');
 })
 
 client.on(Events.InteractionCreate, interactionCreateHandler)
+
+// 添加消息创建事件处理器
+client.on(Events.MessageCreate, messageCreateHandler);
+
 client.login(process.env.DISCORD_TOKEN);
