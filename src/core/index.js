@@ -83,6 +83,9 @@ const cleanupSelectedChannelsCommand = require('../modules/autoCleanup/commands/
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
+// 论坛重建系统命令
+const rebuildForumCommand = require('../modules/forumRebuilder/commands/rebuildForum');
+
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,
@@ -158,6 +161,9 @@ client.commands.set(addExemptChannelCommand.data.name, addExemptChannelCommand);
 client.commands.set(removeExemptChannelCommand.data.name, removeExemptChannelCommand);
 client.commands.set(listExemptChannelsCommand.data.name, listExemptChannelsCommand);
 client.commands.set(cleanupSelectedChannelsCommand.data.name, cleanupSelectedChannelsCommand);
+
+// 论坛重建系统命令
+client.commands.set(rebuildForumCommand.data.name, rebuildForumCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
