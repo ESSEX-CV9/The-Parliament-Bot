@@ -14,11 +14,48 @@ class WebhookManager {
             
             // 尝试获取用户信息
             let user = null;
+            let member = null;
+            let displayName = `用户${authorId}`;
+            let englishUsername = `user_${authorId}`;
+            
             try {
                 user = await client.users.fetch(authorId);
                 console.log(`✅ 找到原发帖人: ${user.username} (${authorId})`);
-            } catch (error) {
-                console.log(`⚠️ 无法获取用户信息: ${authorId}, 可能用户不在当前服务器`);
+                
+                // 保存英文用户名
+                englishUsername = user.username;
+                
+                // 尝试获取服务器成员信息以获取昵称
+                try {
+                    const guild = forumChannel.guild;
+                    member = await guild.members.fetch(authorId);
+                    
+                    // 优先级：服务器昵称 > 全局显示名称 > 用户名
+                    if (member.nickname) {
+                        displayName = member.nickname;
+                        console.log(`📝 使用服务器昵称: ${displayName} (${englishUsername})`);
+                    } else if (user.displayName && user.displayName !== user.username) {
+                        displayName = user.displayName;
+                        console.log(`📝 使用全局显示名称: ${displayName} (${englishUsername})`);
+                    } else {
+                        displayName = user.username;
+                        console.log(`📝 使用用户名: ${displayName}`);
+                    }
+                    
+                } catch (memberError) {
+                    console.log(`⚠️ 用户不在当前服务器，使用全局信息`);
+                    // 如果用户不在服务器中，使用全局显示名称或用户名
+                    if (user.displayName && user.displayName !== user.username) {
+                        displayName = user.displayName;
+                        console.log(`📝 使用全局显示名称: ${displayName} (${englishUsername})`);
+                    } else {
+                        displayName = user.username;
+                        console.log(`📝 使用用户名: ${displayName}`);
+                    }
+                }
+                
+            } catch (userError) {
+                console.log(`⚠️ 无法获取用户信息: ${authorId}, 可能用户不存在`);
                 // 返回null表示无法模拟该用户
                 return null;
             }
@@ -39,8 +76,10 @@ class WebhookManager {
             const webhookData = {
                 webhook,
                 user,
-                username: user.username,
-                avatarURL: user.displayAvatarURL()
+                member,
+                displayName: displayName, // 昵称用于显示
+                username: englishUsername, // 英文用户名用于详情框
+                avatarURL: (member && member.displayAvatarURL()) || (user && user.displayAvatarURL()) || null
             };
             
             this.webhooks.set(webhookKey, webhookData);
@@ -64,16 +103,21 @@ class WebhookManager {
                 return null;
             }
             
+            // 使用组合显示名称：昵称 + 英文用户名
+            const combinedUsername = webhookData.displayName !== webhookData.username 
+                ? `${webhookData.displayName} (${webhookData.username})`
+                : webhookData.username;
+            
             const messageOptions = {
                 content: content,
-                username: webhookData.username,
+                username: combinedUsername, // 使用组合名称
                 avatarURL: webhookData.avatarURL,
                 threadId: forumThread.id, // 指定发送到的thread
                 ...options
             };
             
             const message = await webhookData.webhook.send(messageOptions);
-            console.log(`✅ 通过Webhook模拟用户发送消息: ${webhookData.username}`);
+            console.log(`✅ 通过Webhook模拟用户发送消息: ${combinedUsername}`);
             return message;
             
         } catch (error) {
