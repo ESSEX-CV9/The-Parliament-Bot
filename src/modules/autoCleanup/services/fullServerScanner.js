@@ -546,13 +546,18 @@ class FullServerScanner {
                             continue;
                         }
 
-                        const isLocked = channel.locked || channel.archived;
+                        const threadLocked = channel.locked;
+                        const threadArchived = channel.archived;
+                        const isLocked = threadLocked || threadArchived;
+                        
                         targets.push({
                             id: channelId,
                             name: channel.name,
                             type: isLocked ? '已锁定子帖子' : '子帖子',
                             channel: channel,
-                            isLocked: isLocked
+                            isLocked: isLocked,
+                            originalLocked: threadLocked,
+                            originalArchived: threadArchived
                         });
                         break;
 
@@ -985,13 +990,18 @@ class FullServerScanner {
                     case ChannelType.PublicThread:
                     case ChannelType.PrivateThread:
                         // 子帖子
-                        const isLocked = channel.locked || channel.archived;
+                        const selectedThreadLocked = channel.locked;
+                        const selectedThreadArchived = channel.archived;
+                        const isLocked = selectedThreadLocked || selectedThreadArchived;
+                        
                         targets.push({
                             id: channelId,
                             name: channel.name,
                             type: isLocked ? '已锁定子帖子' : '子帖子',
                             channel: channel,
                             isLocked: isLocked,
+                            originalLocked: selectedThreadLocked,
+                            originalArchived: selectedThreadArchived,
                             parentForum: channel.parent ? channel.parent.name : null
                         });
                         break;
