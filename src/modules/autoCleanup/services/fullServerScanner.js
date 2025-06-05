@@ -513,7 +513,7 @@ class FullServerScanner {
                 // 处理不同类型的频道
                 switch (channel.type) {
                     case ChannelType.GuildText:
-                        // 普通文字频道
+                        // 普通文字频道 - 添加频道本身
                         targets.push({
                             id: channelId,
                             name: channel.name,
@@ -521,6 +521,11 @@ class FullServerScanner {
                             channel: channel,
                             isLocked: false
                         });
+                        
+                        // 获取文字频道的子区
+                        console.log(`🧵 正在获取文字频道 ${channel.name} 的子区...`);
+                        const textChannelThreads = await this.getTextChannelThreads(channel);
+                        targets.push(...textChannelThreads);
                         break;
 
                     case ChannelType.GuildForum:
@@ -955,7 +960,7 @@ class FullServerScanner {
                 // 处理不同类型的频道
                 switch (channel.type) {
                     case ChannelType.GuildText:
-                        // 普通文字频道
+                        // 普通文字频道 - 添加频道本身
                         targets.push({
                             id: channelId,
                             name: channel.name,
@@ -963,6 +968,11 @@ class FullServerScanner {
                             channel: channel,
                             isLocked: false
                         });
+                        
+                        // 获取文字频道的子区
+                        console.log(`🧵 正在获取选定文字频道 ${channel.name} 的子区...`);
+                        const selectedTextChannelThreads = await this.getTextChannelThreads(channel);
+                        targets.push(...selectedTextChannelThreads);
                         break;
 
                     case ChannelType.GuildForum:
@@ -1103,6 +1113,64 @@ class FullServerScanner {
                 missingPermissions: ['权限检查失败']
             };
         }
+    }
+
+    async getTextChannelThreads(textChannel) {
+        const threads = [];
+        
+        try {
+            // 获取活跃的子区
+            const activeThreads = await textChannel.threads.fetchActive();
+            for (const [threadId, thread] of activeThreads.threads) {
+                const isLocked = thread.locked;
+                const isArchived = thread.archived;
+                const lockStatus = isLocked && isArchived ? '已锁定且归档' : 
+                                 isLocked ? '已锁定' : 
+                                 isArchived ? '已归档' : '活跃';
+                
+                threads.push({
+                    id: threadId,
+                    name: thread.name,
+                    type: `${lockStatus}文字频道子区`,
+                    channel: thread,
+                    isLocked: isLocked || isArchived,
+                    originalLocked: isLocked,
+                    originalArchived: isArchived,
+                    parentChannel: textChannel.name
+                });
+            }
+
+            // 获取已归档的子区
+            const archivedThreads = await textChannel.threads.fetchArchived();
+            for (const [threadId, thread] of archivedThreads.threads) {
+                const isLocked = thread.locked;
+                
+                threads.push({
+                    id: threadId,
+                    name: thread.name,
+                    type: isLocked ? '已锁定且归档文字频道子区' : '已归档文字频道子区',
+                    channel: thread,
+                    isLocked: true, // 归档的子区需要解锁操作
+                    originalLocked: isLocked,
+                    originalArchived: true,
+                    parentChannel: textChannel.name
+                });
+            }
+
+            const totalActive = activeThreads.threads.size;
+            const totalArchived = archivedThreads.threads.size;
+            const lockedCount = threads.filter(t => t.originalLocked).length;
+            const archivedCount = threads.filter(t => t.originalArchived).length;
+            
+            if (totalActive > 0 || totalArchived > 0) {
+                console.log(`  🧵 文字频道 ${textChannel.name}: ${totalActive} 个活跃子区，${totalArchived} 个归档子区 (${lockedCount} 个锁定，${archivedCount} 个归档)`);
+            }
+
+        } catch (error) {
+            console.error(`获取文字频道 ${textChannel.name} 的子区时出错:`, error);
+        }
+
+        return threads;
     }
 }
 
