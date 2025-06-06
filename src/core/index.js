@@ -86,6 +86,9 @@ const { messageCreateHandler } = require('./events/messageCreate');
 // 论坛重建系统命令
 const rebuildForumCommand = require('../modules/forumRebuilder/commands/rebuildForum');
 
+// 帖子重建系统命令
+const rebuildThreadsCommand = require('../modules/threadRebuilder/commands/rebuildThreads');
+
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,
@@ -164,6 +167,9 @@ client.commands.set(cleanupSelectedChannelsCommand.data.name, cleanupSelectedCha
 
 // 论坛重建系统命令
 client.commands.set(rebuildForumCommand.data.name, rebuildForumCommand);
+
+// 帖子重建系统命令
+client.commands.set(rebuildThreadsCommand.data.name, rebuildThreadsCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
