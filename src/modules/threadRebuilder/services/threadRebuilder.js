@@ -222,7 +222,7 @@ class ThreadRebuilder {
     }
     
     /**
-     * 发送普通消息
+     * 发送普通消息 - 支持分离文字和emoji
      */
     async sendNormalMessage(thread, message) {
         const messageContent = this.messageProcessor.formatMessage(message);
@@ -234,51 +234,25 @@ class ThreadRebuilder {
             messageContent.content = '[空消息内容]';
         }
         
-        // 特殊处理纯emoji消息
-        if (messageContent.isEmojiMessage) {
-            console.log(`发送纯emoji消息: ${message.messageId}`);
-            
-            if (this.useWebhook && message.author.userId) {
-                try {
-                    return await this.webhookManager.sendAsUser(
-                        thread, 
-                        message.author, 
-                        {
-                            content: messageContent.content,
-                            files: messageContent.files
-                        }
-                    );
-                } catch (error) {
-                    console.error(`Webhook发送emoji消息失败，尝试使用BOT发送:`, error);
-                    // 回退到BOT模式
-                    return await thread.send({
-                        content: `**${message.author.displayName || message.author.username}** (${formattedTime})\n${messageContent.content}`,
-                        files: messageContent.files
-                    });
-                }
-            } else {
-                // 使用BOT身份发送emoji消息
-                return await thread.send({
-                    content: `**${message.author.displayName || message.author.username}** (${formattedTime})\n${messageContent.content}`,
-                    files: messageContent.files
-                });
-            }
-        }
+        // 发送主消息
+        let mainMessage;
         
-        // 普通消息处理
         if (this.useWebhook && message.author.userId) {
             // 使用Webhook模拟原作者
             try {
-                return await this.webhookManager.sendAsUser(
+                mainMessage = await this.webhookManager.sendAsUser(
                     thread, 
                     message.author, 
-                    messageContent
+                    {
+                        content: messageContent.content,
+                        files: messageContent.files
+                    }
                 );
             } catch (error) {
                 console.error(`Webhook发送失败，尝试使用BOT发送:`, error);
                 // 如果Webhook失败，回退到BOT模式
                 const content = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${messageContent.content}`;
-                return await thread.send({
+                mainMessage = await thread.send({
                     content: content,
                     files: messageContent.files
                 });
@@ -287,11 +261,47 @@ class ThreadRebuilder {
             // 使用BOT身份发送，添加作者信息
             const content = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${messageContent.content}`;
             
-            return await thread.send({
+            mainMessage = await thread.send({
                 content: content,
                 files: messageContent.files
             });
         }
+        
+        // 如果需要分离emoji，发送emoji消息
+        if (messageContent.needsSeparation && messageContent.separateEmojis.length > 0) {
+            console.log(`分离发送emoji: ${messageContent.separateEmojis.length} 个`);
+            
+            // 短暂延迟以保持消息分组
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            const emojiContent = messageContent.separateEmojis.join('\n');
+            
+            if (this.useWebhook && message.author.userId) {
+                try {
+                    await this.webhookManager.sendAsUser(
+                        thread,
+                        message.author,
+                        {
+                            content: emojiContent,
+                            files: []
+                        }
+                    );
+                } catch (error) {
+                    console.error(`Webhook发送emoji失败，尝试使用BOT发送:`, error);
+                    // 回退到BOT模式（不显示作者信息，保持分组效果）
+                    await thread.send({
+                        content: emojiContent
+                    });
+                }
+            } else {
+                // 使用BOT身份发送emoji（不显示作者信息，保持分组效果）
+                await thread.send({
+                    content: emojiContent
+                });
+            }
+        }
+        
+        return mainMessage; // 返回主消息用于ID映射
     }
     
     /**
@@ -311,7 +321,8 @@ class ThreadRebuilder {
         
         // 检查是否是emoji URL消息
         if (content.includes('cdn.discordapp.com/emojis/')) {
-            return '[表情包]';
+            // 如果是emoji URL，尝试从原始JSON数据中获取emoji字符
+            return '[表情包]'; // 暂时保持这个，稍后会在 findOriginalReplyContent 中特殊处理
         }
         
         // 移除markdown格式和特殊字符，只保留纯文本
@@ -355,6 +366,16 @@ class ThreadRebuilder {
         
         const originalMessage = allMessages.find(msg => msg.messageId === replyToMessageId);
         if (originalMessage) {
+            // 特殊处理纯emoji消息
+            if (originalMessage.content?.isEmojiOnly && originalMessage.content?.emojis?.length > 0) {
+                // 对于纯emoji消息，显示emoji字符
+                const emojiText = originalMessage.content.emojis
+                    .filter(emoji => emoji.alt && emoji.alt !== '__' && emoji.alt !== 'emoj_97')
+                    .map(emoji => `:${emoji.alt}:`)
+                    .join(' ');
+                return emojiText || '[表情包]';
+            }
+            
             const content = originalMessage.content?.markdown || originalMessage.content?.text || '';
             return this.truncateContent(content, 15);
         }
@@ -363,7 +384,7 @@ class ThreadRebuilder {
     }
     
     /**
-     * 发送回复消息
+     * 发送回复消息 - 支持分离文字和emoji
      */
     async sendReplyMessage(thread, message) {
         const messageContent = this.messageProcessor.formatMessage(message);
@@ -399,37 +420,73 @@ class ThreadRebuilder {
             }
         }
         
+        // 发送主回复消息
+        let mainMessage;
+        const mainContent = replyQuote + messageContent.content;
+        
         if (this.useWebhook && message.author.userId) {
             // 使用Webhook发送回复
-            const content = replyQuote + messageContent.content;
-                
             try {
-                return await this.webhookManager.sendAsUser(
+                mainMessage = await this.webhookManager.sendAsUser(
                     thread,
                     message.author,
-                    { ...messageContent, content }
+                    { ...messageContent, content: mainContent }
                 );
             } catch (error) {
                 console.error(`Webhook回复发送失败，尝试使用BOT发送:`, error);
                 // 回退到BOT模式
-                const botContent = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${replyQuote}${messageContent.content}`;
+                const botContent = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${mainContent}`;
                 
-                return await thread.send({
+                mainMessage = await thread.send({
                     content: botContent,
                     files: messageContent.files
                 });
             }
         } else {
             // 使用BOT身份发送回复
-            const botContent = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${replyQuote}${messageContent.content}`;
+            const botContent = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${mainContent}`;
             
-            const options = {
+            mainMessage = await thread.send({
                 content: botContent,
                 files: messageContent.files
-            };
-            
-            return await thread.send(options);
+            });
         }
+        
+        // 如果需要分离emoji，发送emoji消息
+        if (messageContent.needsSeparation && messageContent.separateEmojis.length > 0) {
+            console.log(`分离发送回复emoji: ${messageContent.separateEmojis.length} 个`);
+            
+            // 短暂延迟以保持消息分组
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            const emojiContent = messageContent.separateEmojis.join('\n');
+            
+            if (this.useWebhook && message.author.userId) {
+                try {
+                    await this.webhookManager.sendAsUser(
+                        thread,
+                        message.author,
+                        {
+                            content: emojiContent,
+                            files: []
+                        }
+                    );
+                } catch (error) {
+                    console.error(`Webhook发送回复emoji失败，尝试使用BOT发送:`, error);
+                    // 回退到BOT模式（不显示作者信息，保持分组效果）
+                    await thread.send({
+                        content: emojiContent
+                    });
+                }
+            } else {
+                // 使用BOT身份发送emoji（不显示作者信息，保持分组效果）
+                await thread.send({
+                    content: emojiContent
+                });
+            }
+        }
+        
+        return mainMessage; // 返回主消息用于ID映射
     }
     
     /**

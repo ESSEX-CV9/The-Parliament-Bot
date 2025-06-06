@@ -5,10 +5,13 @@ const { URL } = require('url');
 
 class MessageProcessor {
     /**
-     * 格式化消息内容
+     * 格式化消息内容 - 支持分离文字和emoji
      */
     formatMessage(message) {
         let content = message.content.markdown || message.content.text || '';
+        
+        // 移除消息末尾的 (edited) 标记
+        content = content.replace(/\s*\(edited\)\s*$/i, '');
         
         // 处理纯emoji消息
         if (message.content.isEmojiOnly && message.content.emojis && message.content.emojis.length > 0) {
@@ -22,69 +25,42 @@ class MessageProcessor {
                     content: emojiUrls.join('\n'), // 每个emoji URL一行
                     files: [],
                     embeds: [],
-                    isEmojiMessage: true
+                    isEmojiMessage: true,
+                    needsSeparation: false
                 };
             }
         }
         
+        // 检查是否有有效的emoji
+        const validEmojis = message.content.emojis?.filter(emoji => 
+            emoji && emoji.alt && emoji.alt !== '__' && emoji.alt !== 'emoj_97' && emoji.url
+        ) || [];
+        
         // 如果消息内容为空，检查其他信息
         if (!content || content.trim() === '') {
-            // 检查是否有有效的表情符号
-            if (message.content.emojis && message.content.emojis.length > 0) {
-                const validEmojis = message.content.emojis.filter(emoji => 
-                    emoji && emoji.alt && emoji.alt !== '__' && emoji.alt !== 'emoj_97'
-                );
-                
-                if (validEmojis.length > 0) {
-                    // 如果有emoji URL，优先使用URL
-                    const emojiUrls = validEmojis.filter(emoji => emoji.url);
-                    if (emojiUrls.length > 0) {
-                        content = emojiUrls.map(emoji => emoji.url).join('\n');
-                    } else {
-                        // 回退到显示emoji名称
-                        content = validEmojis.map(emoji => `:${emoji.alt}:`).join(' ');
-                    }
-                }
+            if (validEmojis.length > 0) {
+                // 如果有emoji URL，使用URL
+                content = validEmojis.map(emoji => emoji.url).join('\n');
+                return {
+                    content: content,
+                    files: [],
+                    embeds: [],
+                    isEmojiMessage: true,
+                    needsSeparation: false
+                };
             }
             
             // 如果还是没有内容，检查附件
-            if ((!content || content.trim() === '') && message.attachments && message.attachments.length > 0) {
+            if (message.attachments && message.attachments.length > 0) {
                 content = '[发送了附件]';
-            }
-            
-            // 如果仍然没有内容，提供默认内容
-            if (!content || content.trim() === '') {
+            } else {
                 content = '[空消息]';
-            }
-        } else {
-            // 处理消息中的emoji（非纯emoji消息）
-            if (message.content.emojis && message.content.emojis.length > 0) {
-                const validEmojis = message.content.emojis.filter(emoji => 
-                    emoji && emoji.alt && emoji.alt !== '__' && emoji.alt !== 'emoj_97'
-                );
-                
-                if (validEmojis.length > 0) {
-                    // 将emoji替换为URL或保持原有格式
-                    for (const emoji of validEmojis) {
-                        if (emoji.url) {
-                            // 如果有URL，在消息末尾添加emoji URL
-                            content += `\n${emoji.url}`;
-                        } else {
-                            // 否则保持原有的emoji格式
-                            content = content.replace(
-                                new RegExp(`:${emoji.alt}:`, 'g'),
-                                `:${emoji.alt}:`
-                            );
-                        }
-                    }
-                }
             }
         }
         
         // 处理提及
         if (message.content.mentions && message.content.mentions.length > 0) {
             for (const mention of message.content.mentions) {
-                // 替换提及为可见格式
                 content = content.replace(
                     `<@${mention.user_id}>`, 
                     `@${mention.username}`
@@ -105,10 +81,19 @@ class MessageProcessor {
             content: content + reactions,
             files: [],
             embeds: [],
-            isEmojiMessage: message.content.isEmojiOnly || false
+            isEmojiMessage: false,
+            needsSeparation: false,
+            separateEmojis: []
         };
         
-        // 处理附件
+        // 检查是否需要分离emoji
+        if (validEmojis.length > 0 && content.trim() && !message.content.isEmojiOnly) {
+            // 有文字内容且有emoji，需要分离
+            result.needsSeparation = true;
+            result.separateEmojis = validEmojis.map(emoji => emoji.url);
+        }
+        
+        // 处理附件 - 使用 -# 格式
         if (message.attachments && message.attachments.length > 0) {
             result.attachmentInfo = message.attachments.map(att => ({
                 filename: att.filename,
@@ -117,23 +102,22 @@ class MessageProcessor {
                 type: att.type
             }));
             
-            // 添加附件信息到消息内容
+            // 添加附件信息到消息内容 - 使用 -# 格式
             const attachmentList = message.attachments
-                .map(att => `📎 ${att.filename} (${att.size || '未知大小'})`)
+                .map(att => `-# 📎 ${att.filename} (${att.size || '未知大小'})`)
                 .join('\n');
             
             // 如果内容是默认的附件提示，替换它
             if (result.content.startsWith('[发送了附件]')) {
-                result.content = `**附件:**\n${attachmentList}${reactions}`;
+                result.content = `${attachmentList}${reactions}`;
             } else if (!result.isEmojiMessage) {
-                // 只有在非emoji消息时才添加附件信息
-                result.content += `\n\n**附件:**\n${attachmentList}`;
+                result.content += `\n${attachmentList}`;
             }
         }
         
-        // 处理编辑标记
+        // 处理编辑标记 - 简化格式
         if (message.edited && message.edited.is_edited) {
-            result.content += `\n*（已编辑 - ${message.edited.edited_at || '未知时间'}）*`;
+            result.content += `\n-# (已编辑)`;
         }
         
         // 处理剧透标记
