@@ -172,7 +172,8 @@ class JsonReader {
                                 userId: msg.author?.user_id,
                                 username: msg.author?.username || '未知用户',
                                 displayName: msg.author?.display_name || msg.author?.username || '未知用户',
-                                avatarUrl: msg.author?.avatar_url
+                                avatarUrl: msg.author?.avatar_url,
+                                isSystemActor: msg.author?.is_system_actor || false
                             },
                             timestamp: msg.timestamp || '未知时间',
                             content: {
@@ -180,7 +181,13 @@ class JsonReader {
                                 markdown: msg.content?.markdown || msg.content?.text || '',
                                 mentions: msg.content?.mentions || [],
                                 emojis: this.standardizeEmojis(msg.content?.emojis || []),
-                                isEmojiOnly: msg.content?.is_emoji_only || false
+                                isEmojiOnly: msg.content?.is_emoji_only || false,
+                                // 系统消息特有字段
+                                systemAction: msg.content?.system_action,
+                                newName: msg.content?.new_name,
+                                oldName: msg.content?.old_name,
+                                newTitle: msg.content?.new_title,
+                                oldTitle: msg.content?.old_title
                             },
                             attachments: msg.attachments || [],
                             reactions: (msg.reactions || []).map(reaction => ({
@@ -207,7 +214,8 @@ class JsonReader {
                                 userId: null,
                                 username: '系统',
                                 displayName: '系统',
-                                avatarUrl: null
+                                avatarUrl: null,
+                                isSystemActor: false
                             },
                             timestamp: '未知时间',
                             content: {

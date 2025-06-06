@@ -72,9 +72,27 @@ class MessageProcessor {
         let reactions = '';
         if (message.reactions && message.reactions.length > 0) {
             const reactionList = message.reactions
-                .map(r => `${r.emoji} ${r.count}`)
+                .map(r => {
+                    // 尝试格式化emoji显示
+                    let emojiDisplay = r.emoji;
+                    
+                    // 如果是自定义emoji且有URL，尝试使用名称
+                    if (r.emojiUrl && r.emojiUrl.includes('cdn.discordapp.com/emojis/')) {
+                        if (r.emojiName && r.emojiName.trim()) {
+                            emojiDisplay = `:${r.emojiName}:`;
+                        } else {
+                            // 从URL尝试提取名称
+                            const urlMatch = r.emojiUrl.match(/\/emojis\/(\d+)\./);
+                            if (urlMatch) {
+                                emojiDisplay = `:emoji_${urlMatch[1]}:`;
+                            }
+                        }
+                    }
+                    
+                    return `${emojiDisplay} ${r.count}`;
+                })
                 .join(' | ');
-            reactions = `\n*反应: ${reactionList}*`;
+            reactions = `\n-# ${reactionList}`;
         }
         
         const result = {
