@@ -20,6 +20,12 @@ class ThreadRebuilder {
             
             // 存储当前线程数据用于后续查找
             this.currentThreadData = threadData;
+            // 存储时间戳缓存
+            this.timestampCache = threadData.timestampCache || new Map();
+            // 存储消息索引（关键性能优化）
+            this.messageIndex = threadData.messageIndex || new Map();
+            
+            console.log(`消息索引已加载，包含 ${this.messageIndex.size} 条消息`);
             
             // 创建帖子
             const thread = await this.createThread(threadData.threadInfo);
@@ -34,10 +40,6 @@ class ThreadRebuilder {
             });
             
             console.log(`找到 ${sortedMessages.length} 条消息，开始按ID顺序发送`);
-            console.log('消息排序结果:');
-            sortedMessages.forEach((msg, index) => {
-                console.log(`  ${index + 1}. ID: ${msg.messageId}, 用户: ${msg.author.displayName || msg.author.username}, 时间戳: ${msg.timestamp || '未知时间'}`);
-            });
             
             // 分组消息 - 识别连续的同用户消息
             const messageGroups = this.groupConsecutiveMessages(sortedMessages);
@@ -79,13 +81,13 @@ class ThreadRebuilder {
                         // 继续处理下一条消息
                     }
                     
-                    // 消息间添加短暂延迟避免限制
-                    await new Promise(resolve => setTimeout(resolve, 200));
+                    // 减少消息间延迟：50ms
+                    await new Promise(resolve => setTimeout(resolve, 10));
                 }
                 
-                // 组间添加稍长延迟以区分不同组
+                // 减少组间延迟：100ms
                 if (groupIndex < messageGroups.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => setTimeout(resolve, 50));
                 }
             }
             
@@ -213,9 +215,55 @@ class ThreadRebuilder {
     }
     
     /**
-     * 格式化时间戳为元数据格式 (YYYY/MM/DD - HH:mm:ss)
+     * 格式化时间戳为可读字符串（使用缓存）
+     */
+    formatTimestamp(timestamp) {
+        if (!timestamp || timestamp === '未知时间' || timestamp.trim() === '') {
+            return '未知时间';
+        }
+        
+        // 首先检查缓存
+        const cached = this.timestampCache?.get(timestamp);
+        if (cached) {
+            return cached.formatted;
+        }
+        
+        // 缓存未命中，使用原有逻辑
+        const date = this.parseTimestamp(timestamp);
+        if (!date) {
+            return timestamp || '未知时间'; // 返回原始时间戳或默认值
+        }
+        
+        try {
+            // 返回本地时间格式
+            return date.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        } catch (error) {
+            return timestamp || '时间格式错误';
+        }
+    }
+
+    /**
+     * 格式化时间戳为元数据格式（使用缓存）
      */
     formatTimestampForMetadata(timestamp) {
+        if (!timestamp || timestamp === '未知时间' || timestamp.trim() === '') {
+            return '未知时间';
+        }
+        
+        // 首先检查缓存
+        const cached = this.timestampCache?.get(timestamp);
+        if (cached) {
+            return cached.metadataFormatted;
+        }
+        
+        // 缓存未命中，使用原有逻辑
         const date = this.parseTimestamp(timestamp);
         if (!date) {
             return '未知时间';
@@ -237,7 +285,7 @@ class ThreadRebuilder {
     }
 
     /**
-     * 添加反应到消息
+     * 添加反应到消息 - 优化延迟
      */
     async addReactions(message, reactions) {
         if (!reactions || reactions.length === 0) return;
@@ -246,8 +294,8 @@ class ThreadRebuilder {
         
         for (const reaction of reactions) {
             try {
-                // 短暂延迟避免速率限制
-                await new Promise(resolve => setTimeout(resolve, 100));
+                // 减少延迟：50ms
+                await new Promise(resolve => setTimeout(resolve, 20));
                 
                 let emojiToReact = reaction.emoji;
                 
@@ -272,7 +320,7 @@ class ThreadRebuilder {
     }
 
     /**
-     * 发送普通消息 - 支持分离文字和emoji
+     * 发送普通消息 - 优化延迟
      */
     async sendNormalMessage(thread, message, isLastInGroup = false, groupFirstMessageTimestamp = null) {
         const messageContent = this.messageProcessor.formatMessage(message);
@@ -321,8 +369,8 @@ class ThreadRebuilder {
         if (messageContent.needsSeparation && messageContent.separateEmojis.length > 0) {
             console.log(`分离发送emoji: ${messageContent.separateEmojis.length} 个`);
             
-            // 短暂延迟以保持消息分组
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // 减少延迟：25ms
+            await new Promise(resolve => setTimeout(resolve, 10));
             
             const emojiContent = messageContent.separateEmojis.join('\n');
             
@@ -355,8 +403,8 @@ class ThreadRebuilder {
         if (isLastInGroup) {
             const metadata = this.formatMetadata(message, groupFirstMessageTimestamp);
             
-            // 短暂延迟以保持消息分组
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // 减少延迟：25ms
+            await new Promise(resolve => setTimeout(resolve, 10));
             
             if (this.useWebhook && message.author.userId) {
                 try {
@@ -474,8 +522,8 @@ class ThreadRebuilder {
         if (messageContent.needsSeparation && messageContent.separateEmojis.length > 0) {
             console.log(`分离发送回复emoji: ${messageContent.separateEmojis.length} 个`);
             
-            // 短暂延迟以保持消息分组
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // 减少延迟：25ms
+            await new Promise(resolve => setTimeout(resolve, 10));
             
             const emojiContent = messageContent.separateEmojis.join('\n');
             
@@ -506,8 +554,8 @@ class ThreadRebuilder {
         if (isLastInGroup) {
             const metadata = this.formatMetadata(message, groupFirstMessageTimestamp);
             
-            // 短暂延迟以保持消息分组
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // 减少延迟：25ms
+            await new Promise(resolve => setTimeout(resolve, 10));
             
             if (this.useWebhook && message.author.userId) {
                 try {
@@ -627,30 +675,6 @@ class ThreadRebuilder {
     }
     
     /**
-     * 格式化时间戳为可读字符串
-     */
-    formatTimestamp(timestamp) {
-        const date = this.parseTimestamp(timestamp);
-        if (!date) {
-            return timestamp || '未知时间'; // 返回原始时间戳或默认值
-        }
-        
-        try {
-            // 返回本地时间格式
-            return date.toLocaleString('zh-CN', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-            });
-        } catch (error) {
-            return timestamp || '时间格式错误';
-        }
-    }
-    
-    /**
      * 生成Discord消息链接
      */
     generateMessageLink(thread, messageId) {
@@ -703,24 +727,21 @@ class ThreadRebuilder {
     }
     
     /**
-     * 从原始JSON数据中查找被回复的消息内容
+     * 从原始JSON数据中查找被回复的消息内容 - 优化版本
      */
     findOriginalReplyContent(replyToMessageId, allMessages) {
         console.log(`查找被回复消息: ${replyToMessageId}`);
         
-        if (!replyToMessageId || !allMessages) {
-            console.log(`参数无效: replyToMessageId=${replyToMessageId}, allMessages存在=${!!allMessages}`);
+        if (!replyToMessageId) {
+            console.log(`参数无效: replyToMessageId为空`);
             return '[无法找到原消息]';
         }
         
-        console.log(`在 ${allMessages.length} 条消息中查找`);
-        const originalMessage = allMessages.find(msg => {
-            console.log(`比较: ${msg.messageId} === ${replyToMessageId} ? ${msg.messageId === replyToMessageId}`);
-            return msg.messageId === replyToMessageId;
-        });
+        // 使用快速索引查找（O(1) 时间复杂度）
+        const originalMessage = this.messageIndex.get(replyToMessageId);
         
         if (originalMessage) {
-            console.log(`找到原始消息: ${originalMessage.messageId}`);
+            console.log(`快速索引找到原始消息: ${originalMessage.messageId}`);
             
             // 特殊处理纯emoji消息
             if (originalMessage.content?.isEmojiOnly && originalMessage.content?.emojis?.length > 0) {
@@ -737,10 +758,33 @@ class ThreadRebuilder {
             const truncated = this.truncateContent(content, 15);
             console.log(`普通消息，截取内容: "${truncated}"`);
             return truncated;
+        } else {
+            console.log(`快速索引未找到对应的原始消息: ${replyToMessageId}`);
+            
+            // 如果快速索引没有找到，尝试线性搜索作为后备（兼容性）
+            if (allMessages && Array.isArray(allMessages)) {
+                console.log(`尝试线性搜索后备方案，在 ${allMessages.length} 条消息中查找`);
+                const fallbackMessage = allMessages.find(msg => msg.messageId === replyToMessageId);
+                
+                if (fallbackMessage) {
+                    console.log(`线性搜索找到消息: ${fallbackMessage.messageId}`);
+                    
+                    // 特殊处理纯emoji消息
+                    if (fallbackMessage.content?.isEmojiOnly && fallbackMessage.content?.emojis?.length > 0) {
+                        const emojiText = fallbackMessage.content.emojis
+                            .filter(emoji => emoji.alt && emoji.alt !== '__' && emoji.alt !== 'emoj_97')
+                            .map(emoji => `:${emoji.alt}:`)
+                            .join(' ');
+                        return emojiText || '[表情包]';
+                    }
+                    
+                    const content = fallbackMessage.content?.markdown || fallbackMessage.content?.text || '';
+                    return this.truncateContent(content, 15);
+                }
+            }
+            
+            return '[原消息不存在]';
         }
-        
-        console.log(`未找到对应的原始消息`);
-        return '[原消息不存在]';
     }
     
     /**

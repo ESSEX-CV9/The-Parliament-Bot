@@ -153,7 +153,107 @@ class JsonReader {
             
             console.log(`数据验证成功，消息数量: ${data.messages.length}`);
             
+            // 创建时间戳缓存
+            const timestampCache = new Map();
+            
+            // 预解析所有时间戳
+            console.log(`开始预解析时间戳...`);
+            for (const msg of data.messages) {
+                if (msg.timestamp) {
+                    const parsed = this.parseTimestamp(msg.timestamp);
+                    if (parsed) {
+                        timestampCache.set(msg.timestamp, {
+                            date: parsed,
+                            formatted: this.formatTimestamp(parsed),
+                            metadataFormatted: this.formatTimestampForMetadata(parsed)
+                        });
+                    }
+                }
+            }
+            console.log(`时间戳预解析完成，缓存了 ${timestampCache.size} 个时间戳`);
+            
             // 标准化数据结构
+            const messages = data.messages.map((msg, index) => {
+                try {
+                    return {
+                        messageId: msg.message_id,
+                        messageType: msg.message_type || 'normal',
+                        author: {
+                            userId: msg.author?.user_id,
+                            username: msg.author?.username || '未知用户',
+                            displayName: msg.author?.display_name || msg.author?.username || '未知用户',
+                            avatarUrl: msg.author?.avatar_url,
+                            isSystemActor: msg.author?.is_system_actor || false
+                        },
+                        timestamp: msg.timestamp || '未知时间',
+                        content: {
+                            text: msg.content?.text || '',
+                            markdown: msg.content?.markdown || msg.content?.text || '',
+                            mentions: msg.content?.mentions || [],
+                            emojis: this.standardizeEmojis(msg.content?.emojis || []),
+                            isEmojiOnly: msg.content?.is_emoji_only || false,
+                            // 系统消息特有字段
+                            systemAction: msg.content?.system_action,
+                            newName: msg.content?.new_name,
+                            oldName: msg.content?.old_name,
+                            newTitle: msg.content?.new_title,
+                            oldTitle: msg.content?.old_title
+                        },
+                        attachments: msg.attachments || [],
+                        reactions: (msg.reactions || []).map(reaction => ({
+                            emoji: reaction.emoji,
+                            emojiName: reaction.emoji_name || '',
+                            emojiUrl: reaction.emoji_url || '',
+                            count: reaction.count || 0
+                        })),
+                        replyTo: msg.reply_to ? {
+                            messageId: msg.reply_to.message_id,
+                            author: msg.reply_to.author,
+                            contentPreview: msg.reply_to.content_preview
+                        } : null,
+                        edited: msg.edited || { is_edited: false, edited_at: null },
+                        isSpoiler: msg.is_spoiler || false
+                    };
+                } catch (msgError) {
+                    console.error(`处理消息 ${index} 时出错:`, msgError);
+                    // 返回一个默认的消息对象
+                    return {
+                        messageId: msg.message_id || `error_${index}`,
+                        messageType: 'normal',
+                        author: {
+                            userId: null,
+                            username: '系统',
+                            displayName: '系统',
+                            avatarUrl: null,
+                            isSystemActor: false
+                        },
+                        timestamp: '未知时间',
+                        content: {
+                            text: `[消息解析错误: ${msgError.message}]`,
+                            markdown: `[消息解析错误: ${msgError.message}]`,
+                            mentions: [],
+                            emojis: [],
+                            isEmojiOnly: false
+                        },
+                        attachments: [],
+                        reactions: [],
+                        replyTo: null,
+                        edited: { is_edited: false, edited_at: null },
+                        isSpoiler: false
+                    };
+                }
+            });
+
+            // 创建消息ID快速索引 - 性能关键优化
+            console.log(`开始建立消息ID索引...`);
+            const messageIndex = new Map();
+            for (const message of messages) {
+                if (message.messageId) {
+                    messageIndex.set(message.messageId, message);
+                }
+            }
+            console.log(`消息ID索引建立完成，索引了 ${messageIndex.size} 条消息`);
+            
             const result = {
                 threadInfo: {
                     threadId: data.thread_info.thread_id,
@@ -163,76 +263,9 @@ class JsonReader {
                     totalMessages: data.thread_info.total_messages,
                     participants: data.thread_info.participants
                 },
-                messages: data.messages.map((msg, index) => {
-                    try {
-                        return {
-                            messageId: msg.message_id,
-                            messageType: msg.message_type || 'normal',
-                            author: {
-                                userId: msg.author?.user_id,
-                                username: msg.author?.username || '未知用户',
-                                displayName: msg.author?.display_name || msg.author?.username || '未知用户',
-                                avatarUrl: msg.author?.avatar_url,
-                                isSystemActor: msg.author?.is_system_actor || false
-                            },
-                            timestamp: msg.timestamp || '未知时间',
-                            content: {
-                                text: msg.content?.text || '',
-                                markdown: msg.content?.markdown || msg.content?.text || '',
-                                mentions: msg.content?.mentions || [],
-                                emojis: this.standardizeEmojis(msg.content?.emojis || []),
-                                isEmojiOnly: msg.content?.is_emoji_only || false,
-                                // 系统消息特有字段
-                                systemAction: msg.content?.system_action,
-                                newName: msg.content?.new_name,
-                                oldName: msg.content?.old_name,
-                                newTitle: msg.content?.new_title,
-                                oldTitle: msg.content?.old_title
-                            },
-                            attachments: msg.attachments || [],
-                            reactions: (msg.reactions || []).map(reaction => ({
-                                emoji: reaction.emoji,
-                                emojiName: reaction.emoji_name || '',
-                                emojiUrl: reaction.emoji_url || '',
-                                count: reaction.count || 0
-                            })),
-                            replyTo: msg.reply_to ? {
-                                messageId: msg.reply_to.message_id,
-                                author: msg.reply_to.author,
-                                contentPreview: msg.reply_to.content_preview
-                            } : null,
-                            edited: msg.edited || { is_edited: false, edited_at: null },
-                            isSpoiler: msg.is_spoiler || false
-                        };
-                    } catch (msgError) {
-                        console.error(`处理消息 ${index} 时出错:`, msgError);
-                        // 返回一个默认的消息对象
-                        return {
-                            messageId: msg.message_id || `error_${index}`,
-                            messageType: 'normal',
-                            author: {
-                                userId: null,
-                                username: '系统',
-                                displayName: '系统',
-                                avatarUrl: null,
-                                isSystemActor: false
-                            },
-                            timestamp: '未知时间',
-                            content: {
-                                text: `[消息解析错误: ${msgError.message}]`,
-                                markdown: `[消息解析错误: ${msgError.message}]`,
-                                mentions: [],
-                                emojis: [],
-                                isEmojiOnly: false
-                            },
-                            attachments: [],
-                            reactions: [],
-                            replyTo: null,
-                            edited: { is_edited: false, edited_at: null },
-                            isSpoiler: false
-                        };
-                    }
-                })
+                timestampCache: timestampCache, // 时间戳缓存
+                messageIndex: messageIndex, // 消息ID快速索引
+                messages: messages
             };
             
             console.log(`数据标准化完成`);
@@ -241,6 +274,115 @@ class JsonReader {
         } catch (error) {
             console.error('读取JSON文件时出错:', error);
             throw new Error(`读取JSON文件失败: ${error.message}`);
+        }
+    }
+
+    /**
+     * 解析时间戳（用于预解析缓存）
+     */
+    parseTimestamp(timestamp) {
+        if (!timestamp || timestamp === '未知时间' || timestamp.trim() === '') {
+            return null;
+        }
+        
+        try {
+            // 尝试多种时间戳格式
+            let date;
+            
+            // 如果是数字类型的时间戳
+            if (typeof timestamp === 'number') {
+                date = new Date(timestamp);
+            }
+            // 如果是字符串
+            else if (typeof timestamp === 'string') {
+                const trimmedTimestamp = timestamp.trim();
+                
+                // 处理中文日期格式：2024年8月8日星期四 00:51
+                const chineseDateMatch = trimmedTimestamp.match(/(\d{4})年(\d{1,2})月(\d{1,2})日.*?(\d{1,2}):(\d{1,2})/);
+                if (chineseDateMatch) {
+                    const [, year, month, day, hour, minute] = chineseDateMatch;
+                    date = new Date(
+                        parseInt(year),
+                        parseInt(month) - 1, // 月份从0开始
+                        parseInt(day),
+                        parseInt(hour),
+                        parseInt(minute)
+                    );
+                }
+                // 尝试直接解析
+                else {
+                    date = new Date(trimmedTimestamp);
+                    
+                    // 如果解析失败，尝试其他格式
+                    if (isNaN(date.getTime())) {
+                        // 尝试解析Discord的时间戳格式 (ISO 8601)
+                        const isoMatch = trimmedTimestamp.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+                        if (isoMatch) {
+                            date = new Date(isoMatch[1]);
+                        }
+                        // 尝试解析Unix时间戳
+                        else if (/^\d+$/.test(trimmedTimestamp)) {
+                            const unixTime = parseInt(trimmedTimestamp);
+                            // 检查是否是毫秒时间戳（长度为13位）还是秒时间戳（长度为10位）
+                            date = new Date(unixTime.toString().length === 10 ? unixTime * 1000 : unixTime);
+                        }
+                    }
+                }
+            }
+            
+            // 验证日期是否有效
+            if (!date || isNaN(date.getTime())) {
+                return null;
+            }
+            
+            return date;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * 格式化时间戳为可读字符串
+     */
+    formatTimestamp(date) {
+        if (!date) {
+            return '未知时间';
+        }
+        
+        try {
+            // 返回本地时间格式
+            return date.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        } catch (error) {
+            return '时间格式错误';
+        }
+    }
+
+    /**
+     * 格式化时间戳为元数据格式 (YYYY/MM/DD - HH:mm:ss)
+     */
+    formatTimestampForMetadata(date) {
+        if (!date) {
+            return '未知时间';
+        }
+        
+        try {
+            const year = date.getFullYear();
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+            const day = date.getDate().toString().padStart(2, '0');
+            const hours = date.getHours().toString().padStart(2, '0');
+            const minutes = date.getMinutes().toString().padStart(2, '0');
+            const seconds = date.getSeconds().toString().padStart(2, '0');
+            
+            return `${year}/${month}/${day} - ${hours}:${minutes}:${seconds}`;
+        } catch (error) {
+            return '时间格式错误';
         }
     }
 }
