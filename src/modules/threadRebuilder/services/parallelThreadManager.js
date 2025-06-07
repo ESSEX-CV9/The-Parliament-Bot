@@ -17,6 +17,15 @@ class ParallelThreadManager {
         this.totalCount = 0;
         this.performanceMonitor = new PerformanceMonitor();
         this.progressTracker = progressTracker;
+        
+        // 新增：线程状态跟踪
+        this.threadStates = new Map(); // workerId -> { threadTitle, processedMessages, totalMessages, status }
+        this.lastProgressUpdate = 0;
+        this.progressUpdateThrottle = 3000; // 3秒更新一次总体进度
+        
+        // 新增：断点重启相关
+        this.initialCompletedCount = 0; // 会话开始时已完成的数量
+        this.sessionTotalFiles = 0; // 会话的总文件数
     }
 
     /**
@@ -33,12 +42,37 @@ class ParallelThreadManager {
         this.totalCount = threadDataArray.length;
         this.completedCount = 0;
         this.results = [];
+        this.threadStates.clear();
+        
+        // 获取会话的总体进度信息
+        if (this.progressTracker) {
+            const stats = this.progressTracker.getProgressStats();
+            this.sessionTotalFiles = stats.totalFiles;
+            this.initialCompletedCount = stats.completedFiles + stats.failedFiles + stats.skippedFiles;
+            
+            console.log(`会话总进度 - 总文件: ${this.sessionTotalFiles}, 已完成: ${this.initialCompletedCount}, 待处理: ${this.totalCount}`);
+        }
         
         // 创建并发任务队列
         const workers = [];
         const actualConcurrency = Math.min(this.maxConcurrency, this.queue.length);
         
         console.log(`启动 ${actualConcurrency} 个并发工作线程`);
+        
+        // 初始化所有线程状态
+        for (let i = 0; i < actualConcurrency; i++) {
+            this.threadStates.set(i, {
+                threadTitle: '等待分配任务...',
+                processedMessages: 0,
+                totalMessages: 0,
+                status: 'waiting'
+            });
+        }
+        
+        // 发送初始进度
+        if (progressCallback) {
+            this.updateOverallProgress(progressCallback);
+        }
         
         // 启动工作线程
         for (let i = 0; i < actualConcurrency; i++) {
@@ -58,9 +92,7 @@ class ParallelThreadManager {
     }
 
     /**
-     * 创建工作线程
-     * @param {number} workerId - 工作线程ID
-     * @param {Function} progressCallback - 进度回调函数
+     * 创建工作线程（支持断点重启）
      */
     async createWorker(workerId, progressCallback) {
         console.log(`工作线程 ${workerId} 启动`);
@@ -74,11 +106,25 @@ class ParallelThreadManager {
             
             console.log(`工作线程 ${workerId} 开始处理: ${threadTitle}`);
 
+            // 获取断点重启信息
+            const resumeInfo = threadData.resumeInfo || null;
+            
+            // 更新线程状态
+            const totalMessages = threadData.messages?.length || 0;
+            const initialProgress = resumeInfo ? resumeInfo.processedMessages : 0;
+            
+            this.updateThreadState(workerId, {
+                threadTitle: this.truncateTitle(threadTitle),
+                processedMessages: initialProgress,
+                totalMessages: totalMessages,
+                status: 'processing'
+            });
+
             this.activeThreads.add(workerId);
             this.performanceMonitor.increment('active_threads_peak', this.activeThreads.size);
             
-            // 标记文件开始处理
-            if (this.progressTracker) {
+            // 标记文件开始处理（如果不是恢复）
+            if (this.progressTracker && (!resumeInfo || !resumeInfo.canResume)) {
                 await this.progressTracker.markFileProcessing(fileName);
             }
             
@@ -86,16 +132,27 @@ class ParallelThreadManager {
                 // 创建独立的ThreadRebuilder实例
                 const threadRebuilder = new ThreadRebuilder(this.targetForum, this.useWebhook);
                 
-                // 处理单个帖子（保持原有串行逻辑）
+                // 设置进度跟踪器
+                if (this.progressTracker) {
+                    threadRebuilder.setProgressTracker(this.progressTracker);
+                }
+                
+                // 处理单个帖子（支持断点重启）
                 const result = await threadRebuilder.rebuildThread(
                     threadData,
                     (processedMessages, totalMessages) => {
-                        // 内部消息处理进度（可选）
-                        if (progressCallback) {
-                            const threadProgress = `线程${workerId}: ${threadTitle} (${processedMessages}/${totalMessages})`;
-                            this.updateOverallProgress(progressCallback, threadProgress);
-                        }
-                    }
+                        // 更新线程内部进度
+                        this.updateThreadState(workerId, {
+                            threadTitle: this.truncateTitle(threadTitle),
+                            processedMessages: processedMessages,
+                            totalMessages: totalMessages,
+                            status: 'processing'
+                        });
+                        
+                        // 节流更新总体进度
+                        this.throttledProgressUpdate(progressCallback);
+                    },
+                    resumeInfo // 传递断点重启信息
                 );
 
                 const processResult = {
@@ -103,7 +160,7 @@ class ParallelThreadManager {
                     success: true,
                     threadId: result.id,
                     threadName: result.name,
-                    messagesCount: threadData.messages?.length || 0,
+                    messagesCount: result.messagesProcessed || 0,
                     workerId: workerId,
                     result: result
                 };
@@ -115,11 +172,27 @@ class ParallelThreadManager {
                     await this.progressTracker.markFileCompleted(fileName, processResult);
                 }
 
+                // 更新线程状态为完成
+                this.updateThreadState(workerId, {
+                    threadTitle: this.truncateTitle(threadTitle),
+                    processedMessages: result.messagesProcessed || 0,
+                    totalMessages: totalMessages,
+                    status: 'completed'
+                });
+
                 console.log(`工作线程 ${workerId} 完成处理: ${threadTitle}`);
                 this.performanceMonitor.increment('successful_threads');
 
             } catch (error) {
                 console.error(`工作线程 ${workerId} 处理失败: ${threadTitle}`, error);
+                
+                // 更新线程状态为失败
+                this.updateThreadState(workerId, {
+                    threadTitle: this.truncateTitle(threadTitle),
+                    processedMessages: initialProgress,
+                    totalMessages: totalMessages,
+                    status: 'failed'
+                });
                 
                 const errorResult = {
                     fileName: fileName,
@@ -141,6 +214,14 @@ class ParallelThreadManager {
                 this.activeThreads.delete(workerId);
                 this.completedCount++;
                 
+                // 更新线程状态为空闲
+                this.updateThreadState(workerId, {
+                    threadTitle: '等待下一个任务...',
+                    processedMessages: 0,
+                    totalMessages: 0,
+                    status: 'waiting'
+                });
+                
                 // 更新总体进度
                 if (progressCallback) {
                     this.updateOverallProgress(progressCallback);
@@ -151,23 +232,115 @@ class ParallelThreadManager {
             }
         }
         
+        // 线程结束
+        this.updateThreadState(workerId, {
+            threadTitle: '已完成所有任务',
+            processedMessages: 0,
+            totalMessages: 0,
+            status: 'finished'
+        });
+        
         console.log(`工作线程 ${workerId} 结束`);
+    }
+
+    /**
+     * 更新线程状态
+     * @param {number} workerId - 工作线程ID
+     * @param {Object} state - 状态信息
+     */
+    updateThreadState(workerId, state) {
+        this.threadStates.set(workerId, {
+            ...this.threadStates.get(workerId),
+            ...state,
+            lastUpdate: Date.now()
+        });
+    }
+
+    /**
+     * 截断标题显示
+     */
+    truncateTitle(title, maxLength = 60) {
+        if (title.length <= maxLength) {
+            return title;
+        }
+        return title.substring(0, maxLength - 3) + '...';
+    }
+
+    /**
+     * 节流的进度更新
+     */
+    throttledProgressUpdate(progressCallback) {
+        const now = Date.now();
+        if (now - this.lastProgressUpdate > this.progressUpdateThrottle) {
+            this.lastProgressUpdate = now;
+            if (progressCallback) {
+                this.updateOverallProgress(progressCallback);
+            }
+        }
     }
 
     /**
      * 更新总体进度
      * @param {Function} progressCallback - 进度回调函数
-     * @param {string} threadProgress - 线程进度信息
      */
-    updateOverallProgress(progressCallback, threadProgress = '') {
-        if (progressCallback) {
-            const progress = `并行处理进度: ${this.completedCount}/${this.totalCount} 个帖子\n` +
-                           `活跃线程: ${this.activeThreads.size}/${this.maxConcurrency}\n` +
-                           `完成度: ${Math.round((this.completedCount / this.totalCount) * 100)}%` +
-                           (threadProgress ? `\n${threadProgress}` : '');
-            
-            progressCallback(progress);
+    updateOverallProgress(progressCallback) {
+        if (!progressCallback) return;
+
+        // 计算总体进度 - 考虑断点重启
+        let currentCompleted = this.initialCompletedCount + this.completedCount;
+        let totalFiles = this.sessionTotalFiles > 0 ? this.sessionTotalFiles : this.totalCount;
+        
+        // 如果没有progressTracker，使用当前批次的进度
+        if (!this.progressTracker) {
+            currentCompleted = this.completedCount;
+            totalFiles = this.totalCount;
         }
+        
+        const completedPercentage = totalFiles > 0 ? 
+            Math.round((currentCompleted / totalFiles) * 100) : 0;
+        
+        // 构建进度消息
+        let progress = `帖子处理进度: 完成 ${currentCompleted}/${totalFiles} 个帖子\n`;
+        progress += `活跃线程: ${this.activeThreads.size}/${this.maxConcurrency}\n`;
+        
+        // 如果是断点重启，显示额外信息
+        if (this.progressTracker && this.initialCompletedCount > 0) {
+            const currentBatchCompleted = this.completedCount;
+            const currentBatchTotal = this.totalCount;
+            progress += `当前批次: 完成 ${currentBatchCompleted}/${currentBatchTotal} 个帖子\n`;
+        }
+        
+        progress += `完成度: ${completedPercentage}%\n`;
+        
+        // 显示所有线程状态
+        const sortedThreads = Array.from(this.threadStates.entries()).sort((a, b) => a[0] - b[0]);
+        
+        for (const [workerId, state] of sortedThreads) {
+            const statusIcon = this.getStatusIcon(state.status);
+            const progressBar = state.totalMessages > 0 ? 
+                ` (${state.processedMessages}/${state.totalMessages})` : '';
+            
+            progress += `${statusIcon} 线程${workerId}: ${state.threadTitle}${progressBar}\n`;
+        }
+        
+        // 总进度
+        progress += `📊 总进度: ${completedPercentage}%`;
+        
+        progressCallback(progress);
+    }
+
+    /**
+     * 获取状态图标
+     */
+    getStatusIcon(status) {
+        const icons = {
+            'waiting': '⏳',
+            'processing': '🔄',
+            'completed': '✅',
+            'failed': '❌',
+            'finished': '🏁'
+        };
+        return icons[status] || '❓';
     }
 
     /**
@@ -222,6 +395,39 @@ class ParallelThreadManager {
         }
 
         return report;
+    }
+
+    /**
+     * 获取所有线程的当前状态快照
+     */
+    getThreadStatesSnapshot() {
+        const snapshot = {};
+        for (const [workerId, state] of this.threadStates.entries()) {
+            snapshot[workerId] = {
+                ...state,
+                progressPercentage: state.totalMessages > 0 ? 
+                    Math.round((state.processedMessages / state.totalMessages) * 100) : 0
+            };
+        }
+        return snapshot;
+    }
+
+    /**
+     * 获取会话级别的进度信息
+     */
+    getSessionProgress() {
+        let currentCompleted = this.initialCompletedCount + this.completedCount;
+        let totalFiles = this.sessionTotalFiles > 0 ? this.sessionTotalFiles : this.totalCount;
+        
+        return {
+            currentCompleted: currentCompleted,
+            totalFiles: totalFiles,
+            initialCompleted: this.initialCompletedCount,
+            currentBatchCompleted: this.completedCount,
+            currentBatchTotal: this.totalCount,
+            overallPercentage: totalFiles > 0 ? Math.round((currentCompleted / totalFiles) * 100) : 0,
+            batchPercentage: this.totalCount > 0 ? Math.round((this.completedCount / this.totalCount) * 100) : 0
+        };
     }
 }
 

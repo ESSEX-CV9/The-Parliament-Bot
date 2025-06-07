@@ -74,11 +74,20 @@ module.exports = {
         // 进度更新间隔（毫秒）- 公开消息使用更长间隔避免刷屏
         updateInterval: 5000,
         
+        // 线程进度更新节流间隔（毫秒）
+        threadProgressThrottle: 3000,
+        
         // 是否使用公开消息显示进度（避免token过期）
         usePublicMessages: true,
         
         // 进度消息的详细程度
         verboseLevel: 'normal', // 'minimal', 'normal', 'detailed'
+        
+        // 标题截断长度
+        titleMaxLength: 60,
+        
+        // 是否显示线程内部进度
+        showThreadProgress: true,
         
         // 错误重试配置
         retryConfig: {

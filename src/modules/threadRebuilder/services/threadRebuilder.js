@@ -12,38 +12,87 @@ class ThreadRebuilder {
     }
     
     /**
-     * 重建帖子
+     * 重建帖子（支持断点重启）
      */
-    async rebuildThread(threadData, progressCallback = null) {
+    async rebuildThread(threadData, progressCallback = null, resumeInfo = null) {
         try {
-            console.log(`开始重建帖子: ${threadData.threadInfo.title}`);
+            const threadTitle = threadData.threadInfo.title;
+            console.log(`开始重建帖子: ${threadTitle}`);
             
             // 存储当前线程数据用于后续查找
             this.currentThreadData = threadData;
-            // 存储时间戳缓存
             this.timestampCache = threadData.timestampCache || new Map();
-            // 存储消息索引（关键性能优化）
             this.messageIndex = threadData.messageIndex || new Map();
             
             console.log(`消息索引已加载，包含 ${this.messageIndex.size} 条消息`);
             
-            // 创建帖子
-            const thread = await this.createThread(threadData.threadInfo);
+            let thread;
+            let startMessageIndex = 0;
             
-            if (!thread) {
-                throw new Error('帖子创建失败');
+            // 检查是否需要从断点恢复
+            if (resumeInfo && resumeInfo.canResume && resumeInfo.threadId) {
+                console.log(`🔄 从断点恢复: 帖子ID ${resumeInfo.threadId}, 已处理 ${resumeInfo.processedMessages}/${resumeInfo.totalMessages} 条消息`);
+                
+                try {
+                    // 尝试获取现有帖子
+                    thread = await this.targetForum.threads.fetch(resumeInfo.threadId);
+                    startMessageIndex = resumeInfo.lastProcessedMessageIndex + 1;
+                    
+                    console.log(`✅ 找到现有帖子: ${thread.name}, 从消息索引 ${startMessageIndex} 继续`);
+                } catch (error) {
+                    console.warn(`⚠️ 无法找到帖子 ${resumeInfo.threadId}, 将重新创建: ${error.message}`);
+                    thread = null;
+                    startMessageIndex = 0;
+                }
             }
             
-            // 按消息ID排序（Discord消息ID本身就包含时间信息，更可靠）
+            // 如果没有现有帖子，创建新帖子
+            if (!thread) {
+                thread = await this.createThread(threadData.threadInfo);
+                if (!thread) {
+                    throw new Error('帖子创建失败');
+                }
+                startMessageIndex = 0;
+                
+                // 通知进度跟踪器帖子已创建
+                if (this.progressTracker && threadData.fileName) {
+                    await this.progressTracker.updateThreadCreated(
+                        threadData.fileName,
+                        thread.id,
+                        thread.name,
+                        threadData.messages.length
+                    );
+                }
+            }
+            
+            // 按消息ID排序
             const sortedMessages = [...threadData.messages].sort((a, b) => {
                 return this.compareMessageIds(a.messageId, b.messageId);
             });
             
-            console.log(`找到 ${sortedMessages.length} 条消息，开始按ID顺序发送`);
+            console.log(`找到 ${sortedMessages.length} 条消息，从索引 ${startMessageIndex} 开始处理`);
             
-            // 分组消息 - 识别连续的同用户消息
-            const messageGroups = this.groupConsecutiveMessages(sortedMessages);
-            console.log(`消息分为 ${messageGroups.length} 个组`);
+            // 如果是断点恢复，需要重建已处理消息的ID映射
+            if (startMessageIndex > 0) {
+                await this.rebuildMessageIdMapping(thread, sortedMessages.slice(0, startMessageIndex));
+            }
+            
+            // 分组消息 - 从指定位置开始
+            const remainingMessages = sortedMessages.slice(startMessageIndex);
+            
+            if (remainingMessages.length === 0) {
+                console.log(`✅ 所有消息已处理完成，无需继续处理`);
+                return {
+                    id: thread.id,
+                    name: thread.name,
+                    messagesProcessed: sortedMessages.length
+                };
+            }
+            
+            const messageGroups = this.groupConsecutiveMessages(remainingMessages);
+            console.log(`剩余消息分为 ${messageGroups.length} 个组，共 ${remainingMessages.length} 条消息`);
+            
+            let processedCount = startMessageIndex;
             
             // 处理每个消息组
             for (let groupIndex = 0; groupIndex < messageGroups.length; groupIndex++) {
@@ -51,29 +100,39 @@ class ThreadRebuilder {
                 
                 console.log(`处理第 ${groupIndex + 1} 组消息，包含 ${group.length} 条消息，用户: ${group[0].author.displayName || group[0].author.username}`);
                 
-                // 获取组内首条消息的时间戳（用于元数据）
                 const firstMessageTimestamp = group[0].timestamp;
                 
                 // 处理组内的每条消息
                 for (let messageIndex = 0; messageIndex < group.length; messageIndex++) {
                     const message = group[messageIndex];
                     const isLastInGroup = messageIndex === group.length - 1;
+                    const globalMessageIndex = processedCount;
                     
                     console.log(`处理消息 ${messageIndex + 1}/${group.length} (${message.messageType}): ${message.messageId}`);
                     
                     try {
                         const sentMessage = await this.processMessage(thread, message, isLastInGroup, firstMessageTimestamp);
                         
-                        // 处理反应（在消息发送后）
+                        // 处理反应
                         if (sentMessage && message.reactions && message.reactions.length > 0) {
                             await this.addReactions(sentMessage, message.reactions);
                         }
                         
-                        // 更新进度
+                        processedCount++;
+                        
+                        // 更新进度跟踪器
+                        if (this.progressTracker && threadData.fileName) {
+                            await this.progressTracker.updateMessageProgress(
+                                threadData.fileName,
+                                message.messageId,
+                                globalMessageIndex,
+                                processedCount
+                            );
+                        }
+                        
+                        // 更新进度回调
                         if (progressCallback) {
-                            const totalProcessed = messageGroups.slice(0, groupIndex).reduce((sum, g) => sum + g.length, 0) + messageIndex + 1;
-                            const totalMessages = sortedMessages.length;
-                            progressCallback(totalProcessed, totalMessages);
+                            progressCallback(processedCount, sortedMessages.length);
                         }
                         
                     } catch (error) {
@@ -81,25 +140,66 @@ class ThreadRebuilder {
                         // 继续处理下一条消息
                     }
                     
-                    // 减少消息间延迟：50ms
+                    // 消息间延迟
                     await new Promise(resolve => setTimeout(resolve, 10));
                 }
                 
-                // 减少组间延迟：100ms
+                // 组间延迟
                 if (groupIndex < messageGroups.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, 50));
                 }
             }
             
-            console.log(`帖子重建完成: ${thread.name}`);
-            return thread;
+            console.log(`帖子重建完成: ${thread.name}, 处理了 ${processedCount} 条消息`);
+            return {
+                id: thread.id,
+                name: thread.name,
+                messagesProcessed: processedCount
+            };
             
         } catch (error) {
             console.error('重建帖子失败:', error);
             throw error;
         }
     }
-    
+
+    /**
+     * 重建消息ID映射（用于断点恢复）
+     */
+    async rebuildMessageIdMapping(thread, processedMessages) {
+        console.log(`🔄 重建消息ID映射，已处理 ${processedMessages.length} 条消息...`);
+        
+        try {
+            // 获取帖子中的所有消息
+            const existingMessages = await thread.messages.fetch({ limit: 100 });
+            
+            // 简单的重建策略：按时间顺序匹配
+            // 这里可以根据需要实现更复杂的匹配逻辑
+            let messageArray = Array.from(existingMessages.values()).reverse(); // 按时间正序
+            
+            for (let i = 0; i < Math.min(processedMessages.length, messageArray.length); i++) {
+                const originalMessage = processedMessages[i];
+                const newMessage = messageArray[i];
+                
+                if (originalMessage.messageId && newMessage.id) {
+                    this.messageIdMap.set(originalMessage.messageId, newMessage.id);
+                }
+            }
+            
+            console.log(`✅ 重建了 ${this.messageIdMap.size} 个消息ID映射`);
+            
+        } catch (error) {
+            console.warn(`⚠️ 重建消息ID映射失败，将继续处理: ${error.message}`);
+        }
+    }
+
+    /**
+     * 设置进度跟踪器
+     */
+    setProgressTracker(progressTracker) {
+        this.progressTracker = progressTracker;
+    }
+
     /**
      * 将连续的同用户消息分组
      */

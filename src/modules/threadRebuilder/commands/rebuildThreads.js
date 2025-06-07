@@ -325,10 +325,13 @@ async function execute(interaction) {
 }
 
 /**
- * 并行处理（支持进度跟踪）
+ * 并行处理（支持进度跟踪和断点重启）
  */
 async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker) {
     console.log(`启动并行处理模式，并发数: ${concurrency}`);
+    
+    // 打印断点重启状态
+    progressTracker.printResumeStatus();
     
     // 1. 并行读取所有JSON文件
     await progressManager.updateProgress('📖 并行读取JSON文件数据...');
@@ -343,15 +346,33 @@ async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, c
         throw new Error('没有成功读取到任何帖子数据');
     }
     
-    // 2. 使用带进度跟踪的并行管理器处理帖子
+    // 2. 为每个帖子数据添加断点重启信息
+    for (const threadData of allThreadsData) {
+        const fileName = threadData.fileName;
+        const resumeInfo = progressTracker.getFileResumeInfo(fileName);
+        
+        if (resumeInfo) {
+            threadData.resumeInfo = resumeInfo;
+            
+            if (resumeInfo.canResume) {
+                console.log(`📄 ${fileName}: 🔄 可从断点恢复 (${resumeInfo.processedMessages}/${resumeInfo.totalMessages} 条消息)`);
+            } else if (resumeInfo.threadCreated) {
+                console.log(`📄 ${fileName}: 🧵 帖子已创建，将继续处理剩余消息`);
+            } else {
+                console.log(`📄 ${fileName}: 🆕 新文件，从头开始处理`);
+            }
+        } else {
+            console.log(`📄 ${fileName}: 🆕 新文件，从头开始处理`);
+        }
+    }
+    
+    // 3. 使用带进度跟踪的并行管理器处理帖子
     const parallelManager = new ParallelThreadManager(targetForum, useWebhook, concurrency, progressTracker);
     
     const results = await parallelManager.processMultipleThreads(
         allThreadsData,
         (progress) => {
-            const stats = progressTracker.getProgressStats();
-            const enhancedProgress = `${progress}\n📊 总进度: ${stats.progressPercentage}%`;
-            progressManager.updateProgress(enhancedProgress).catch(err => 
+            progressManager.updateProgress(progress).catch(err => 
                 console.log('进度更新失败:', err.message)
             );
         }
@@ -361,48 +382,63 @@ async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, c
 }
 
 /**
- * 串行处理（支持进度跟踪）
+ * 串行处理（支持进度跟踪和断点重启）
  */
 async function processSerialWithProgress(jsonFiles, targetForum, useWebhook, progressManager, progressTracker) {
     console.log('使用串行处理模式');
     
     const jsonReader = new JsonReader();
-    const threadRebuilder = new ThreadRebuilder(targetForum, useWebhook);
     
     for (let i = 0; i < jsonFiles.length; i++) {
         const jsonFile = jsonFiles[i];
         const progress = `[${i + 1}/${jsonFiles.length}]`;
         
-        // 标记开始处理
-        await progressTracker.markFileProcessing(jsonFile.name);
+        // 获取断点重启信息
+        const resumeInfo = progressTracker.getFileResumeInfo(jsonFile.name);
+        
+        // 标记开始处理（如果不是恢复）
+        if (!resumeInfo || !resumeInfo.canResume) {
+            await progressTracker.markFileProcessing(jsonFile.name);
+        }
         
         try {
             const stats = progressTracker.getProgressStats();
             await progressManager.updateProgress(
                 `${progress} 正在处理: ${jsonFile.name}\n` +
-                `📊 总进度: ${stats.progressPercentage}%`
+                `📊 总进度: ${stats.progressPercentage}%` +
+                (resumeInfo && resumeInfo.canResume ? 
+                    `\n🔄 从断点恢复 (${resumeInfo.processedMessages}/${resumeInfo.totalMessages})` : '')
             );
             
             // 读取并解析JSON数据
             const threadData = await jsonReader.readThreadData(jsonFile.path);
-            threadData.fileName = jsonFile.name; // 添加文件名
+            threadData.fileName = jsonFile.name;
+            threadData.resumeInfo = resumeInfo;
             
-            // 重建帖子
-            const result = await threadRebuilder.rebuildThread(threadData, (processedMessages, totalMessages) => {
-                const status = `处理消息: ${processedMessages}/${totalMessages}`;
-                const stats = progressTracker.getProgressStats();
-                progressManager.updateProgress(
-                    `${progress} 正在处理: ${jsonFile.name}\n` +
-                    `📊 总进度: ${stats.progressPercentage}%\n` +
-                    `🔄 ${status}`
-                ).catch(err => console.log('进度更新失败:', err.message));
-            });
+            // 创建ThreadRebuilder并设置进度跟踪器
+            const threadRebuilder = new ThreadRebuilder(targetForum, useWebhook);
+            threadRebuilder.setProgressTracker(progressTracker);
+            
+            // 重建帖子（支持断点重启）
+            const result = await threadRebuilder.rebuildThread(
+                threadData, 
+                (processedMessages, totalMessages) => {
+                    const status = `处理消息: ${processedMessages}/${totalMessages}`;
+                    const stats = progressTracker.getProgressStats();
+                    progressManager.updateProgress(
+                        `${progress} 正在处理: ${jsonFile.name}\n` +
+                        `📊 总进度: ${stats.progressPercentage}%\n` +
+                        `🔄 ${status}`
+                    ).catch(err => console.log('进度更新失败:', err.message));
+                },
+                resumeInfo // 传递断点重启信息
+            );
             
             // 标记完成
             await progressTracker.markFileCompleted(jsonFile.name, {
                 threadId: result.id,
                 threadName: result.name,
-                messagesCount: threadData.messages?.length || 0
+                messagesCount: result.messagesProcessed || 0
             });
             
         } catch (error) {
