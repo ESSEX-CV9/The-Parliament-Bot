@@ -294,6 +294,10 @@ async function interactionCreateHandler(interaction) {
                 // 完赛按钮
                 const contestChannelId = interaction.customId.replace('contest_finish_', '');
                 await displayService.handleFinishContest(interaction, contestChannelId);
+            } else if (interaction.customId.startsWith('c_td_')) {
+                // 导出参赛作品链接
+                const contestChannelId = interaction.customId.replace('c_td_', '');
+                await displayService.handleDumpFullSubmissionsList(interaction, contestChannelId);
             } else if (interaction.customId.startsWith('finish_contest_close_')) {
                 // 关闭完赛清单按钮
                 await interaction.update({

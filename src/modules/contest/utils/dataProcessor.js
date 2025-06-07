@@ -1,5 +1,65 @@
 /**
- * 预处理投稿数据，避免重复计算
+ * 链接解析结果对象
+ *
+ * @typedef {Object} ParsedInfo
+ * @property {string} guildId   作品所在服务器 ID
+ * @property {string} channelId 作品所在频道 ID
+ * @property {string} messageId 作品所在消息 ID
+ * @property {'message'|'attachment'|'unknown'} linkType 链接类型
+ */
+
+/**
+ * 链接预览缓存对象
+ *
+ * @typedef {Object} CachedPreview
+ * @property {string} title                      预览标题
+ * @property {string} [content]                  预览文本内容
+ * @property {string|null} [imageUrl]            预览图片 URL，如无则为 null
+ * @property {number} timestamp                  预览生成时间戳（毫秒）
+ * @property {string} authorName                 作者名称
+ * @property {string|null} [authorAvatar]        作者头像 URL，如无则为 null
+ */
+
+/**
+ * 比赛投稿数据对象
+ *
+ * @typedef {Object} SubmissionData
+ * @property {number} contestSubmissionId        比赛内的独立 ID
+ * @property {string} contestChannelId           赛事频道 ID
+ * @property {string} submitterId                投稿用户的 Discord ID
+ * @property {string} originalUrl                用户提交的原始链接
+ * @property {'message'|'attachment'|'unknown'} linkType               链接类型
+ * @property {ParsedInfo} parsedInfo             解析后的链接信息
+ * @property {CachedPreview} cachedPreview       链接预览缓存
+ * @property {string} submissionDescription      用户填写的作品说明
+ * @property {string} submittedAt                ISO 8601 格式的投稿时间
+ * @property {boolean} isValid                   是否通过验证
+ * @property {boolean} isExternal                是否为外部服务器投稿
+ */
+
+/**
+ * 处理后的投稿数据对象
+ *
+ * @typedef {SubmissionData & {
+ *   publishTime: number,          // 作品发布时间（Unix 秒）
+ *   workUrl: string,              // 作品消息链接
+ *   truncatedDescription: string, // 截断后的稿件说明（最长 300 字符）
+ *   authorMention: string         // Discord 用户提及字符串
+ * }} ProcessedSubmissionData
+ */
+
+
+/**
+ * 预处理投稿数据，过滤无效投稿、按提交时间排序并计算展示用字段。
+ *
+ * 处理后会为每个对象追加：
+ *   publishTime           {number}  作品发布时间（Unix 秒）
+ *   workUrl               {string}  作品消息链接
+ *   truncatedDescription  {string}  截断后的稿件说明（最长 300 字符）
+ *   authorMention         {string}  Discord 用户提及字符串
+ *
+ * @param {SubmissionData[]} submissions 投稿数据数组
+ * @returns {ProcessedSubmissionData[]} 已过滤、排序并补充字段后的投稿数据数组
  */
 function preprocessSubmissions(submissions) {
     return submissions
