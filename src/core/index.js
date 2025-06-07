@@ -88,6 +88,7 @@ const rebuildForumCommand = require('../modules/forumRebuilder/commands/rebuildF
 
 // 帖子重建系统命令
 const rebuildThreadsCommand = require('../modules/threadRebuilder/commands/rebuildThreads');
+const deleteRebuiltMessageCommand = require('../modules/threadRebuilder/commands/deleteRebuiltMessage');
 
 const client = new Client({ 
     intents: [
@@ -170,6 +171,7 @@ client.commands.set(rebuildForumCommand.data.name, rebuildForumCommand);
 
 // 帖子重建系统命令
 client.commands.set(rebuildThreadsCommand.data.name, rebuildThreadsCommand);
+client.commands.set(deleteRebuiltMessageCommand.data.name, deleteRebuiltMessageCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
