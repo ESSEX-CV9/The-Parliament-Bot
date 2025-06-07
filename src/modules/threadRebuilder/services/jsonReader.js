@@ -385,6 +385,145 @@ class JsonReader {
             return '时间格式错误';
         }
     }
+
+    /**
+     * 并行读取多个JSON文件
+     * @param {Array} jsonFiles - JSON文件数组
+     * @param {number} maxConcurrency - 最大并发数
+     * @returns {Promise<Array>} 解析后的帖子数据数组
+     */
+    async readMultipleThreadsData(jsonFiles, maxConcurrency = 5) {
+        console.log(`开始并行读取 ${jsonFiles.length} 个JSON文件，最大并发数: ${maxConcurrency}`);
+        
+        const results = [];
+        const errors = [];
+        
+        // 分批处理以控制并发数
+        for (let i = 0; i < jsonFiles.length; i += maxConcurrency) {
+            const batch = jsonFiles.slice(i, i + maxConcurrency);
+            console.log(`处理批次 ${Math.floor(i / maxConcurrency) + 1}，包含 ${batch.length} 个文件`);
+            
+            const batchPromises = batch.map(async (file, batchIndex) => {
+                const globalIndex = i + batchIndex;
+                try {
+                    console.log(`[${globalIndex + 1}/${jsonFiles.length}] 开始读取: ${file.name}`);
+                    const startTime = Date.now();
+                    
+                    const threadData = await this.readThreadData(file.path);
+                    
+                    // 添加文件信息到数据中
+                    threadData.fileName = file.name;
+                    threadData.filePath = file.path;
+                    
+                    const readTime = Date.now() - startTime;
+                    console.log(`[${globalIndex + 1}/${jsonFiles.length}] 读取完成: ${file.name} (${readTime}ms)`);
+                    
+                    return {
+                        success: true,
+                        data: threadData,
+                        fileName: file.name,
+                        readTime: readTime
+                    };
+                } catch (error) {
+                    console.error(`[${globalIndex + 1}/${jsonFiles.length}] 读取失败: ${file.name}`, error);
+                    return {
+                        success: false,
+                        error: error.message,
+                        fileName: file.name
+                    };
+                }
+            });
+            
+            try {
+                const batchResults = await Promise.all(batchPromises);
+                
+                // 分离成功和失败的结果
+                batchResults.forEach(result => {
+                    if (result.success) {
+                        results.push(result.data);
+                    } else {
+                        errors.push(result);
+                    }
+                });
+                
+                console.log(`批次处理完成，成功: ${batchResults.filter(r => r.success).length}，失败: ${batchResults.filter(r => !r.success).length}`);
+                
+            } catch (error) {
+                console.error(`批次处理失败:`, error);
+                // 即使批次失败，也继续处理下一批
+            }
+            
+            // 批次间短暂延迟
+            if (i + maxConcurrency < jsonFiles.length) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+        
+        console.log(`并行读取完成，成功: ${results.length}，失败: ${errors.length}`);
+        
+        if (errors.length > 0) {
+            console.warn(`以下文件读取失败:`);
+            errors.forEach(error => {
+                console.warn(`- ${error.fileName}: ${error.error}`);
+            });
+        }
+        
+        return results;
+    }
+
+    /**
+     * 异步验证JSON文件是否有效
+     * @param {string} filePath - 文件路径
+     * @returns {Promise<boolean>} 是否为有效的JSON文件
+     */
+    async validateJsonFile(filePath) {
+        try {
+            const stats = await fs.stat(filePath);
+            if (!stats.isFile()) {
+                return false;
+            }
+            
+            // 只读取文件开头部分进行基本验证
+            const content = await fs.readFile(filePath, 'utf8');
+            const data = JSON.parse(content);
+            
+            // 基本结构验证
+            return !!(data.thread_info && data.messages && Array.isArray(data.messages));
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /**
+     * 批量验证JSON文件
+     * @param {Array} jsonFiles - JSON文件数组
+     * @returns {Promise<Array>} 有效的JSON文件数组
+     */
+    async validateMultipleJsonFiles(jsonFiles) {
+        console.log(`开始验证 ${jsonFiles.length} 个JSON文件...`);
+        
+        const validationPromises = jsonFiles.map(async (file) => {
+            const isValid = await this.validateJsonFile(file.path);
+            return {
+                ...file,
+                isValid: isValid
+            };
+        });
+        
+        const validationResults = await Promise.all(validationPromises);
+        const validFiles = validationResults.filter(file => file.isValid);
+        const invalidFiles = validationResults.filter(file => !file.isValid);
+        
+        if (invalidFiles.length > 0) {
+            console.warn(`发现 ${invalidFiles.length} 个无效文件:`);
+            invalidFiles.forEach(file => {
+                console.warn(`- ${file.name}`);
+            });
+        }
+        
+        console.log(`验证完成，有效文件: ${validFiles.length}，无效文件: ${invalidFiles.length}`);
+        return validFiles;
+    }
 }
 
 module.exports = JsonReader; 

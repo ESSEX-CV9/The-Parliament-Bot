@@ -2,7 +2,11 @@ const { SlashCommandBuilder, MessageFlags, ChannelType } = require('discord.js')
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 const JsonReader = require('../services/jsonReader');
 const ThreadRebuilder = require('../services/threadRebuilder');
+const ParallelThreadManager = require('../services/parallelThreadManager');
+const config = require('../config/config');
 const path = require('path');
+const ProgressTracker = require('../services/progressTracker');
+const XlsxGenerator = require('../services/xlsxGenerator');
 
 const data = new SlashCommandBuilder()
     .setName('重建帖子')
@@ -22,27 +26,97 @@ const data = new SlashCommandBuilder()
         option.setName('使用webhook')
             .setDescription('是否使用Webhook模拟原作者发送消息（默认：是）')
             .setRequired(false)
+    )
+    .addBooleanOption(option =>
+        option.setName('并行处理')
+            .setDescription('是否启用并行处理多个帖子（默认：是，可显著提升速度）')
+            .setRequired(false)
+    )
+    .addIntegerOption(option =>
+        option.setName('并发数')
+            .setDescription('同时处理的帖子数量（1-5，默认：3）')
+            .setRequired(false)
+            .setMinValue(1)
+            .setMaxValue(5)
     );
 
-// 进度管理器
+// 改进的进度管理器 - 使用公开消息避免webhook token过期
 class ProgressManager {
     constructor(interaction) {
         this.interaction = interaction;
+        this.channel = interaction.channel;
         this.startTime = Date.now();
-        this.currentFile = '';
-        this.currentProgress = '';
+        this.lastUpdateTime = 0;
+        this.updateThrottleMs = 5000; // 5秒更新一次，避免过于频繁的公开消息
+        this.progressMessage = null; // 存储进度消息对象
+        this.isInitialized = false;
+    }
+    
+    /**
+     * 初始化进度消息系统
+     */
+    async initialize() {
+        if (this.isInitialized) return;
+        
+        try {
+            // 先回复一个ephemeral消息确认收到命令
+            await this.interaction.editReply({
+                content: '🚀 **帖子重建任务已启动**\n\n进度更新将在此频道中公开显示，避免长时间任务的token过期问题。'
+            });
+            
+            // 发送第一条公开进度消息
+            this.progressMessage = await this.channel.send({
+                content: '🔄 **帖子重建进行中** ⏱️ 0:00\n\n📋 正在初始化...'
+            });
+            
+            this.isInitialized = true;
+            console.log(`进度消息已初始化，消息ID: ${this.progressMessage.id}`);
+            
+        } catch (error) {
+            console.error('初始化进度消息失败:', error);
+            // 如果公开消息发送失败，回退到原来的方式
+            this.isInitialized = false;
+        }
     }
     
     async updateProgress(message) {
-        const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+        const now = Date.now();
+        
+        // 节流更新，避免过于频繁
+        if (now - this.lastUpdateTime < this.updateThrottleMs) {
+            return;
+        }
+        
+        this.lastUpdateTime = now;
+        const elapsed = Math.floor((now - this.startTime) / 1000);
         const timeStr = `${Math.floor(elapsed / 60)}:${(elapsed % 60).toString().padStart(2, '0')}`;
         
+        // 确保已初始化
+        if (!this.isInitialized) {
+            await this.initialize();
+        }
+        
+        const content = `🔄 **帖子重建进行中** ⏱️ ${timeStr}\n\n${message}`;
+        
         try {
-            await this.interaction.editReply({
-                content: `🔄 **帖子重建进行中** ⏱️ ${timeStr}\n\n${message}`
-            });
+            if (this.progressMessage && this.isInitialized) {
+                // 编辑公开进度消息
+                await this.progressMessage.edit({ content });
+            } else {
+                // 回退到编辑interaction回复
+                await this.interaction.editReply({ content });
+            }
         } catch (error) {
             console.error('更新进度失败:', error);
+            
+            // 如果编辑消息失败，尝试发送新消息
+            if (this.isInitialized && error.code === 10008) { // Unknown Message
+                try {
+                    this.progressMessage = await this.channel.send({ content });
+                } catch (sendError) {
+                    console.error('发送新进度消息失败:', sendError);
+                }
+            }
         }
     }
     
@@ -50,12 +124,60 @@ class ProgressManager {
         const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
         const timeStr = `${Math.floor(elapsed / 60)}:${(elapsed % 60).toString().padStart(2, '0')}`;
         
+        const content = `✅ **帖子重建完成** ⏱️ 总用时: ${timeStr}\n\n${summary}`;
+        
         try {
-            await this.interaction.editReply({
-                content: `✅ **帖子重建完成** ⏱️ 总用时: ${timeStr}\n\n${summary}`
-            });
+            if (this.progressMessage && this.isInitialized) {
+                // 编辑公开进度消息为完成状态
+                await this.progressMessage.edit({ content });
+                
+                // 同时更新原始交互回复
+                try {
+                    await this.interaction.editReply({
+                        content: `✅ **任务完成！** 详细信息请查看上方的公开消息。`
+                    });
+                } catch (interactionError) {
+                    console.log('更新交互回复失败（这是正常的，token可能已过期）:', interactionError.message);
+                }
+            } else {
+                // 回退到编辑interaction回复
+                await this.interaction.editReply({ content });
+            }
         } catch (error) {
             console.error('完成更新失败:', error);
+            
+            // 如果编辑失败，尝试发送新的完成消息
+            if (this.isInitialized) {
+                try {
+                    await this.channel.send({ content });
+                } catch (sendError) {
+                    console.error('发送完成消息失败:', sendError);
+                }
+            }
+        }
+    }
+    
+    /**
+     * 发送错误消息
+     */
+    async sendError(errorMessage) {
+        const content = `❌ **帖子重建失败**\n\n${errorMessage}`;
+        
+        try {
+            if (this.progressMessage && this.isInitialized) {
+                await this.progressMessage.edit({ content });
+            } else {
+                await this.interaction.editReply({ content });
+            }
+        } catch (error) {
+            console.error('发送错误消息失败:', error);
+            if (this.isInitialized) {
+                try {
+                    await this.channel.send({ content });
+                } catch (sendError) {
+                    console.error('发送新错误消息失败:', sendError);
+                }
+            }
         }
     }
 }
@@ -73,7 +195,9 @@ async function execute(interaction) {
         
         const targetForum = interaction.options.getChannel('目标论坛');
         const specificFile = interaction.options.getString('json文件名');
-        const useWebhook = interaction.options.getBoolean('使用webhook') !== false; // 默认为真
+        const useWebhook = interaction.options.getBoolean('使用webhook') !== false;
+        const enableParallel = interaction.options.getBoolean('并行处理') !== false;
+        const concurrency = interaction.options.getInteger('并发数') || config.parallel.maxConcurrentThreads;
         
         // 验证目标论坛
         if (targetForum.type !== ChannelType.GuildForum) {
@@ -87,10 +211,26 @@ async function execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
         
         const progressManager = new ProgressManager(interaction);
+        const progressTracker = new ProgressTracker();
         
         try {
-            // 1. 读取JSON文件
-            await progressManager.updateProgress('📂 正在扫描JSON文件...');
+            // 初始化进度消息系统
+            await progressManager.initialize();
+            
+            // 检查是否有未完成的会话
+            const hasUnfinished = await progressTracker.hasUnfinishedSession();
+            if (hasUnfinished) {
+                const sessionInfo = await progressTracker.getUnfinishedSessionInfo();
+                await progressManager.updateProgress(
+                    `🔄 发现未完成的会话: ${sessionInfo.sessionId}\n` +
+                    `📊 进度: ${sessionInfo.stats.completedFiles + sessionInfo.stats.failedFiles + sessionInfo.stats.skippedFiles}/${sessionInfo.stats.totalFiles}\n` +
+                    `⏰ 开始时间: ${new Date(sessionInfo.startTime).toLocaleString()}\n` +
+                    `🚀 正在从断点继续...`
+                );
+            }
+            
+            // 1. 读取和验证JSON文件
+            await progressManager.updateProgress('📂 正在扫描和验证JSON文件...');
             
             const jsonReader = new JsonReader();
             const jsonFiles = await jsonReader.getJsonFiles(specificFile);
@@ -100,66 +240,69 @@ async function execute(interaction) {
                 return;
             }
             
-            await progressManager.updateProgress(`📝 找到 ${jsonFiles.length} 个JSON文件，开始处理...`);
+            // 验证JSON文件有效性
+            const validJsonFiles = await jsonReader.validateMultipleJsonFiles(jsonFiles);
             
-            // 2. 初始化帖子重建器
-            const threadRebuilder = new ThreadRebuilder(targetForum, useWebhook);
-            const results = [];
-            
-            // 3. 逐个处理JSON文件
-            for (let i = 0; i < jsonFiles.length; i++) {
-                const jsonFile = jsonFiles[i];
-                const progress = `[${i + 1}/${jsonFiles.length}]`;
-                
-                try {
-                    await progressManager.updateProgress(
-                        `${progress} 正在处理: ${jsonFile.name}\n` +
-                        `📊 处理进度: ${Math.round((i / jsonFiles.length) * 100)}%`
-                    );
-                    
-                    // 读取并解析JSON数据
-                    const threadData = await jsonReader.readThreadData(jsonFile.path);
-                    
-                    // 重建帖子
-                    const result = await threadRebuilder.rebuildThread(threadData, (status) => {
-                        // 异步更新进度，不阻塞主流程
-                        progressManager.updateProgress(
-                            `${progress} 正在处理: ${jsonFile.name}\n` +
-                            `📊 文件进度: ${Math.round((i / jsonFiles.length) * 100)}%\n` +
-                            `🔄 当前操作: ${status}`
-                        ).catch(err => console.log('进度更新失败:', err.message));
-                    });
-                    
-                    results.push({
-                        fileName: jsonFile.name,
-                        success: true,
-                        threadId: result.threadId,
-                        messagesCount: result.messagesProcessed,
-                        ...result
-                    });
-                    
-                } catch (error) {
-                    console.error(`处理文件 ${jsonFile.name} 时出错:`, error);
-                    results.push({
-                        fileName: jsonFile.name,
-                        success: false,
-                        error: error.message
-                    });
-                }
-                
-                // 文件间稍作延迟，避免过快请求
-                if (i < jsonFiles.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
+            if (validJsonFiles.length === 0) {
+                await progressManager.complete('❌ 没有找到有效的JSON文件！');
+                return;
             }
             
-            // 4. 生成总结报告
-            const summary = generateSummary(results);
+            // 2. 初始化进度跟踪
+            const sessionId = await progressTracker.initSession(validJsonFiles);
+            const pendingFiles = progressTracker.getPendingFiles();
+            const completedFiles = progressTracker.getCompletedFiles();
+            
+            console.log(`会话 ${sessionId}: 待处理 ${pendingFiles.length} 个文件，已完成 ${completedFiles.length} 个文件`);
+            
+            if (pendingFiles.length === 0) {
+                // 所有文件都已完成
+                const xlsxGenerator = new XlsxGenerator();
+                const report = await xlsxGenerator.generateRebuildReport(progressTracker, sessionId);
+                
+                await progressManager.complete(
+                    `✅ 所有文件已完成处理！\n\n` +
+                    `📊 详细报告已生成: ${report.fileName}\n` +
+                    `📁 报告路径: ${path.relative(process.cwd(), report.filePath)}`
+                );
+                
+                await progressTracker.clearProgress();
+                return;
+            }
+            
+            const processingMode = enableParallel ? '并行' : '串行';
+            await progressManager.updateProgress(
+                `📝 会话: ${sessionId}\n` +
+                `📁 总文件: ${validJsonFiles.length}，待处理: ${pendingFiles.length}\n` +
+                `🔧 处理模式: ${processingMode}\n` +
+                `${enableParallel ? `⚡ 并发数: ${concurrency}\n` : ''}` +
+                `🚀 开始处理...`
+            );
+            
+            let results = [];
+            
+            if (enableParallel && pendingFiles.length > 1) {
+                // 并行处理模式
+                results = await processParallelWithProgress(pendingFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker);
+            } else {
+                // 串行处理模式
+                results = await processSerialWithProgress(pendingFiles, targetForum, useWebhook, progressManager, progressTracker);
+            }
+            
+            // 3. 生成XLSX报告
+            const xlsxGenerator = new XlsxGenerator();
+            const report = await xlsxGenerator.generateRebuildReport(progressTracker, sessionId);
+            
+            // 4. 生成最终汇总
+            const summary = generateFinalSummary(progressTracker.getProgressStats(), report);
             await progressManager.complete(summary);
+            
+            // 5. 清理进度文件
+            await progressTracker.clearProgress();
             
         } catch (error) {
             console.error('重建帖子过程中发生错误:', error);
-            await progressManager.complete(`❌ 重建过程发生错误: ${error.message}`);
+            await progressManager.sendError(`重建过程发生错误: ${error.message}`);
         }
         
     } catch (error) {
@@ -181,37 +324,119 @@ async function execute(interaction) {
     }
 }
 
-function generateSummary(results) {
-    const successful = results.filter(r => r.success);
-    const failed = results.filter(r => !r.success);
+/**
+ * 并行处理（支持进度跟踪）
+ */
+async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker) {
+    console.log(`启动并行处理模式，并发数: ${concurrency}`);
     
-    let summary = `📊 **重建结果汇总**\n\n`;
-    summary += `✅ 成功: ${successful.length} 个帖子\n`;
-    summary += `❌ 失败: ${failed.length} 个帖子\n\n`;
+    // 1. 并行读取所有JSON文件
+    await progressManager.updateProgress('📖 并行读取JSON文件数据...');
     
-    if (successful.length > 0) {
-        summary += `**成功重建的帖子:**\n`;
-        successful.forEach(result => {
-            summary += `• ${result.fileName}\n`;
-            summary += `  📝 消息数: ${result.messagesCount || 0}\n`;
-            if (result.threadId) {
-                summary += `  🔗 帖子ID: ${result.threadId}\n`;
-            }
-            summary += `\n`;
-        });
+    const jsonReader = new JsonReader();
+    const allThreadsData = await jsonReader.readMultipleThreadsData(
+        jsonFiles, 
+        config.parallel.maxConcurrentFileReads
+    );
+    
+    if (allThreadsData.length === 0) {
+        throw new Error('没有成功读取到任何帖子数据');
     }
     
-    if (failed.length > 0) {
-        summary += `**失败的文件:**\n`;
-        failed.forEach(result => {
-            summary += `• ${result.fileName}: ${result.error}\n`;
-        });
+    // 2. 使用带进度跟踪的并行管理器处理帖子
+    const parallelManager = new ParallelThreadManager(targetForum, useWebhook, concurrency, progressTracker);
+    
+    const results = await parallelManager.processMultipleThreads(
+        allThreadsData,
+        (progress) => {
+            const stats = progressTracker.getProgressStats();
+            const enhancedProgress = `${progress}\n📊 总进度: ${stats.progressPercentage}%`;
+            progressManager.updateProgress(enhancedProgress).catch(err => 
+                console.log('进度更新失败:', err.message)
+            );
+        }
+    );
+    
+    return results;
+}
+
+/**
+ * 串行处理（支持进度跟踪）
+ */
+async function processSerialWithProgress(jsonFiles, targetForum, useWebhook, progressManager, progressTracker) {
+    console.log('使用串行处理模式');
+    
+    const jsonReader = new JsonReader();
+    const threadRebuilder = new ThreadRebuilder(targetForum, useWebhook);
+    
+    for (let i = 0; i < jsonFiles.length; i++) {
+        const jsonFile = jsonFiles[i];
+        const progress = `[${i + 1}/${jsonFiles.length}]`;
+        
+        // 标记开始处理
+        await progressTracker.markFileProcessing(jsonFile.name);
+        
+        try {
+            const stats = progressTracker.getProgressStats();
+            await progressManager.updateProgress(
+                `${progress} 正在处理: ${jsonFile.name}\n` +
+                `📊 总进度: ${stats.progressPercentage}%`
+            );
+            
+            // 读取并解析JSON数据
+            const threadData = await jsonReader.readThreadData(jsonFile.path);
+            threadData.fileName = jsonFile.name; // 添加文件名
+            
+            // 重建帖子
+            const result = await threadRebuilder.rebuildThread(threadData, (processedMessages, totalMessages) => {
+                const status = `处理消息: ${processedMessages}/${totalMessages}`;
+                const stats = progressTracker.getProgressStats();
+                progressManager.updateProgress(
+                    `${progress} 正在处理: ${jsonFile.name}\n` +
+                    `📊 总进度: ${stats.progressPercentage}%\n` +
+                    `🔄 ${status}`
+                ).catch(err => console.log('进度更新失败:', err.message));
+            });
+            
+            // 标记完成
+            await progressTracker.markFileCompleted(jsonFile.name, {
+                threadId: result.id,
+                threadName: result.name,
+                messagesCount: threadData.messages?.length || 0
+            });
+            
+        } catch (error) {
+            console.error(`处理文件 ${jsonFile.name} 时出错:`, error);
+            await progressTracker.markFileFailed(jsonFile.name, error.message);
+        }
+        
+        // 文件间延迟
+        if (i < jsonFiles.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
     }
+}
+
+/**
+ * 生成最终汇总（简化版，主要信息在XLSX中）
+ */
+function generateFinalSummary(stats, report) {
+    let summary = `📊 **重建任务完成**\n\n`;
+    summary += `🏷️ 会话ID: ${stats.sessionId}\n`;
+    summary += `📁 总文件数: ${stats.totalFiles}\n`;
+    summary += `✅ 成功: ${stats.completedFiles}\n`;
+    summary += `❌ 失败: ${stats.failedFiles}\n`;
+    summary += `⏭️ 跳过: ${stats.skippedFiles}\n`;
+    summary += `📈 成功率: ${stats.progressPercentage}%\n\n`;
+    summary += `📋 **详细报告**\n`;
+    summary += `📄 文件名: ${report.fileName}\n`;
+    summary += `📁 路径: ${path.relative(process.cwd(), report.filePath)}\n\n`;
+    summary += `💡 请查看Excel文件获取详细的处理结果`;
     
     return summary;
 }
 
 module.exports = {
     data,
-    execute,
+    execute
 }; 
