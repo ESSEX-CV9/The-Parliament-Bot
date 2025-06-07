@@ -19,6 +19,7 @@ class DisplayService {
             itemsPerPage10: 'c_ipp10',
             itemsPerPage20: 'c_ipp20',
             fullRefresh: 'c_fref',
+            textDetail: 'c_td',
             fullFirst: 'c_ff',
             fullPrev: 'c_fp',
             fullNext: 'c_fn',
@@ -350,7 +351,11 @@ class DisplayService {
                     new ButtonBuilder()
                         .setCustomId(`contest_finish_${contestChannelId}`)
                         .setLabel('🏁 完赛')
-                        .setStyle(ButtonStyle.Primary)
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId(`${this.buttonIds.textDetail}_${contestChannelId}`)
+                        .setLabel('📄 公开投稿作品总列表')
+                        .setStyle(ButtonStyle.Secondary)
                 );
             
             components.push(awardManagementRow);
@@ -1140,6 +1145,92 @@ class DisplayService {
             } catch (replyError) {
                 console.error('回复错误信息失败:', replyError);
             }
+        }
+    }
+
+    // 输出完整的参赛作品列表
+    async handleDumpFullSubmissionsList(interaction, contestChannelId) {
+        await interaction.deferReply({ ephemeral: false });
+        await interaction.editReply({
+            content: '📝 正在生成列表'
+        });
+
+        const contestChannelData = await this.getContestChannelData(contestChannelId);
+        if (!contestChannelData) {
+            await interaction.editReply({
+                content: '❌ 无效的比赛ID，请重试。'
+            });
+            return;
+        }
+
+        // 添加权限检查
+        const isOrganizer = contestChannelData.applicantId === interaction.user.id;
+
+        // 获取所有有效投稿
+        const submissions = await this.getSubmissionsData(contestChannelId);
+
+        const processedSubmissions = preprocessSubmissions(submissions);
+
+        const defualtDescriptionValue = '📝 作品列表:\n';
+        var allDescription = defualtDescriptionValue;
+        var isFollowUp = false;
+
+        try {
+            var handleOutputResult = async function() {
+                if (allDescription !== defualtDescriptionValue) {//需要至少内部输入了一条数据才执行发送逻辑
+                    if (!isFollowUp) {
+                        //变更原本的回复消息
+                        await interaction.editReply({
+                            content: allDescription
+                        });
+                    } else {
+                        await interaction.followUp({
+                            content: allDescription,
+                            ephemeral: false
+                        });
+                    }
+                    isFollowUp = true;
+                    allDescription = defualtDescriptionValue; //清空已有的内容
+                }
+            };
+
+            //将所有投稿，按消息长度的限制进行输出
+            const messageCharBudget = 1900;
+            for (let i = 0; i < processedSubmissions.length; i++) {
+                const submission = processedSubmissions[i];
+                const submissionNumber = i + 1;
+                var currentDescription = '';
+
+                // 使用预处理的数据
+                const {originalUrl, workUrl, cachedPreview} = submission;
+                // 检查是否为外部服务器投稿
+                if (submission.isExternal) {
+                    // 外部服务器投稿的特殊格式
+                    currentDescription += `${submissionNumber}. ${workUrl}\n`;
+                } else {
+                    // 本服务器投稿的正常格式，只有 originalUrl 可能包含 '~' 分隔的文本。
+                    const urlParts = originalUrl.split('~');
+                    const baseUrl = urlParts[0];
+                    const extraUrl = urlParts.length > 1 ? urlParts[1] : '';
+                    //此处需要使用 Markdown 的格式，因为在部分情况下，在DC 上会显示为 "未知" 而不是具体的作品标题。
+                    currentDescription += `${submissionNumber}.  [${cachedPreview.title}](${baseUrl})`;
+                    if (urlParts.length > 1)
+                        currentDescription += `~${extraUrl}`;
+                    currentDescription += '\n';
+                }
+                if (currentDescription.length + allDescription.length >= messageCharBudget) {
+                    await handleOutputResult();
+                }
+                allDescription += currentDescription;
+            }
+            //保证至少更新过一次
+            handleOutputResult();
+        } catch (error) {
+            console.error('处理输出参赛作品列表时出错:', error);
+            await interaction.followUp({
+                content: '❌ 处理输出参赛作品列表时出现错误，请稍后重试。',
+                ephemeral: true
+            });
         }
     }
 
