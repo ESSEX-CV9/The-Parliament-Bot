@@ -7,6 +7,7 @@ const config = require('../config/config');
 const path = require('path');
 const ProgressTracker = require('../services/progressTracker');
 const XlsxGenerator = require('../services/xlsxGenerator');
+const ExcelReader = require('../services/excelReader');
 
 const data = new SlashCommandBuilder()
     .setName('重建帖子')
@@ -213,15 +214,51 @@ async function execute(interaction) {
             });
         }
         
-        // 延迟回复开始处理
-        await interaction.deferReply({ ephemeral: true });
-        
+        // 创建进度管理器
         const progressManager = new ProgressManager(interaction);
-        const progressTracker = new ProgressTracker();
         
         try {
-            // 初始化进度消息系统
+            // 延迟回复以获得更多时间
+            await interaction.deferReply({ ephemeral: true });
+            
+            // 初始化进度管理器
             await progressManager.initialize();
+            
+            // 创建全局的Excel读取器，只初始化一次
+            const globalExcelReader = new ExcelReader();
+            let excelDataLoaded = false;
+            
+            // 首先加载Excel数据
+            await progressManager.updateProgress('📊 正在加载Excel数据...');
+            try {
+                await globalExcelReader.loadExcelData();
+                excelDataLoaded = true;
+                await progressManager.updateProgress('✅ Excel数据加载完成');
+            } catch (error) {
+                console.warn('Excel数据加载失败，将使用默认流程:', error);
+                await progressManager.updateProgress('⚠️ Excel数据加载失败，使用默认流程继续');
+                excelDataLoaded = false;
+            }
+            
+            // 初始化其他组件
+            const jsonReader = new JsonReader();
+            const threadRebuilder = new ThreadRebuilder(targetForum, useWebhook);
+            const progressTracker = new ProgressTracker();
+            
+            // 如果Excel数据加载成功，设置到ThreadRebuilder中并创建标签
+            if (excelDataLoaded) {
+                threadRebuilder.setExcelReader(globalExcelReader);
+                threadRebuilder.setExcelDataLoaded(true);
+                
+                await progressManager.updateProgress('🏷️ 正在创建论坛标签...');
+                try {
+                    await threadRebuilder.createForumTags();
+                    await progressManager.updateProgress('✅ 标签创建完成，开始重建帖子...');
+                } catch (error) {
+                    console.warn('创建标签失败:', error);
+                    await progressManager.updateProgress('⚠️ 标签创建失败，继续重建帖子...');
+                }
+            }
             
             // 检查是否有未完成的会话
             const hasUnfinished = await progressTracker.hasUnfinishedSession();
@@ -238,7 +275,6 @@ async function execute(interaction) {
             // 1. 读取和验证JSON文件
             await progressManager.updateProgress('📂 正在扫描和验证JSON文件...');
             
-            const jsonReader = new JsonReader();
             const jsonFiles = await jsonReader.getJsonFiles(specificFile);
             
             if (jsonFiles.length === 0) {
@@ -289,10 +325,10 @@ async function execute(interaction) {
             
             if (enableParallel && pendingFiles.length > 1) {
                 // 并行处理模式
-                results = await processParallelWithProgress(pendingFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker, autoArchive);
+                results = await processParallelWithProgress(pendingFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker, autoArchive, excelDataLoaded ? globalExcelReader : null);
             } else {
                 // 串行处理模式
-                results = await processSerialWithProgress(pendingFiles, targetForum, useWebhook, progressManager, progressTracker, autoArchive);
+                results = await processSerialWithProgress(pendingFiles, targetForum, useWebhook, progressManager, progressTracker, autoArchive, excelDataLoaded ? globalExcelReader : null);
             }
             
             // 3. 生成XLSX报告
@@ -307,25 +343,19 @@ async function execute(interaction) {
             await progressTracker.clearProgress();
             
         } catch (error) {
-            console.error('重建帖子过程中发生错误:', error);
-            await progressManager.sendError(`重建过程发生错误: ${error.message}`);
+            console.error('重建任务执行失败:', error);
+            await progressManager.sendError(`执行失败: ${error.message}`);
         }
         
     } catch (error) {
-        console.error('重建帖子时发生错误:', error);
-        try {
-            if (interaction.deferred) {
-                await interaction.editReply({
-                    content: `❌ 重建过程发生错误: ${error.message}`
-                });
-            } else {
-                await interaction.reply({
-                    content: `❌ 重建过程发生错误: ${error.message}`,
-                    flags: MessageFlags.Ephemeral
-                });
-            }
-        } catch (e) {
-            console.error('回复错误消息失败:', e);
+        console.error('命令处理失败:', error);
+        
+        const errorMessage = `命令处理失败: ${error.message}`;
+        
+        if (interaction.deferred) {
+            await interaction.editReply({ content: errorMessage });
+        } else {
+            await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
         }
     }
 }
@@ -333,7 +363,7 @@ async function execute(interaction) {
 /**
  * 并行处理（支持进度跟踪和断点重启）
  */
-async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker, autoArchive = true) {
+async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker, autoArchive = true, globalExcelReader = null) {
     console.log(`启动并行处理模式，并发数: ${concurrency}`);
     
     // 打印断点重启状态
@@ -375,6 +405,11 @@ async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, c
     // 3. 使用带进度跟踪的并行管理器处理帖子
     const parallelManager = new ParallelThreadManager(targetForum, useWebhook, concurrency, progressTracker);
     
+    // 设置Excel读取器
+    if (globalExcelReader) {
+        parallelManager.setExcelReader(globalExcelReader);
+    }
+    
     // 设置自动归档选项
     parallelManager.setAutoArchive(autoArchive);
     
@@ -393,7 +428,7 @@ async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, c
 /**
  * 串行处理（支持进度跟踪和断点重启）
  */
-async function processSerialWithProgress(jsonFiles, targetForum, useWebhook, progressManager, progressTracker, autoArchive = true) {
+async function processSerialWithProgress(jsonFiles, targetForum, useWebhook, progressManager, progressTracker, autoArchive = true, globalExcelReader = null) {
     console.log('使用串行处理模式');
     
     const jsonReader = new JsonReader();
@@ -411,67 +446,54 @@ async function processSerialWithProgress(jsonFiles, targetForum, useWebhook, pro
         }
         
         try {
-            const stats = progressTracker.getProgressStats();
-            await progressManager.updateProgress(
-                `${progress} 正在处理: ${jsonFile.name}\n` +
-                `📊 总进度: ${stats.progressPercentage}%` +
-                (resumeInfo && resumeInfo.canResume ? 
-                    `\n🔄 从断点恢复 (${resumeInfo.processedMessages}/${resumeInfo.totalMessages})` : '')
-            );
+            await progressManager.updateProgress(`${progress} 📖 读取文件: ${jsonFile.name}...`);
             
-            // 读取并解析JSON数据
             const threadData = await jsonReader.readThreadData(jsonFile.path);
             threadData.fileName = jsonFile.name;
             threadData.resumeInfo = resumeInfo;
             
-            // 创建ThreadRebuilder并设置进度跟踪器
-            const threadRebuilder = new ThreadRebuilder(targetForum, useWebhook);
-            threadRebuilder.setProgressTracker(progressTracker);
+            await progressManager.updateProgress(`${progress} 🔨 重建帖子: ${threadData.threadInfo.title}...`);
             
-            // 重建帖子（支持断点重启）
-            const result = await threadRebuilder.rebuildThread(
-                threadData, 
-                (processedMessages, totalMessages) => {
-                    const status = `处理消息: ${processedMessages}/${totalMessages}`;
-                    const stats = progressTracker.getProgressStats();
-                    progressManager.updateProgress(
-                        `${progress} 正在处理: ${jsonFile.name}\n` +
-                        `📊 总进度: ${stats.progressPercentage}%\n` +
-                        `🔄 ${status}`
-                    ).catch(err => console.log('进度更新失败:', err.message));
+            const rebuilder = new ThreadRebuilder(targetForum, useWebhook);
+            rebuilder.setProgressTracker(progressTracker);
+            
+            // 设置Excel读取器
+            if (globalExcelReader) {
+                rebuilder.setExcelReader(globalExcelReader);
+                rebuilder.setExcelDataLoaded(true);
+            }
+            
+            const result = await rebuilder.rebuildThread(
+                threadData,
+                (current, total) => {
+                    const percentage = Math.round((current / total) * 100);
+                    progressManager.updateProgress(`${progress} 📝 ${threadData.threadInfo.title}: ${current}/${total} (${percentage}%)`).catch(() => {});
                 },
-                resumeInfo // 传递断点重启信息
+                resumeInfo
             );
             
-            // 自动归档线程（如果启用）
+            // 自动归档
             if (autoArchive && result.id) {
                 try {
                     const thread = await targetForum.threads.fetch(result.id);
                     await thread.setArchived(true);
-                    console.log(`✅ 线程已自动归档: ${result.name}`);
+                    console.log(`✅ 帖子已归档: ${result.name}`);
                 } catch (archiveError) {
-                    console.warn(`⚠️ 归档线程失败: ${result.name}, ${archiveError.message}`);
+                    console.warn(`⚠️ 归档失败: ${result.name}`, archiveError);
                 }
             }
             
-            // 标记完成
-            await progressTracker.markFileCompleted(jsonFile.name, {
-                threadId: result.id,
-                threadName: result.name,
-                messagesCount: result.messagesProcessed || 0,
-                archived: autoArchive
-            });
+            await progressTracker.markFileCompleted(jsonFile.name, result.id, result.name, result.messagesProcessed);
+            await progressManager.updateProgress(`${progress} ✅ 完成: ${result.name}`);
             
         } catch (error) {
-            console.error(`处理文件 ${jsonFile.name} 时出错:`, error);
+            console.error(`处理文件失败: ${jsonFile.name}`, error);
             await progressTracker.markFileFailed(jsonFile.name, error.message);
-        }
-        
-        // 文件间延迟
-        if (i < jsonFiles.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await progressManager.updateProgress(`${progress} ❌ 失败: ${jsonFile.name} - ${error.message}`);
         }
     }
+    
+    return [];
 }
 
 /**

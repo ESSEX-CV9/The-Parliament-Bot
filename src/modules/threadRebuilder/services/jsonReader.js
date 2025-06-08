@@ -256,6 +256,7 @@ class JsonReader {
             
             const result = {
                 threadInfo: {
+                    thread_id: data.thread_info.thread_id,
                     threadId: data.thread_info.thread_id,
                     title: data.thread_info.title,
                     channelPath: data.thread_info.channel_path,
@@ -263,8 +264,8 @@ class JsonReader {
                     totalMessages: data.thread_info.total_messages,
                     participants: data.thread_info.participants
                 },
-                timestampCache: timestampCache, // 时间戳缓存
-                messageIndex: messageIndex, // 消息ID快速索引
+                timestampCache: timestampCache,
+                messageIndex: messageIndex,
                 messages: messages
             };
             
