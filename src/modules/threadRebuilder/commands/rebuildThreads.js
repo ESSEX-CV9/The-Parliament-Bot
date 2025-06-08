@@ -38,6 +38,11 @@ const data = new SlashCommandBuilder()
             .setRequired(false)
             .setMinValue(1)
             .setMaxValue(5)
+    )
+    .addBooleanOption(option =>
+        option.setName('自动归档')
+            .setDescription('是否在重建完成后自动归档线程（默认：是）')
+            .setRequired(false)
     );
 
 // 改进的进度管理器 - 使用公开消息避免webhook token过期
@@ -198,6 +203,7 @@ async function execute(interaction) {
         const useWebhook = interaction.options.getBoolean('使用webhook') !== false;
         const enableParallel = interaction.options.getBoolean('并行处理') !== false;
         const concurrency = interaction.options.getInteger('并发数') || config.parallel.maxConcurrentThreads;
+        const autoArchive = interaction.options.getBoolean('自动归档') !== false;
         
         // 验证目标论坛
         if (targetForum.type !== ChannelType.GuildForum) {
@@ -283,10 +289,10 @@ async function execute(interaction) {
             
             if (enableParallel && pendingFiles.length > 1) {
                 // 并行处理模式
-                results = await processParallelWithProgress(pendingFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker);
+                results = await processParallelWithProgress(pendingFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker, autoArchive);
             } else {
                 // 串行处理模式
-                results = await processSerialWithProgress(pendingFiles, targetForum, useWebhook, progressManager, progressTracker);
+                results = await processSerialWithProgress(pendingFiles, targetForum, useWebhook, progressManager, progressTracker, autoArchive);
             }
             
             // 3. 生成XLSX报告
@@ -327,7 +333,7 @@ async function execute(interaction) {
 /**
  * 并行处理（支持进度跟踪和断点重启）
  */
-async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker) {
+async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, concurrency, progressManager, progressTracker, autoArchive = true) {
     console.log(`启动并行处理模式，并发数: ${concurrency}`);
     
     // 打印断点重启状态
@@ -369,6 +375,9 @@ async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, c
     // 3. 使用带进度跟踪的并行管理器处理帖子
     const parallelManager = new ParallelThreadManager(targetForum, useWebhook, concurrency, progressTracker);
     
+    // 设置自动归档选项
+    parallelManager.setAutoArchive(autoArchive);
+    
     const results = await parallelManager.processMultipleThreads(
         allThreadsData,
         (progress) => {
@@ -384,7 +393,7 @@ async function processParallelWithProgress(jsonFiles, targetForum, useWebhook, c
 /**
  * 串行处理（支持进度跟踪和断点重启）
  */
-async function processSerialWithProgress(jsonFiles, targetForum, useWebhook, progressManager, progressTracker) {
+async function processSerialWithProgress(jsonFiles, targetForum, useWebhook, progressManager, progressTracker, autoArchive = true) {
     console.log('使用串行处理模式');
     
     const jsonReader = new JsonReader();
@@ -434,11 +443,23 @@ async function processSerialWithProgress(jsonFiles, targetForum, useWebhook, pro
                 resumeInfo // 传递断点重启信息
             );
             
+            // 自动归档线程（如果启用）
+            if (autoArchive && result.id) {
+                try {
+                    const thread = await targetForum.threads.fetch(result.id);
+                    await thread.setArchived(true);
+                    console.log(`✅ 线程已自动归档: ${result.name}`);
+                } catch (archiveError) {
+                    console.warn(`⚠️ 归档线程失败: ${result.name}, ${archiveError.message}`);
+                }
+            }
+            
             // 标记完成
             await progressTracker.markFileCompleted(jsonFile.name, {
                 threadId: result.id,
                 threadName: result.name,
-                messagesCount: result.messagesProcessed || 0
+                messagesCount: result.messagesProcessed || 0,
+                archived: autoArchive
             });
             
         } catch (error) {
