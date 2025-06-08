@@ -373,6 +373,7 @@ class ThreadRebuilder {
             case 'system_message_follow':
             case 'system_message_pin':
             case 'system_message_unpin':
+            case 'system_notification':
                 sentMessage = await this.sendSystemMessage(thread, message, isLastInGroup, groupFirstMessageTimestamp);
                 break;
             
