@@ -1,5 +1,7 @@
 const WebhookManager = require('./webhookManager');
 const MessageProcessor = require('./messageProcessor');
+const ExcelReader = require('./excelReader');
+const TagManager = require('./tagManager');
 const { delay } = require('../utils/fileManager');
 
 class ThreadRebuilder {
@@ -9,6 +11,67 @@ class ThreadRebuilder {
         this.webhookManager = new WebhookManager(targetForum);
         this.messageProcessor = new MessageProcessor();
         this.messageIdMap = new Map(); // 原消息ID -> 新消息ID的映射
+        this.excelReader = null; // 改为null，由外部设置
+        this.excelDataLoaded = false;
+        this.tagManager = null; // 延迟初始化
+        this.forumTagsCreated = false;
+    }
+    
+    /**
+     * 设置Excel读取器（由外部传入）
+     */
+    setExcelReader(excelReader) {
+        this.excelReader = excelReader;
+        if (excelReader) {
+            this.tagManager = new TagManager(this.targetForum, this.excelReader);
+        }
+    }
+    
+    /**
+     * 设置Excel数据加载状态
+     */
+    setExcelDataLoaded(loaded) {
+        this.excelDataLoaded = loaded;
+    }
+    
+    /**
+     * 初始化Excel数据（保留，但改为检查是否已设置）
+     */
+    async initializeExcelData() {
+        // 如果已经加载，直接返回
+        if (this.excelDataLoaded) {
+            console.log('Excel数据已加载，跳过重复初始化');
+            return;
+        }
+        
+        // 如果外部已设置ExcelReader但未标记为已加载，也跳过
+        if (this.excelReader) {
+            console.log('Excel读取器已由外部设置，跳过重复初始化');
+            this.excelDataLoaded = true;
+            return;
+        }
+        
+        // 只有在完全没有Excel数据时才初始化
+        try {
+            console.log('开始初始化Excel数据...');
+            this.excelReader = new ExcelReader();
+            await this.excelReader.loadExcelData();
+            this.tagManager = new TagManager(this.targetForum, this.excelReader);
+            this.excelDataLoaded = true;
+            console.log('Excel数据和标签管理器初始化完成');
+        } catch (error) {
+            console.warn('Excel数据初始化失败，将使用默认数据:', error);
+            this.excelDataLoaded = false;
+        }
+    }
+    
+    /**
+     * 创建论坛标签
+     */
+    async createForumTags() {
+        if (this.tagManager) {
+            await this.tagManager.createAllTags();
+        }
     }
     
     /**
@@ -16,8 +79,12 @@ class ThreadRebuilder {
      */
     async rebuildThread(threadData, progressCallback = null, resumeInfo = null) {
         try {
+            // 确保Excel数据已加载（只在必要时加载）
+            await this.initializeExcelData();
+            
             const threadTitle = threadData.threadInfo.title;
-            console.log(`开始重建帖子: ${threadTitle}`);
+            const originalThreadId = threadData.threadInfo.thread_id;
+            console.log(`开始重建帖子: ${threadTitle}, 原始ID: ${originalThreadId}, Excel状态: ${this.excelDataLoaded}`);
             
             // 存储当前线程数据用于后续查找
             this.currentThreadData = threadData;
@@ -53,6 +120,23 @@ class ThreadRebuilder {
                     throw new Error('帖子创建失败');
                 }
                 startMessageIndex = 0;
+                
+                // 为新创建的帖子添加标签
+                if (this.tagManager && threadData.threadInfo.thread_id) {
+                    console.log(`====== 标签应用调试信息 ======`);
+                    console.log(`开始为帖子添加标签: ${threadData.threadInfo.thread_id}`);
+                    console.log(`TagManager存在: ${!!this.tagManager}`);
+                    
+                    try {
+                        await this.tagManager.applyTagsToThread(thread, threadData.threadInfo.thread_id);
+                        console.log(`✅ 标签应用完成`);
+                    } catch (error) {
+                        console.error(`❌ 标签应用失败:`, error);
+                    }
+                    console.log(`====== 标签应用调试信息结束 ======`);
+                } else {
+                    console.log(`⚠️ 跳过标签添加: tagManager=${!!this.tagManager}, thread_id=${threadData.threadInfo.thread_id}`);
+                }
                 
                 // 通知进度跟踪器帖子已创建
                 if (this.progressTracker && threadData.fileName) {
@@ -684,18 +768,84 @@ class ThreadRebuilder {
     }
 
     /**
-     * 创建帖子主题
+     * 创建帖子 - 使用增强的Excel数据
      */
     async createThread(threadInfo) {
         const threadTitle = threadInfo.title || '未命名帖子';
+        const originalThreadId = threadInfo.thread_id;
         
-        // 创建初始帖子消息
+        console.log(`====== 创建帖子调试信息 ======`);
+        console.log(`帖子标题: ${threadTitle}`);
+        console.log(`原始thread_id: ${originalThreadId}`);
+        console.log(`Excel数据加载状态: ${this.excelDataLoaded}`);
+        console.log(`Excel读取器存在: ${!!this.excelReader}`);
+        
+        // 从Excel获取增强信息
+        let enhancedInfo = null;
+        if (this.excelDataLoaded && this.excelReader && originalThreadId) {
+            console.log(`尝试从Excel查询thread_id: ${originalThreadId}`);
+            enhancedInfo = this.excelReader.getThreadInfo(originalThreadId);
+            
+            if (enhancedInfo) {
+                console.log(`✅ Excel查询成功:`);
+                console.log(`  - 作者ID: ${enhancedInfo.authorId}`);
+                console.log(`  - 标题: ${enhancedInfo.title}`);
+                console.log(`  - 创建时间: ${enhancedInfo.createdAt}`);
+                console.log(`  - 总消息数: ${enhancedInfo.totalMessages}`);
+                console.log(`  - 标签: ${enhancedInfo.tags}`);
+            } else {
+                console.log(`❌ Excel查询失败: 未找到thread_id=${originalThreadId}的数据`);
+                
+                // 尝试调试Excel数据
+                if (this.excelReader && this.excelReader.threadInfoMap) {
+                    console.log(`Excel中总共有 ${this.excelReader.threadInfoMap.size} 条数据`);
+                    console.log(`前5个thread_id示例:`, Array.from(this.excelReader.threadInfoMap.keys()).slice(0, 5));
+                    
+                    // 检查是否有类似的ID
+                    const similarIds = Array.from(this.excelReader.threadInfoMap.keys())
+                        .filter(id => id.includes(originalThreadId.substring(0, 10)));
+                    if (similarIds.length > 0) {
+                        console.log(`找到相似的ID:`, similarIds);
+                    }
+                }
+            }
+        } else {
+            console.log(`⚠️ 跳过Excel查询，原因:`);
+            console.log(`  - Excel数据加载状态: ${this.excelDataLoaded}`);
+            console.log(`  - Excel读取器存在: ${!!this.excelReader}`);
+            console.log(`  - 原始thread_id: ${originalThreadId}`);
+        }
+        
+        // 获取发帖人信息
+        let authorDisplay = '未知';
+        if (enhancedInfo && enhancedInfo.authorId && this.excelReader) {
+            try {
+                authorDisplay = await this.excelReader.getUserDisplayName(enhancedInfo.authorId);
+                console.log(`✅ 发帖人获取成功: ${authorDisplay}`);
+            } catch (error) {
+                console.log(`❌ 发帖人获取失败:`, error);
+                authorDisplay = '未知';
+            }
+        } else {
+            console.log(`⚠️ 跳过发帖人获取，enhancedInfo存在: ${!!enhancedInfo}, authorId: ${enhancedInfo?.authorId}`);
+        }
+        
+        // 获取原贴ID
+        const displayThreadId = originalThreadId || '未知';
+        console.log(`显示的原贴ID: ${displayThreadId}`);
+        
+        // 创建增强的初始帖子消息
         const initialMessage = `**📋 帖子信息**\n` +
-            `**标题:** ${threadTitle}\n` +
-            `**原始创建时间:** ${threadInfo.createdAt || '未知'}\n` +
-            `**总消息数:** ${threadInfo.totalMessages || 0}\n` +
+            `**标题:** ${enhancedInfo?.title || threadTitle}\n` +
+            `**发帖人:** ${authorDisplay}\n` +
+            `**原贴ID:** ${displayThreadId}\n` +
+            `**原始创建时间:** ${enhancedInfo?.createdAt || threadInfo.createdAt || '未知'}\n` +
+            `**总消息数:** ${enhancedInfo?.totalMessages || threadInfo.totalMessages || 0}\n` +
             `**参与人数:** ${threadInfo.participants || 0}\n\n` +
             `*此帖子由系统从备份重建*`;
+        
+        console.log(`创建的初始消息预览:\n${initialMessage}`);
+        console.log(`====== 创建帖子调试信息结束 ======`);
         
         const thread = await this.targetForum.threads.create({
             name: threadTitle,

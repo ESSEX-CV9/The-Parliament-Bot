@@ -27,6 +27,14 @@ class ParallelThreadManager {
         this.initialCompletedCount = 0; // 会话开始时已完成的数量
         this.sessionTotalFiles = 0; // 会话的总文件数
         this.autoArchive = true; // 自动归档选项
+        this.excelReader = null; // 添加Excel读取器
+    }
+
+    /**
+     * 设置Excel读取器
+     */
+    setExcelReader(excelReader) {
+        this.excelReader = excelReader;
     }
 
     /**
@@ -132,6 +140,12 @@ class ParallelThreadManager {
             try {
                 // 创建独立的ThreadRebuilder实例
                 const threadRebuilder = new ThreadRebuilder(this.targetForum, this.useWebhook);
+                
+                // 设置Excel读取器（如果有的话）
+                if (this.excelReader) {
+                    threadRebuilder.setExcelReader(this.excelReader);
+                    threadRebuilder.setExcelDataLoaded(true);
+                }
                 
                 // 设置进度跟踪器
                 if (this.progressTracker) {
