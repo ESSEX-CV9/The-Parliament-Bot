@@ -18,14 +18,15 @@ class ParallelThreadManager {
         this.performanceMonitor = new PerformanceMonitor();
         this.progressTracker = progressTracker;
         
-        // 新增：线程状态跟踪
+        // 线程状态跟踪
         this.threadStates = new Map(); // workerId -> { threadTitle, processedMessages, totalMessages, status }
         this.lastProgressUpdate = 0;
         this.progressUpdateThrottle = 3000; // 3秒更新一次总体进度
         
-        // 新增：断点重启相关
+        // 断点重启相关
         this.initialCompletedCount = 0; // 会话开始时已完成的数量
         this.sessionTotalFiles = 0; // 会话的总文件数
+        this.autoArchive = true; // 自动归档选项
     }
 
     /**
@@ -155,12 +156,26 @@ class ParallelThreadManager {
                     resumeInfo // 传递断点重启信息
                 );
 
+                // 自动归档线程（如果启用）
+                let archived = false;
+                if (this.autoArchive && result.id) {
+                    try {
+                        const thread = await this.targetForum.threads.fetch(result.id);
+                        await thread.setArchived(true);
+                        archived = true;
+                        console.log(`工作线程 ${workerId} 已自动归档线程: ${threadTitle}`);
+                    } catch (archiveError) {
+                        console.warn(`工作线程 ${workerId} 归档线程失败: ${threadTitle}, ${archiveError.message}`);
+                    }
+                }
+
                 const processResult = {
                     fileName: fileName,
                     success: true,
                     threadId: result.id,
                     threadName: result.name,
                     messagesCount: result.messagesProcessed || 0,
+                    archived: archived,
                     workerId: workerId,
                     result: result
                 };
@@ -428,6 +443,14 @@ class ParallelThreadManager {
             overallPercentage: totalFiles > 0 ? Math.round((currentCompleted / totalFiles) * 100) : 0,
             batchPercentage: this.totalCount > 0 ? Math.round((this.completedCount / this.totalCount) * 100) : 0
         };
+    }
+
+    /**
+     * 设置自动归档选项
+     */
+    setAutoArchive(autoArchive) {
+        this.autoArchive = autoArchive;
+        console.log(`自动归档设置为: ${autoArchive}`);
     }
 }
 
