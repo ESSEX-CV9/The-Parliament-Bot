@@ -772,7 +772,7 @@ class ThreadRebuilder {
      */
     async createThread(threadInfo) {
         const threadTitle = threadInfo.title || '未命名帖子';
-        const originalThreadId = threadInfo.thread_id;
+        const originalThreadId = threadInfo.thread_id || threadInfo.threadId;
         
         console.log(`====== 创建帖子调试信息 ======`);
         console.log(`帖子标题: ${threadTitle}`);
@@ -788,8 +788,9 @@ class ThreadRebuilder {
             
             if (enhancedInfo) {
                 console.log(`✅ Excel查询成功:`);
+                console.log(`  - Excel标题: ${enhancedInfo.title}`);
+                console.log(`  - JSON标题(已过滤): ${threadTitle}`);
                 console.log(`  - 作者ID: ${enhancedInfo.authorId}`);
-                console.log(`  - 标题: ${enhancedInfo.title}`);
                 console.log(`  - 创建时间: ${enhancedInfo.createdAt}`);
                 console.log(`  - 总消息数: ${enhancedInfo.totalMessages}`);
                 console.log(`  - 标签: ${enhancedInfo.tags}`);
@@ -834,9 +835,13 @@ class ThreadRebuilder {
         const displayThreadId = originalThreadId || '未知';
         console.log(`显示的原贴ID: ${displayThreadId}`);
         
+        // 修改标题优先级：JSON标题优先于Excel标题
+        const displayTitle = threadTitle || enhancedInfo?.title || '未命名帖子';
+        console.log(`最终显示标题: "${displayTitle}" (JSON优先)`);
+        
         // 创建增强的初始帖子消息
         const initialMessage = `**📋 帖子信息**\n` +
-            `**标题:** ${enhancedInfo?.title || threadTitle}\n` +
+            `**标题:** ${displayTitle}\n` +  // 修改：使用JSON标题优先
             `**发帖人:** ${authorDisplay}\n` +
             `**原贴ID:** ${displayThreadId}\n` +
             `**原始创建时间:** ${enhancedInfo?.createdAt || threadInfo.createdAt || '未知'}\n` +
@@ -847,8 +852,9 @@ class ThreadRebuilder {
         console.log(`创建的初始消息预览:\n${initialMessage}`);
         console.log(`====== 创建帖子调试信息结束 ======`);
         
+        // Discord帖子名称也使用JSON标题优先
         const thread = await this.targetForum.threads.create({
-            name: threadTitle,
+            name: displayTitle,  // 修改：确保Discord帖子名称也使用过滤后的标题
             message: {
                 content: initialMessage
             }

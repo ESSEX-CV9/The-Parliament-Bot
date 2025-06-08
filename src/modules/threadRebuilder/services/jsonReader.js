@@ -1,10 +1,25 @@
 const fs = require('fs').promises;
 const path = require('path');
+const ContentFilter = require('./contentFilter');
 
 class JsonReader {
     constructor() {
         this.jsonDir = path.resolve(process.cwd(), 'data/rebuild/json');
+        this.contentFilter = new ContentFilter();
         console.log(`JsonReader初始化，JSON目录: ${this.jsonDir}`);
+    }
+    
+    /**
+     * 初始化内容过滤器
+     */
+    async initializeContentFilter() {
+        try {
+            await this.contentFilter.loadConfig();
+            const stats = this.contentFilter.getFilterStats();
+            console.log('内容过滤器初始化完成:', stats);
+        } catch (error) {
+            console.warn('内容过滤器初始化失败:', error);
+        }
     }
     
     /**
@@ -269,8 +284,17 @@ class JsonReader {
                 messages: messages
             };
             
-            console.log(`数据标准化完成`);
-            return result;
+            console.log(`数据标准化完成，thread_id: ${result.threadInfo.thread_id}`);
+            
+            // 应用内容过滤（新增）
+            if (!this.contentFilter.configLoaded) {
+                await this.initializeContentFilter();
+            }
+            
+            const filteredResult = this.contentFilter.filterThreadData(result);
+            console.log(`内容过滤完成`);
+            
+            return filteredResult;
             
         } catch (error) {
             console.error('读取JSON文件时出错:', error);
@@ -395,6 +419,9 @@ class JsonReader {
      */
     async readMultipleThreadsData(jsonFiles, maxConcurrency = 5) {
         console.log(`开始并行读取 ${jsonFiles.length} 个JSON文件，最大并发数: ${maxConcurrency}`);
+        
+        // 预先初始化内容过滤器（新增）
+        await this.initializeContentFilter();
         
         const results = [];
         const errors = [];

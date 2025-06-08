@@ -240,6 +240,22 @@ async function execute(interaction) {
                 excelDataLoaded = false;
             }
             
+            // 显示内容过滤器状态（新增）
+            await progressManager.updateProgress('🔍 正在初始化内容过滤器...');
+            try {
+                const jsonReader = new JsonReader();
+                await jsonReader.initializeContentFilter();
+                const filterStats = jsonReader.contentFilter.getFilterStats();
+                if (filterStats.enabled) {
+                    await progressManager.updateProgress(`✅ 内容过滤器已启用 (关键词: ${filterStats.keywordCount}, 模式: ${filterStats.patternCount})`);
+                } else {
+                    await progressManager.updateProgress('⚠️ 内容过滤器已禁用');
+                }
+            } catch (error) {
+                console.warn('内容过滤器初始化失败:', error);
+                await progressManager.updateProgress('⚠️ 内容过滤器初始化失败，继续重建...');
+            }
+            
             // 初始化其他组件
             const jsonReader = new JsonReader();
             const threadRebuilder = new ThreadRebuilder(targetForum, useWebhook);
