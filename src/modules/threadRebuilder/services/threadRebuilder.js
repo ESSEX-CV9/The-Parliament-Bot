@@ -354,34 +354,44 @@ class ThreadRebuilder {
      * 处理单条消息
      */
     async processMessage(thread, message, isLastInGroup = false, groupFirstMessageTimestamp = null) {
-        const messageType = message.messageType || 'normal';
-        
-        console.log(`处理消息类型: ${messageType}, ID: ${message.messageId}`);
-        
         let sentMessage = null;
         
-        switch (messageType) {
+        switch (message.messageType) {
             case 'normal':
                 sentMessage = await this.sendNormalMessage(thread, message, isLastInGroup, groupFirstMessageTimestamp);
                 break;
+            
             case 'reply':
                 sentMessage = await this.sendReplyMessage(thread, message, isLastInGroup, groupFirstMessageTimestamp);
                 break;
-            case 'system_notification':
+            
+            case 'system_message_add':
+            case 'system_message_remove':
+            case 'system_message_join':
+            case 'system_message_leave':
+            case 'system_message_boost':
+            case 'system_message_follow':
+            case 'system_message_pin':
+            case 'system_message_unpin':
                 sentMessage = await this.sendSystemMessage(thread, message, isLastInGroup, groupFirstMessageTimestamp);
                 break;
+            
             case 'thread_update':
                 sentMessage = await this.sendThreadUpdateMessage(thread, message, isLastInGroup, groupFirstMessageTimestamp);
                 break;
+            
             default:
-                console.warn(`未知消息类型: ${messageType}, 按normal处理`);
+                console.warn(`未知消息类型: ${message.messageType}`);
                 sentMessage = await this.sendNormalMessage(thread, message, isLastInGroup, groupFirstMessageTimestamp);
+                break;
         }
         
-        // 记录消息ID映射
-        if (sentMessage && message.messageId) {
+        // 只有当消息成功发送时才记录ID映射
+        if (sentMessage && sentMessage.id) {
             this.messageIdMap.set(message.messageId, sentMessage.id);
             console.log(`记录消息ID映射: ${message.messageId} -> ${sentMessage.id}`);
+        } else if (sentMessage === null) {
+            console.log(`消息被跳过，不记录ID映射: ${message.messageId}`);
         }
         
         return sentMessage;
@@ -508,43 +518,47 @@ class ThreadRebuilder {
      */
     async sendNormalMessage(thread, message, isLastInGroup = false, groupFirstMessageTimestamp = null) {
         const messageContent = this.messageProcessor.formatMessage(message);
+        
+        // 如果消息内容为空或只包含空白字符，跳过这条消息
+        if (!messageContent.content || messageContent.content.trim() === '') {
+            console.log(`跳过空消息: ${message.messageId} (可能因SVG emoji过滤)`);
+            return null; // 返回null表示消息被跳过
+        }
+        
         const formattedTime = this.formatTimestamp(message.timestamp);
         
-        // 确保内容不为空
-        if (!messageContent.content || messageContent.content.trim() === '') {
-            console.warn(`消息内容为空，使用默认内容: ${message.messageId}`);
-            messageContent.content = '[空消息内容]';
-        }
+        console.log(`发送普通消息, ID: ${message.messageId}`);
         
         // 发送主消息
         let mainMessage;
         
         if (this.useWebhook && message.author.userId) {
-            // 使用Webhook模拟原作者
+            // 使用Webhook发送
             try {
                 mainMessage = await this.webhookManager.sendAsUser(
-                    thread, 
-                    message.author, 
-                    {
+                    thread,
+                    message.author,
+                    { 
                         content: messageContent.content,
                         files: messageContent.files
                     }
                 );
             } catch (error) {
                 console.error(`Webhook发送失败，尝试使用BOT发送:`, error);
-                // 如果Webhook失败，回退到BOT模式
-                const content = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${messageContent.content}`;
+                // 回退到BOT模式
+                const botContent = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${messageContent.content}`;
+                
                 mainMessage = await thread.send({
-                    content: content,
+                    content: botContent,
                     files: messageContent.files
                 });
             }
         } else {
-            // 使用BOT身份发送，添加作者信息
-            const content = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${messageContent.content}`;
+            // 使用BOT身份发送
+            const botContent = `**${message.author.displayName || message.author.username}** (${formattedTime})\n${messageContent.content}`;
             
             mainMessage = await thread.send({
-                content: content,
+                content: botContent,
                 files: messageContent.files
             });
         }
@@ -570,13 +584,11 @@ class ThreadRebuilder {
                     );
                 } catch (error) {
                     console.error(`Webhook发送emoji失败，尝试使用BOT发送:`, error);
-                    // 回退到BOT模式（不显示作者信息，保持分组效果）
                     await thread.send({
                         content: emojiContent
                     });
                 }
             } else {
-                // 使用BOT身份发送emoji（不显示作者信息，保持分组效果）
                 await thread.send({
                     content: emojiContent
                 });
@@ -613,7 +625,7 @@ class ThreadRebuilder {
             }
         }
         
-        return mainMessage; // 返回主消息用于ID映射和反应处理
+        return mainMessage;
     }
 
     /**
@@ -621,18 +633,19 @@ class ThreadRebuilder {
      */
     async sendReplyMessage(thread, message, isLastInGroup = false, groupFirstMessageTimestamp = null) {
         const messageContent = this.messageProcessor.formatMessage(message);
+        
+        // 如果消息内容为空，跳过这条消息
+        if (!messageContent.content || messageContent.content.trim() === '') {
+            console.log(`跳过空回复消息: ${message.messageId} (可能因SVG emoji过滤)`);
+            return null;
+        }
+        
         const formattedTime = this.formatTimestamp(message.timestamp);
         
         console.log(`\n=== 处理回复消息 ===`);
         console.log(`消息ID: ${message.messageId}`);
         console.log(`回复到 (replyTo): ${message.replyTo ? message.replyTo.messageId : '无'}`);
         console.log(`当前消息ID映射大小: ${this.messageIdMap.size}`);
-        
-        // 确保内容不为空
-        if (!messageContent.content || messageContent.content.trim() === '') {
-            console.warn(`回复消息内容为空，使用默认内容: ${message.messageId}`);
-            messageContent.content = '[空回复内容]';
-        }
         
         // 生成回复引用
         let replyQuote = '';

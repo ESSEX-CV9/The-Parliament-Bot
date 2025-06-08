@@ -368,9 +368,9 @@ async function execute(interaction) {
         
         const errorMessage = `命令处理失败: ${error.message}`;
         
-        if (interaction.deferred) {
+            if (interaction.deferred) {
             await interaction.editReply({ content: errorMessage });
-        } else {
+            } else {
             await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
         }
     }
@@ -480,7 +480,7 @@ async function processSerialWithProgress(jsonFiles, targetForum, useWebhook, pro
             }
             
             const result = await rebuilder.rebuildThread(
-                threadData,
+                threadData, 
                 (current, total) => {
                     const percentage = Math.round((current / total) * 100);
                     progressManager.updateProgress(`${progress} 📝 ${threadData.threadInfo.title}: ${current}/${total} (${percentage}%)`).catch(() => {});

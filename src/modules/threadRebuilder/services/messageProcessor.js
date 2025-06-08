@@ -5,6 +5,18 @@ const { URL } = require('url');
 
 class MessageProcessor {
     /**
+     * 检查是否为需要过滤的SVG emoji
+     */
+    isSvgEmojiToFilter(emojiUrl) {
+        if (!emojiUrl || typeof emojiUrl !== 'string') {
+            return false;
+        }
+        
+        // 检查是否为Twitter emoji的SVG格式
+        return emojiUrl.includes('cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/');
+    }
+    
+    /**
      * 格式化消息内容 - 支持分离文字和emoji
      */
     formatMessage(message) {
@@ -15,14 +27,25 @@ class MessageProcessor {
         
         // 处理纯emoji消息
         if (message.content.isEmojiOnly && message.content.emojis && message.content.emojis.length > 0) {
-            // 如果是纯emoji消息，直接返回emoji的URL
-            const emojiUrls = message.content.emojis
-                .filter(emoji => emoji.url) // 只处理有URL的emoji
-                .map(emoji => emoji.url);
+            // 过滤掉SVG格式的emoji
+            const filteredEmojis = message.content.emojis.filter(emoji => 
+                emoji.url && !this.isSvgEmojiToFilter(emoji.url)
+            );
             
-            if (emojiUrls.length > 0) {
+            if (filteredEmojis.length > 0) {
+                const emojiUrls = filteredEmojis.map(emoji => emoji.url);
                 return {
-                    content: emojiUrls.join('\n'), // 每个emoji URL一行
+                    content: emojiUrls.join('\n'),
+                    files: [],
+                    embeds: [],
+                    isEmojiMessage: true,
+                    needsSeparation: false
+                };
+            } else {
+                // 如果所有emoji都被过滤掉了，返回空内容（会跳过这条消息）
+                console.log('所有emoji均为SVG格式，已过滤，跳过此消息');
+                return {
+                    content: '', // 空内容会在后续处理中被跳过
                     files: [],
                     embeds: [],
                     isEmojiMessage: true,
@@ -31,15 +54,20 @@ class MessageProcessor {
             }
         }
         
-        // 检查是否有有效的emoji
+        // 检查是否有有效的emoji（过滤掉SVG格式）
         const validEmojis = message.content.emojis?.filter(emoji => 
-            emoji && emoji.alt && emoji.alt !== '__' && emoji.alt !== 'emoj_97' && emoji.url
+            emoji && 
+            emoji.alt && 
+            emoji.alt !== '__' && 
+            emoji.alt !== 'emoj_97' && 
+            emoji.url &&
+            !this.isSvgEmojiToFilter(emoji.url) // 添加SVG过滤
         ) || [];
         
         // 如果消息内容为空，检查其他信息
         if (!content || content.trim() === '') {
             if (validEmojis.length > 0) {
-                // 如果有emoji URL，使用URL
+                // 如果有有效的emoji URL，使用URL
                 content = validEmojis.map(emoji => emoji.url).join('\n');
                 return {
                     content: content,
@@ -104,11 +132,13 @@ class MessageProcessor {
             separateEmojis: []
         };
         
-        // 检查是否需要分离emoji
+        // 检查是否需要分离emoji（过滤掉SVG格式）
         if (validEmojis.length > 0 && content.trim() && !message.content.isEmojiOnly) {
-            // 有文字内容且有emoji，需要分离
+            // 有文字内容且有有效emoji，需要分离
             result.needsSeparation = true;
             result.separateEmojis = validEmojis.map(emoji => emoji.url);
+            
+            console.log(`分离emoji: 原始${message.content.emojis?.length || 0}个，过滤后${validEmojis.length}个`);
         }
         
         // 处理附件 - 使用 -# 格式
