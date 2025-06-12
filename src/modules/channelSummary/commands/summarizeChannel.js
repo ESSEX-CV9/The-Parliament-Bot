@@ -4,7 +4,8 @@ const { SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder } = require(
 const { parseTimeInput, validateTimeRange } = require('../utils/timeParser');
 const { collectMessages } = require('../services/messageCollector');
 const { generateSummary } = require('../services/aiSummaryService');
-const { generateSummaryJSON, saveToTempFile, cleanupTempFiles } = require('../services/jsonExporter');
+const { generateMessagesJSON, saveToTempFile, cleanupTempFiles } = require('../services/jsonExporter');
+const { formatSummaryForDiscord, generateSummaryText, generatePlainTextSummary, splitLongText, createSummaryTextFile } = require('../utils/summaryFormatter');
 const config = require('../config/summaryConfig');
 
 const data = new SlashCommandBuilder()
@@ -22,6 +23,7 @@ const data = new SlashCommandBuilder()
 
 async function execute(interaction) {
     try {
+        // 先私密回复，开始处理
         await interaction.deferReply({ ephemeral: true });
         
         // 检查频道类型
@@ -69,11 +71,11 @@ async function execute(interaction) {
         // 生成AI总结
         const aiSummary = await generateSummary(messages, channelInfo);
         
-        await interaction.editReply('📝 正在生成JSON文件...');
+        await interaction.editReply('📝 正在生成文件和总结...');
         
-        // 生成并保存JSON
-        const summaryData = generateSummaryJSON(channelInfo, messages, aiSummary);
-        const fileInfo = await saveToTempFile(summaryData, channelInfo.name);
+        // 生成并保存JSON（只包含消息数据）
+        const messagesData = generateMessagesJSON(channelInfo, messages);
+        const fileInfo = await saveToTempFile(messagesData, channelInfo.name);
         
         // 创建附件
         const attachment = new AttachmentBuilder(fileInfo.filePath, { 
@@ -83,10 +85,10 @@ async function execute(interaction) {
         // 清理过期文件
         cleanupTempFiles(config.FILE_RETENTION_HOURS).catch(console.warn);
         
-        // 发送结果
-        const embed = {
+        // 先私密回复完成信息和文件
+        const completionEmbed = {
             color: 0x00ff00,
-            title: '📊 频道内容总结完成',
+            title: '✅ 频道内容总结完成',
             fields: [
                 { name: '频道', value: channelInfo.name, inline: true },
                 { name: '消息数量', value: messages.length.toString(), inline: true },
@@ -94,14 +96,56 @@ async function execute(interaction) {
                 { name: '时间范围', value: `${startTimeStr} 至 ${endTimeStr}`, inline: false },
                 { name: '文件大小', value: `${Math.round(fileInfo.size / 1024)} KB`, inline: true }
             ],
+            description: '📁 消息数据已导出到JSON文件\n🤖 AI总结将以公开消息发送',
             timestamp: new Date().toISOString()
         };
         
         await interaction.editReply({
-            content: '✅ 总结完成！请查看附件中的详细JSON文件。',
-            embeds: [embed],
+            content: '处理完成！AI总结即将以公开消息发送...',
+            embeds: [completionEmbed],
             files: [attachment]
         });
+        
+        // 发送公开的AI总结消息
+        const plainTextSummary = generatePlainTextSummary(aiSummary, channelInfo, messages.length);
+        const summaryParts = splitLongText(plainTextSummary);
+        
+        // 发送总结的开头信息
+        await interaction.channel.send(
+            `📋 **频道内容总结** (由 ${interaction.user.displayName} 发起)\n` +
+            `⏰ 时间范围: ${startTimeStr} 至 ${endTimeStr}`
+        );
+        
+        // 分段发送总结内容
+        for (let i = 0; i < summaryParts.length; i++) {
+            const part = summaryParts[i];
+            const isLastPart = i === summaryParts.length - 1;
+            
+            if (isLastPart && summaryParts.length > 1) {
+                // 最后一条消息，生成并附加txt文件
+                try {
+                    const textFile = await createSummaryTextFile(aiSummary, channelInfo, messages.length);
+                    const textAttachment = new AttachmentBuilder(textFile.filePath, { 
+                        name: textFile.fileName 
+                    });
+                    
+                    await interaction.channel.send({
+                        content: `${part}\n\n📄 **完整总结已保存为文件**`,
+                        files: [textAttachment]
+                    });
+                } catch (fileError) {
+                    console.warn('创建文本文件失败:', fileError);
+                    await interaction.channel.send(part);
+                }
+            } else {
+                await interaction.channel.send(part);
+            }
+            
+            // 避免发送过快
+            if (i < summaryParts.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        }
         
     } catch (error) {
         console.error('频道总结命令执行失败:', error);

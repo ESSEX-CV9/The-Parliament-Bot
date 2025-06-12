@@ -4,11 +4,11 @@ const fs = require('fs').promises;
 const path = require('path');
 
 /**
- * 生成完整的总结JSON
+ * 生成消息数据JSON（不包含AI总结）
  */
-function generateSummaryJSON(channelInfo, messages, aiSummary) {
+function generateMessagesJSON(channelInfo, messages) {
     return {
-        summary_info: {
+        export_info: {
             channel_id: channelInfo.id,
             channel_name: channelInfo.name,
             channel_type: channelInfo.type,
@@ -17,18 +17,17 @@ function generateSummaryJSON(channelInfo, messages, aiSummary) {
                 end: channelInfo.timeRange.end
             },
             message_count: messages.length,
-            generated_at: new Date().toISOString(),
+            exported_at: new Date().toISOString(),
             generator: "Discord Bot Channel Summary"
         },
-        messages: messages,
-        ai_summary: aiSummary
+        messages: messages
     };
 }
 
 /**
  * 保存JSON到临时文件
  */
-async function saveToTempFile(summaryData, channelName) {
+async function saveToTempFile(messagesData, channelName) {
     try {
         // 创建临时目录
         const tempDir = path.join(process.cwd(), 'temp', 'summaries');
@@ -36,16 +35,16 @@ async function saveToTempFile(summaryData, channelName) {
         
         // 生成文件名
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const fileName = `${channelName}-summary-${timestamp}.json`;
+        const fileName = `${channelName}-messages-${timestamp}.json`;
         const filePath = path.join(tempDir, fileName);
         
         // 写入文件
-        await fs.writeFile(filePath, JSON.stringify(summaryData, null, 2), 'utf8');
+        await fs.writeFile(filePath, JSON.stringify(messagesData, null, 2), 'utf8');
         
         return {
             filePath,
             fileName,
-            size: JSON.stringify(summaryData).length
+            size: JSON.stringify(messagesData).length
         };
     } catch (error) {
         throw new Error(`保存文件失败: ${error.message}`);
@@ -77,7 +76,7 @@ async function cleanupTempFiles(retentionHours = 24) {
 }
 
 module.exports = {
-    generateSummaryJSON,
+    generateMessagesJSON,
     saveToTempFile,
     cleanupTempFiles
 };

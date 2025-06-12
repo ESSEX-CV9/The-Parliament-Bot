@@ -20,5 +20,14 @@ module.exports = {
         'YYYY-MM-DD HH:mm',
         'MM-DD',
         'HH:mm'
-    ]
+    ],
+
+    // 总结显示配置
+    SUMMARY_DISPLAY: {
+        MAX_TOPICS: 5,
+        MAX_ACTIVE_USERS: 5,
+        MAX_OVERVIEW_LENGTH: 1000,
+        MAX_MESSAGE_LENGTH: 1900,  // Discord消息最大长度限制
+        MESSAGE_SEND_DELAY: 500    // 分段发送间隔(ms)
+    }
 };

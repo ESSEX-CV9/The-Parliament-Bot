@@ -49,27 +49,47 @@ async function generateSummary(messages, channelInfo) {
  * 构建总结提示词
  */
 function buildSummaryPrompt(messages, channelInfo) {
-    const messageTexts = messages.map(msg => 
-        `${msg.author.display_name}: ${msg.content}`
-    ).join('\n');
+    // 按用户分组消息
+    const userMessages = {};
+    messages.forEach(msg => {
+        const username = msg.author.display_name;
+        if (!userMessages[username]) {
+            userMessages[username] = [];
+        }
+        userMessages[username].push(msg.content);
+    });
     
-    return `请对以下Discord频道的聊天记录进行总结分析：
+    // 构建用户发言汇总
+    const userSummaries = Object.entries(userMessages)
+        .map(([username, msgs]) => `${username}: ${msgs.join(' ')}`)
+        .join('\n\n');
+    
+    return `请对以下Discord频道的聊天记录进行详细分析，重点总结每个用户的发言主旨和讨论重点：
 
 频道信息：
 - 频道名称: ${channelInfo.name}
 - 消息数量: ${messages.length}
-- 时间范围: ${channelInfo.timeRange.start} 到 ${channelInfo.timeRange.end}
+- 参与用户数: ${Object.keys(userMessages).length}
+- 时间范围: ${new Date(channelInfo.timeRange.start).toLocaleString('zh-CN')} 到 ${new Date(channelInfo.timeRange.end).toLocaleString('zh-CN')}
 
-聊天记录：
-${messageTexts}
+用户发言内容：
+${userSummaries}
 
-请用中文提供以下格式的总结：
-1. 整体概况（2-3句话）
-2. 主要话题（列出3-5个关键话题）
-3. 活跃用户（按发言频率排序）
-4. 重要信息摘要
+请用中文提供详细的总结分析，格式如下：
 
-请保持总结简洁明了。`;
+## 讨论概览
+（整体讨论的背景和主要议题）
+
+## 用户发言分析
+（针对每个活跃用户，分析其发言的主要观点、关注重点和与其他用户异同点）
+
+## 核心议题总结
+（提炼出的主要讨论话题和结论）
+
+## 关键信息汇总
+（重要的决策、计划或结论性信息）
+
+请确保分析详细且有针对性，突出每个用户的独特观点和与其他用户异同点。`;
 }
 
 /**
