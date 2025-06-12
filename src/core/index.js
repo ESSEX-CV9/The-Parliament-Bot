@@ -75,11 +75,14 @@ const cleanupFullServerCommand = require('../modules/autoCleanup/commands/cleanu
 const stopCleanupTaskCommand = require('../modules/autoCleanup/commands/stopCleanupTask');
 const cleanupStatusCommand = require('../modules/autoCleanup/commands/cleanupStatus');
 const toggleAutoCleanupCommand = require('../modules/autoCleanup/commands/toggleAutoCleanup');
-// 新增豁免频道命令
+// 豁免频道命令
 const addExemptChannelCommand = require('../modules/autoCleanup/commands/addExemptChannel');
 const removeExemptChannelCommand = require('../modules/autoCleanup/commands/removeExemptChannel');
 const listExemptChannelsCommand = require('../modules/autoCleanup/commands/listExemptChannels');
 const cleanupSelectedChannelsCommand = require('../modules/autoCleanup/commands/cleanupSelectedChannels');
+
+// 频道总结系统命令
+const summarizeChannelCommand = require('../modules/channelSummary/commands/summarizeChannel');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -160,7 +163,7 @@ client.commands.set(cleanupFullServerCommand.data.name, cleanupFullServerCommand
 client.commands.set(stopCleanupTaskCommand.data.name, stopCleanupTaskCommand);
 client.commands.set(cleanupStatusCommand.data.name, cleanupStatusCommand);
 client.commands.set(toggleAutoCleanupCommand.data.name, toggleAutoCleanupCommand);
-// 新增豁免频道命令
+// 豁免频道命令
 client.commands.set(addExemptChannelCommand.data.name, addExemptChannelCommand);
 client.commands.set(removeExemptChannelCommand.data.name, removeExemptChannelCommand);
 client.commands.set(listExemptChannelsCommand.data.name, listExemptChannelsCommand);
@@ -172,6 +175,9 @@ client.commands.set(rebuildForumCommand.data.name, rebuildForumCommand);
 // 帖子重建系统命令
 client.commands.set(rebuildThreadsCommand.data.name, rebuildThreadsCommand);
 client.commands.set(deleteRebuiltMessageCommand.data.name, deleteRebuiltMessageCommand);
+
+// 频道总结系统命令
+client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
