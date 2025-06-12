@@ -1,0 +1,268 @@
+{
+  "summary_info": {
+    "channel_id": "1375969431083024414",
+    "channel_name": "聊天",
+    "channel_type": 0,
+    "time_range": {
+      "start": "2025-05-31T16:00:00.000Z",
+      "end": "2025-06-09T16:00:00.000Z"
+    },
+    "message_count": 18,
+    "generated_at": "2025-06-12T11:05:05.320Z",
+    "generator": "Discord Bot Channel Summary"
+  },
+  "messages": [
+    {
+      "message_id": "1380106056767635511",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "121221",
+      "timestamp": "2025-06-05T08:48:45.064Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380105641917415605",
+      "author": {
+        "display_name": "TEST_BOT",
+        "user_id": "1375053948062400572",
+        "username": "TEST_BOT"
+      },
+      "content": "[无文本内容]",
+      "timestamp": "2025-06-05T08:47:06.156Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380105635278098443",
+      "author": {
+        "display_name": "TEST_BOT",
+        "user_id": "1375053948062400572",
+        "username": "TEST_BOT"
+      },
+      "content": "[无文本内容]",
+      "timestamp": "2025-06-05T08:47:04.573Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": "1380105601262026853"
+    },
+    {
+      "message_id": "1380105601262026853",
+      "author": {
+        "display_name": "TEST_BOT",
+        "user_id": "1375053948062400572",
+        "username": "TEST_BOT"
+      },
+      "content": "[无文本内容]",
+      "timestamp": "2025-06-05T08:46:56.463Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046365027205140",
+      "author": {
+        "display_name": "TEST_BOT",
+        "user_id": "1375053948062400572",
+        "username": "TEST_BOT"
+      },
+      "content": "[无文本内容]",
+      "timestamp": "2025-06-05T04:51:33.444Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046357259096094",
+      "author": {
+        "display_name": "TEST_BOT",
+        "user_id": "1375053948062400572",
+        "username": "TEST_BOT"
+      },
+      "content": "[无文本内容]",
+      "timestamp": "2025-06-05T04:51:31.592Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": "1380046338686849054"
+    },
+    {
+      "message_id": "1380046338686849054",
+      "author": {
+        "display_name": "TEST_BOT",
+        "user_id": "1375053948062400572",
+        "username": "TEST_BOT"
+      },
+      "content": "[无文本内容]",
+      "timestamp": "2025-06-05T04:51:27.164Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046236635238430",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "这是测试文字\n这是测试文字",
+      "timestamp": "2025-06-05T04:51:02.833Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046234131238962",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "这是测试文字\n这是测试文字",
+      "timestamp": "2025-06-05T04:51:02.236Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046232348790906",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "这是测试文字\n这是测试文字",
+      "timestamp": "2025-06-05T04:51:01.811Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046230700298340",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "这是测试文字\n这是测试文字",
+      "timestamp": "2025-06-05T04:51:01.418Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046228699484202",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "这是测试文字\n这是测试文字",
+      "timestamp": "2025-06-05T04:51:00.941Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046226086432788",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "v",
+      "timestamp": "2025-06-05T04:51:00.318Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046223960178798",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "v",
+      "timestamp": "2025-06-05T04:50:59.811Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046222097911920",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "这是测试文字\n这是测试文字",
+      "timestamp": "2025-06-05T04:50:59.367Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046220105482300",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "这是测试文字\n这是测试文字",
+      "timestamp": "2025-06-05T04:50:58.892Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046217781841971",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "这是测试文字\n这是测试文字",
+      "timestamp": "2025-06-05T04:50:58.338Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    },
+    {
+      "message_id": "1380046215110201375",
+      "author": {
+        "display_name": "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "user_id": "757946225323671664",
+        "username": "uss_essex_cv9"
+      },
+      "content": "这是测试文字\n这是测试文字",
+      "timestamp": "2025-06-05T04:50:57.701Z",
+      "has_attachments": false,
+      "attachment_count": 0,
+      "reply_to": null
+    }
+  ],
+  "ai_summary": {
+    "overview": "1.  **整体概况：** 该Discord频道的聊天记录显示，主要由用户`🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴`进行测试性的发言。`TEST_BOT`发送了多条无文本信息，可能是在测试机器人的功能。\n\n2.  **主要话题：**\n    *   测试文字\n    *   机器人测试\n    *   无意义文本(\"v\")\n\n3.  **活跃用户：**\n    *   🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴\n    *   TEST_BOT\n\n4.  **重要信息摘要：** `🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴`用户在频道中重复发送测试文字，可能是在测试频道功能。`TEST_BOT`机器人发送了大量空消息，需要检查其设置和行为。\n",
+    "key_topics": [
+      "**"
+    ],
+    "participant_stats": {
+      "most_active_users": [
+        "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴",
+        "TEST_BOT"
+      ],
+      "total_participants": 2,
+      "message_distribution": {
+        "🅼🅰🆈🅱🅴🄽🄾🅃🅼🅰🆈🅱🅴": 12,
+        "TEST_BOT": 6
+      }
+    },
+    "generated_at": "2025-06-12T11:05:04.799Z"
+  }
+}
