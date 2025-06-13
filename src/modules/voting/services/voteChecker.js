@@ -108,33 +108,8 @@ async function handleExpiredVote(client, voteData) {
 
 async function sendVoteEndNotification(channel, voteData, resultEmbed) {
     try {
-        const totalVotes = Object.values(voteData.votes).reduce(
-            (total, voters) => total + voters.length, 0
-        );
-        
-        // 找出获胜选项
-        const sortedOptions = voteData.options.map(option => ({
-            option,
-            count: voteData.votes[option]?.length || 0
-        })).sort((a, b) => b.count - a.count);
-        
-        const winner = sortedOptions[0];
-        const isTie = sortedOptions.length > 1 && sortedOptions[0].count === sortedOptions[1].count;
-        
-        let notificationText = '';
-        if (totalVotes === 0) {
-            notificationText = '🔔 **投票结束通知**\n\n投票已结束，但没有人参与投票。';
-        } else if (isTie) {
-            const tiedOptions = sortedOptions.filter(opt => opt.count === winner.count);
-            const tiedNames = tiedOptions.map(opt => `"${opt.option}"`).join('、');
-            notificationText = `🔔 **投票结束通知**\n\n投票已结束！出现平局，${tiedNames} 并列第一，各获得 ${winner.count} 票。`;
-        } else {
-            notificationText = `🔔 **投票结束通知**\n\n投票已结束！获胜选项：**"${winner.option}"** (${winner.count}票)`;
-        }
-        
-        // 发送结束通知
+        // 只发送结果embed，不添加额外的文字说明
         await channel.send({
-            content: notificationText,
             embeds: [resultEmbed]
         });
         
