@@ -14,6 +14,7 @@ const { startProposalChecker } = require('../modules/proposal/services/proposalC
 const { startCourtChecker } = require('../modules/court/services/courtChecker');
 const { startSelfModerationChecker } = require('../modules/selfModeration/services/moderationChecker');
 const { startAttachmentCleanupScheduler } = require('../modules/selfModeration/services/archiveService');
+const { startVoteChecker } = require('../modules/voting/services/voteChecker');
 const { printTimeConfig } = require('./config/timeconfig');
 
 // 导入命令
@@ -83,6 +84,9 @@ const cleanupSelectedChannelsCommand = require('../modules/autoCleanup/commands/
 
 // 频道总结系统命令
 const summarizeChannelCommand = require('../modules/channelSummary/commands/summarizeChannel');
+
+// 投票系统命令
+const createVoteCommand = require('../modules/voting/commands/createVote');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -179,6 +183,9 @@ client.commands.set(deleteRebuiltMessageCommand.data.name, deleteRebuiltMessageC
 // 频道总结系统命令
 client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);
 
+// 投票系统命令
+client.commands.set(createVoteCommand.data.name, createVoteCommand);
+
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
     printTimeConfig();
@@ -194,6 +201,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     
     startAttachmentCleanupScheduler(readyClient);
     console.log('✅ 附件清理定时器已启动');
+    
+    startVoteChecker(readyClient);
+    console.log('✅ 投票检查器已启动');
     
     // 初始化自动清理系统
     console.log('✅ 自动清理系统已启动');

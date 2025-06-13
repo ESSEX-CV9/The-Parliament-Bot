@@ -11,6 +11,10 @@ const { processCourtVote } = require('../../modules/court/services/courtVotingSy
 // 自助管理相关处理
 const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
 
+// 投票系统相关处理
+const { createVoteSetupModal, handleVoteSetupSubmit } = require('../../modules/voting/components/voteSetupModal');
+const { handleVoteButton } = require('../../modules/voting/components/voteButtons');
+
 // 赛事系统相关处理
 const { createContestApplicationModal } = require('../../modules/contest/components/applicationModal');
 const { createSubmissionModal } = require('../../modules/contest/components/submissionModal');
@@ -87,7 +91,16 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('selfmod_')) {
                 // 处理自助管理按钮
                 await processSelfModerationInteraction(interaction);
-            } 
+            }
+            // === 投票系统按钮处理 ===
+            else if (interaction.customId === 'vote_setup') {
+                // 投票设置按钮
+                const modal = createVoteSetupModal();
+                await interaction.showModal(modal);
+            } else if (interaction.customId.startsWith('vote_') && !interaction.customId.startsWith('vote_setup')) {
+                // 处理投票按钮
+                await handleVoteButton(interaction);
+            }
             // === 赛事系统按钮处理 ===
             else if (interaction.customId === 'contest_application') {
                 // 赛事申请按钮
@@ -335,6 +348,11 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('selfmod_modal_')) {
                 // 自助管理模态窗口提交处理
                 await processSelfModerationInteraction(interaction);
+            }
+            // === 投票系统模态窗口处理 ===
+            else if (interaction.customId === 'vote_setup_modal') {
+                // 投票设置模态窗口提交
+                await handleVoteSetupSubmit(interaction);
             }
             // === 赛事系统模态窗口处理 ===
             else if (interaction.customId === 'contest_application') {
