@@ -23,12 +23,57 @@ const data = new SlashCommandBuilder()
 
 async function execute(interaction) {
     try {
-        // 先私密回复，开始处理
-        await interaction.deferReply({ ephemeral: true });
+        // 1. 添加更强的错误处理和验证
+        // 首先验证interaction和channel的有效性
+        if (!interaction || !interaction.isRepliable()) {
+            console.error('无效的交互对象');
+            return;
+        }
+
+        // 2. 改进channel获取逻辑，处理子区情况
+        let channel = interaction.channel;
         
-        // 检查频道类型
-        if (!interaction.channel.isThread() && !interaction.channel.isTextBased()) {
-            return await interaction.editReply('此命令只能在文字频道或线程中使用。');
+        // 如果在子区中，可能需要获取父频道
+        if (!channel) {
+            // 尝试从guild获取频道
+            try {
+                channel = await interaction.guild.channels.fetch(interaction.channelId);
+            } catch (error) {
+                console.error('无法获取频道信息:', error);
+                return;
+            }
+        }
+
+        // 3. 立即defer回复，避免3秒超时
+        try {
+            await interaction.deferReply({ ephemeral: true });
+        } catch (deferError) {
+            console.error('Defer回复失败:', deferError);
+            // 如果defer失败，尝试直接回复
+            try {
+                await interaction.reply({ 
+                    content: '❌ 交互已过期，请重新尝试命令。', 
+                    ephemeral: true 
+                });
+            } catch (replyError) {
+                console.error('直接回复也失败:', replyError);
+            }
+            return;
+        }
+        
+        // 4. 检查频道类型（添加null检查）
+        if (!channel) {
+            return await interaction.editReply('❌ 无法获取频道信息，请确保在正确的频道中使用此命令。');
+        }
+
+        // 改进频道类型检查
+        const isValidChannel = channel.isTextBased() || 
+                              (channel.isThread && channel.isThread()) ||
+                              channel.type === 0 || // GUILD_TEXT
+                              channel.type === 11;  // GUILD_PUBLIC_THREAD
+
+        if (!isValidChannel) {
+            return await interaction.editReply('❌ 此命令只能在文字频道或线程中使用。');
         }
         
         // 解析时间参数
@@ -45,7 +90,7 @@ async function execute(interaction) {
         
         // 收集消息
         const messages = await collectMessages(
-            interaction.channel, 
+            channel, 
             startTime, 
             endTime, 
             config.MAX_MESSAGES
@@ -59,9 +104,9 @@ async function execute(interaction) {
         
         // 准备频道信息
         const channelInfo = {
-            id: interaction.channel.id,
-            name: interaction.channel.name || '未命名频道',
-            type: interaction.channel.type,
+            id: channel.id,
+            name: channel.name || '未命名频道',
+            type: channel.type,
             timeRange: {
                 start: startTime.toISOString(),
                 end: endTime.toISOString()
@@ -155,7 +200,19 @@ async function execute(interaction) {
                            error.message.includes('时间范围') ?
                            error.message : '执行总结时发生错误，请稍后重试。';
         
-        await interaction.editReply(`❌ ${errorMessage}`);
+        // 5. 改进错误处理
+        try {
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply(`❌ ${errorMessage}`);
+            } else {
+                await interaction.reply({ 
+                    content: `❌ ${errorMessage}`, 
+                    ephemeral: true 
+                });
+            }
+        } catch (replyError) {
+            console.error('错误回复失败:', replyError);
+        }
     }
 }
 
