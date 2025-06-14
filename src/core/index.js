@@ -87,6 +87,8 @@ const summarizeChannelCommand = require('../modules/channelSummary/commands/summ
 
 // 投票系统命令
 const createVoteCommand = require('../modules/voting/commands/createVote');
+// 添加新的通知身份组命令
+const notificationRolesCommand = require('../modules/voting/commands/notificationRoles');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -185,6 +187,8 @@ client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);
 
 // 投票系统命令
 client.commands.set(createVoteCommand.data.name, createVoteCommand);
+// 注册新的通知身份组命令
+client.commands.set(notificationRolesCommand.data.name, notificationRolesCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);

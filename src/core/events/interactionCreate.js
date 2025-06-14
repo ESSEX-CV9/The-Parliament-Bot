@@ -14,6 +14,7 @@ const { processSelfModerationInteraction } = require('../../modules/selfModerati
 // 投票系统相关处理
 const { createVoteSetupModal, handleVoteSetupSubmit } = require('../../modules/voting/components/voteSetupModal');
 const { handleVoteButton } = require('../../modules/voting/components/voteButtons');
+const { handleNotificationButton } = require('../../modules/voting/components/notificationButtons');
 
 // 赛事系统相关处理
 const { createContestApplicationModal } = require('../../modules/contest/components/applicationModal');
@@ -100,6 +101,11 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('vote_') && !interaction.customId.startsWith('vote_setup')) {
                 // 处理投票按钮
                 await handleVoteButton(interaction);
+            }
+            // === 通知身份组系统按钮处理 ===
+            else if (interaction.customId === 'notification_roles_entry') {
+                // 通知身份组入口按钮
+                await handleNotificationButton(interaction);
             }
             // === 赛事系统按钮处理 ===
             else if (interaction.customId === 'contest_application') {
@@ -386,6 +392,8 @@ async function interactionCreateHandler(interaction) {
             if (interaction.customId.startsWith('submission_action_')) {
                 // 稿件管理操作选择
                 await processSubmissionAction(interaction);
+            } else if (interaction.customId === 'notification_roles_select') {
+                await handleNotificationButton(interaction);
             } else if (interaction.customId.startsWith('external_server_select_')) {
                 // 外部服务器投稿选择
                 const applicationId = interaction.customId.replace('external_server_select_', '');
