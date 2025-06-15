@@ -58,48 +58,40 @@ class ElectionScheduler {
             const elections = await ElectionData.getAll();
             const now = new Date();
 
-            for (const election of Object.values(elections)) {
+            for (const [electionId, election] of Object.entries(elections)) {
                 if (!election.schedule) continue;
 
-                const {
-                    registrationStartTime,
-                    registrationEndTime,
-                    votingStartTime,
-                    votingEndTime
-                } = election.schedule;
+                const regStartTime = new Date(election.schedule.registrationStartTime);
+                const regEndTime = new Date(election.schedule.registrationEndTime);
+                const voteStartTime = new Date(election.schedule.votingStartTime);
+                const voteEndTime = new Date(election.schedule.votingEndTime);
 
-                if (!registrationStartTime || !registrationEndTime || !votingStartTime || !votingEndTime) {
-                    continue;
-                }
-
-                const regStart = new Date(registrationStartTime);
-                const regEnd = new Date(registrationEndTime);
-                const voteStart = new Date(votingStartTime);
-                const voteEnd = new Date(votingEndTime);
-
-                // 检查需要开始报名的募选
-                if (election.status === 'setup' && now >= regStart && now <= regEnd) {
+                // 检查是否需要启用报名按钮（时间到了但按钮还是禁用状态）
+                if (election.status === 'setup' && now >= regStartTime && now < regEndTime) {
                     await this.startRegistrationPhase(election);
                 }
-
-                // 检查需要结束报名的募选
-                if (election.status === 'registration' && now >= regEnd) {
+                // 检查是否需要结束报名阶段
+                else if (election.status === 'registration' && now >= regEndTime) {
                     await this.endRegistrationPhase(election);
                 }
-
-                // 检查需要开始投票的募选
-                if (election.status === 'registration_ended' && now >= voteStart) {
+                // 检查是否需要开始投票阶段
+                else if (election.status === 'registration_ended' && now >= voteStartTime && now < voteEndTime) {
                     await this.startVotingPhase(election);
                 }
-
-                // 检查需要结束投票的募选
-                if (election.status === 'voting' && now >= voteEnd) {
+                // 检查是否需要结束投票阶段
+                else if (election.status === 'voting' && now >= voteEndTime) {
                     await this.endVotingPhase(election);
+                }
+                
+                // 检查是否需要更新报名入口状态（可能消息状态与实际时间不同步）
+                if ((election.status === 'setup' || election.status === 'registration') && 
+                    election.messageIds?.registrationEntryMessageId) {
+                    await this.updateRegistrationEntryStatus(election);
                 }
             }
 
         } catch (error) {
-            console.error('检查募选状态时出错:', error);
+            console.error('检查选举状态时出错:', error);
         }
     }
 
@@ -110,15 +102,93 @@ class ElectionScheduler {
         try {
             console.log(`开始报名阶段: ${election.name} (${election.electionId})`);
 
+            // 启用报名入口按钮
+            await this.enableRegistrationEntry(election);
+
+            // 更新选举状态
             await ElectionData.update(election.electionId, {
                 status: 'registration'
             });
 
-            // 可以在这里发送通知消息
+            // 发送通知
             await this.sendPhaseNotification(election, 'registration_started');
 
         } catch (error) {
             console.error(`开始报名阶段时出错 (${election.electionId}):`, error);
+        }
+    }
+
+    /**
+     * 启用报名入口按钮
+     */
+    async enableRegistrationEntry(election) {
+        try {
+            const registrationChannelId = election.channels?.registrationChannelId;
+            const registrationMessageId = election.messageIds?.registrationEntryMessageId;
+
+            if (!registrationChannelId || !registrationMessageId) {
+                console.log('未找到报名入口消息，跳过启用');
+                return;
+            }
+
+            const channel = this.client.channels.cache.get(registrationChannelId);
+            if (!channel) {
+                console.error(`找不到报名频道: ${registrationChannelId}`);
+                return;
+            }
+
+            const message = await channel.messages.fetch(registrationMessageId);
+            if (!message) {
+                console.error(`找不到报名入口消息: ${registrationMessageId}`);
+                return;
+            }
+
+            // 重新生成报名入口消息（此时时间检查会显示为可用状态）
+            const { createRegistrationEntryMessage } = require('../utils/messageUtils');
+            const updatedMessage = createRegistrationEntryMessage(election);
+
+            await message.edit(updatedMessage);
+            console.log('报名入口已启用');
+
+        } catch (error) {
+            console.error('启用报名入口时出错:', error);
+        }
+    }
+
+    /**
+     * 禁用报名入口按钮
+     */
+    async disableRegistrationEntry(election) {
+        try {
+            const registrationChannelId = election.channels?.registrationChannelId;
+            const registrationMessageId = election.messageIds?.registrationEntryMessageId;
+
+            if (!registrationChannelId || !registrationMessageId) {
+                console.log('未找到报名入口消息，跳过禁用');
+                return;
+            }
+
+            const channel = this.client.channels.cache.get(registrationChannelId);
+            if (!channel) {
+                console.error(`找不到报名频道: ${registrationChannelId}`);
+                return;
+            }
+
+            const message = await channel.messages.fetch(registrationMessageId);
+            if (!message) {
+                console.error(`找不到报名入口消息: ${registrationMessageId}`);
+                return;
+            }
+
+            // 重新生成报名入口消息（此时时间检查会显示为已结束状态）
+            const { createRegistrationEntryMessage } = require('../utils/messageUtils');
+            const updatedMessage = createRegistrationEntryMessage(election);
+
+            await message.edit(updatedMessage);
+            console.log('报名入口已禁用');
+
+        } catch (error) {
+            console.error('禁用报名入口时出错:', error);
         }
     }
 
@@ -246,32 +316,61 @@ class ElectionScheduler {
      */
     async sendPhaseNotification(election, phase) {
         try {
-            // 如果设置了通知频道，发送通知消息
-            const channelId = election.channels?.registrationChannelId || election.channels?.votingChannelId;
-            if (!channelId) return;
-
-            const channel = this.client.channels.cache.get(channelId);
-            if (!channel) return;
-
+            let channelId = null;
             let message = '';
             let emoji = '';
 
+            // 根据阶段确定通知频道
             switch (phase) {
                 case 'registration_started':
-                    message = `📝 **${election.name}** 报名已开始！\n现在可以点击报名按钮参与募选了。\n @获取投票通知`;
+                    channelId = election.channels?.registrationChannelId;  // 报名通知放在报名频道
+                    message = `**${election.name}** 报名已开始！\n现在可以点击报名按钮参与选举了。`;
                     emoji = '📝';
                     break;
                 case 'voting_started':
-                    message = `🗳️ **${election.name}** 投票已开始！\n报名已结束，现在开始投票环节。`;
+                    channelId = election.channels?.votingChannelId;  // 投票通知放在投票频道
+                    message = `**${election.name}** 投票已开始！\n报名已结束，现在开始投票环节。`;
                     emoji = '🗳️';
                     break;
                 default:
                     return;
             }
 
+            if (!channelId) return;
+
+            const channel = this.client.channels.cache.get(channelId);
+            if (!channel) return;
+
+            // 获取通知身份组配置
+            const { ElectionPermissions } = require('../data/electionDatabase');
+            const permissions = await ElectionPermissions.getByGuild(election.guildId);
+            
+            let notificationRole = null;
+            if (phase === 'registration_started') {
+                notificationRole = permissions.notificationRoles?.registration;
+            } else if (phase === 'voting_started') {
+                notificationRole = permissions.notificationRoles?.voting;
+            }
+
+            // 构建消息内容
+            let content = `${emoji} ${message}`;
+            if (notificationRole) {
+                content += `\n<@&${notificationRole}>`;
+            }
+
+            // 修复 allowedMentions 配置
+            const allowedMentions = {};
+            if (notificationRole) {
+                // 只使用 roles 数组，不使用 parse
+                allowedMentions.roles = [notificationRole];
+            } else {
+                // 如果没有要@的身份组，则不允许任何提及
+                allowedMentions.parse = [];
+            }
+
             await channel.send({
-                content: `${emoji} ${message}`,
-                allowedMentions: { parse: [] }
+                content: content,
+                allowedMentions: allowedMentions
             });
 
         } catch (error) {
@@ -280,11 +379,12 @@ class ElectionScheduler {
     }
 
     /**
-     * 发布募选结果
+     * 发布选举结果
      */
     async publishElectionResults(election, results) {
         try {
-            const channelId = election.channels?.votingChannelId || election.channels?.registrationChannelId;
+            // 选举结果发布在投票频道
+            const channelId = election.channels?.votingChannelId;
             if (!channelId) return;
 
             const channel = this.client.channels.cache.get(channelId);
@@ -292,13 +392,34 @@ class ElectionScheduler {
 
             const resultEmbed = createElectionResultEmbed(election, results);
             
+            // 获取投票阶段通知身份组（结果公布也使用投票阶段的身份组）
+            const { ElectionPermissions } = require('../data/electionDatabase');
+            const permissions = await ElectionPermissions.getByGuild(election.guildId);
+            const notificationRole = permissions.notificationRoles?.voting;
+
+            let content = `🏆 **${election.name}** 选举结果公布！`;
+            if (notificationRole) {
+                content += `\n<@&${notificationRole}>`;
+            }
+            
+            // 修复 allowedMentions 配置
+            const allowedMentions = {};
+            if (notificationRole) {
+                // 只使用 roles 数组，不使用 parse
+                allowedMentions.roles = [notificationRole];
+            } else {
+                // 如果没有要@的身份组，则不允许任何提及
+                allowedMentions.parse = [];
+            }
+            
             await channel.send({
-                content: `🏆 **${election.name}** 募选结果公布！`,
-                embeds: [resultEmbed]
+                content: content,
+                embeds: [resultEmbed],
+                allowedMentions: allowedMentions
             });
 
         } catch (error) {
-            console.error('发布募选结果时出错:', error);
+            console.error('发布选举结果时出错:', error);
         }
     }
 
@@ -342,60 +463,6 @@ class ElectionScheduler {
 
         } catch (error) {
             console.error(`结束报名阶段时出错 (${election.electionId}):`, error);
-        }
-    }
-
-    /**
-     * 禁用报名入口按钮
-     */
-    async disableRegistrationEntry(election) {
-        try {
-            const registrationChannelId = election.channels?.registrationChannelId;
-            const registrationMessageId = election.messageIds?.registrationEntryMessageId;
-
-            if (!registrationChannelId || !registrationMessageId) {
-                console.log('未找到报名入口消息，跳过禁用');
-                return;
-            }
-
-            const channel = this.client.channels.cache.get(registrationChannelId);
-            if (!channel) {
-                console.error(`找不到报名频道: ${registrationChannelId}`);
-                return;
-            }
-
-            const message = await channel.messages.fetch(registrationMessageId);
-            if (!message) {
-                console.error(`找不到报名入口消息: ${registrationMessageId}`);
-                return;
-            }
-
-            // 创建禁用的按钮
-            const { ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = require('discord.js');
-            const disabledButton = new ButtonBuilder()
-                .setCustomId('election_registration_closed')
-                .setLabel('报名已结束')
-                .setStyle(ButtonStyle.Secondary)
-                .setEmoji('🔒')
-                .setDisabled(true);
-
-            const row = new ActionRowBuilder().addComponents(disabledButton);
-
-            // 更新嵌入消息
-            const originalEmbed = message.embeds[0];
-            const updatedEmbed = EmbedBuilder.from(originalEmbed)
-                .setColor('#95a5a6') // 灰色表示已结束
-                .setTitle(`📝 ${election.name} - 报名已结束`);
-
-            await message.edit({
-                embeds: [updatedEmbed],
-                components: [row]
-            });
-
-            console.log('报名入口已禁用');
-
-        } catch (error) {
-            console.error('禁用报名入口时出错:', error);
         }
     }
 
@@ -446,9 +513,10 @@ class ElectionScheduler {
                     election.positions[registration.secondChoicePosition] : null;
 
                 const embed = new EmbedBuilder()
-                    .setTitle(`@${registration.userId}`)
+                    .setTitle(`候选人介绍`)
                     .setColor('#2ecc71')
                     .addFields(
+                        { name: '候选人', value: `<@${registration.userId}>`, inline: true },
                         { name: '第一志愿', value: firstPosition?.name || '未知职位', inline: true }
                     );
 
@@ -472,7 +540,12 @@ class ElectionScheduler {
                     { name: '报名时间', value: `<t:${Math.floor(new Date(registration.registeredAt).getTime() / 1000)}:f>`, inline: true }
                 );
 
-                await channel.send({ embeds: [embed] });
+                await channel.send({ 
+                    embeds: [embed],
+                    allowedMentions: { 
+                        users: [registration.userId]  // 允许@指定用户
+                    }
+                });
 
                 // 延迟避免API限制
                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -541,6 +614,40 @@ class ElectionScheduler {
         } catch (error) {
             console.error('创建投票器时出错:', error);
             throw error;
+        }
+    }
+
+    /**
+     * 更新报名入口状态（确保消息状态与时间同步）
+     */
+    async updateRegistrationEntryStatus(election) {
+        try {
+            const registrationChannelId = election.channels?.registrationChannelId;
+            const registrationMessageId = election.messageIds?.registrationEntryMessageId;
+
+            if (!registrationChannelId || !registrationMessageId) return;
+
+            const channel = this.client.channels.cache.get(registrationChannelId);
+            if (!channel) return;
+
+            const message = await channel.messages.fetch(registrationMessageId).catch(() => null);
+            if (!message) return;
+
+            // 重新生成消息（会根据当前时间设置正确的按钮状态）
+            const { createRegistrationEntryMessage } = require('../utils/messageUtils');
+            const updatedMessage = createRegistrationEntryMessage(election);
+
+            // 只有当按钮状态需要改变时才更新消息
+            const currentButton = message.components[0]?.components[0];
+            const newButton = updatedMessage.components[0].components[0];
+            
+            if (currentButton?.data.disabled !== newButton.data.disabled) {
+                await message.edit(updatedMessage);
+                console.log(`已更新报名入口状态: ${election.name}`);
+            }
+
+        } catch (error) {
+            console.error('更新报名入口状态时出错:', error);
         }
     }
 }
