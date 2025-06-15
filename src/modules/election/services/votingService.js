@@ -312,8 +312,8 @@ async function createPositionAnonymousVotingPoll(channel, election, positionId, 
             .setColor('#9b59b6');
 
         // 显示候选人列表（不显示自我介绍，避免消息过长）
-        const candidateList = allCandidates.map((candidate, index) => {
-            let info = `**${index + 1}. ${candidate.displayName}**`;
+        const candidateList = allCandidates.map((candidate) => {
+            let info = `<@${candidate.userId}>`;  // 修改：使用@提及替代序号+昵称
             if (candidate.choiceType === 'second') {
                 info += ' (第二志愿)';
             }
@@ -321,8 +321,7 @@ async function createPositionAnonymousVotingPoll(channel, election, positionId, 
         }).join('\n');
 
         embed.addFields(
-            { name: '候选人列表', value: candidateList, inline: false },
-            { name: '投票说明', value: '• 点击下方按钮进行投票\n• 每人只能投票一次\n• 投票后不可修改', inline: false }
+            { name: '候选人列表', value: candidateList, inline: false }
         );
 
         // 创建匿名投票按钮
@@ -350,8 +349,7 @@ async function createPositionAnonymousVotingPoll(channel, election, positionId, 
         console.log(`职位 ${position.name} 的匿名投票器已创建`);
 
     } catch (error) {
-        console.error(`创建职位 ${position.name} 匿名投票器时出错:`, error);
-        throw error;
+        console.error('创建匿名投票器时出错:', error);
     }
 }
 

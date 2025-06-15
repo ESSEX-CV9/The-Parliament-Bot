@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { ElectionData } = require('../data/electionDatabase');
-const { validatePermission } = require('../utils/validationUtils');
+const { validateAdminPermission } = require('../utils/validationUtils');
 const { createRegistrationEntryMessage, createErrorEmbed, createSuccessEmbed } = require('../utils/messageUtils');
 
 module.exports = {
@@ -23,9 +23,9 @@ module.exports = {
         try {
             await interaction.deferReply({ ephemeral: true });
 
-            // 验证权限
-            if (!validatePermission(interaction.member, [])) {
-                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以设置选举入口');
+            // 验证权限 - 使用核心权限管理器
+            if (!validateAdminPermission(interaction.member)) {
+                const errorEmbed = createErrorEmbed('权限不足', '只有管理员或指定身份组成员可以设置选举入口');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 

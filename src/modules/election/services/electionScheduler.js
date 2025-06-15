@@ -360,7 +360,7 @@ class ElectionScheduler {
             const { EmbedBuilder } = require('discord.js');
             const introHeader = new EmbedBuilder()
                 .setTitle(`📝 ${election.name} - 候选人介绍`)
-                .setDescription('以下是所有候选人的自我介绍，按报名顺序排列：')
+                .setDescription('以下是所有候选人的自我介绍，排名不分先后：')
                 .setColor('#3498db')
                 .setTimestamp();
 
@@ -374,7 +374,7 @@ class ElectionScheduler {
                     election.positions[registration.secondChoicePosition] : null;
 
                 const embed = new EmbedBuilder()
-                    .setTitle(`${i + 1}. ${registration.userDisplayName}`)
+                    .setTitle(`@${registration.userId}`)
                     .setColor('#2ecc71')
                     .addFields(
                         { name: '第一志愿', value: firstPosition?.name || '未知职位', inline: true }

@@ -96,6 +96,9 @@ const setElectionPositionsCommand = require('../modules/election/commands/setEle
 const setElectionTimeScheduleCommand = require('../modules/election/commands/setElectionTimeSchedule');
 const setupElectionEntryCommand = require('../modules/election/commands/setupElectionEntry');
 const getElectionStatusCommand = require('../modules/election/commands/getElectionStatus');
+// 新增的选举权限设置命令
+const setRegistrationRolesCommand = require('../modules/election/commands/setRegistrationRoles');
+const setVotingRolesCommand = require('../modules/election/commands/setVotingRoles');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -202,6 +205,9 @@ client.commands.set(setElectionPositionsCommand.data.name, setElectionPositionsC
 client.commands.set(setElectionTimeScheduleCommand.data.name, setElectionTimeScheduleCommand);
 client.commands.set(setupElectionEntryCommand.data.name, setupElectionEntryCommand);
 client.commands.set(getElectionStatusCommand.data.name, getElectionStatusCommand);
+// 注册新的选举权限设置命令
+client.commands.set(setRegistrationRolesCommand.data.name, setRegistrationRolesCommand);
+client.commands.set(setVotingRolesCommand.data.name, setVotingRolesCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
