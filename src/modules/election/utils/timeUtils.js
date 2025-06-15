@@ -17,7 +17,14 @@ function parseElectionTime(timeString) {
             throw new Error('时间格式不正确，请使用 YYYY-MM-DD HH:mm 格式');
         }
         
-        const date = new Date(timeString.replace(' ', 'T') + ':00.000Z');
+        // 将输入时间视为北京时间，使用更简单的方法
+        const [datePart, timePart] = timeString.split(' ');
+        const [year, month, day] = datePart.split('-').map(Number);
+        const [hour, minute] = timePart.split(':').map(Number);
+        
+        // 直接创建本地时间，不进行时区转换
+        const date = new Date(year, month - 1, day, hour, minute, 0, 0);
+        
         if (isNaN(date.getTime())) {
             throw new Error('无效的时间值');
         }
@@ -37,13 +44,13 @@ function parseElectionTime(timeString) {
 function formatChineseTime(date) {
     if (!date) return '未设置';
     
+    // 直接使用本地时间格式化，不指定时区
     const options = {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
         hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'Asia/Shanghai'
+        minute: '2-digit'
     };
     
     return new Intl.DateTimeFormat('zh-CN', options).format(date);
@@ -119,15 +126,9 @@ function validateTimeRange(startTime, endTime) {
             errors.push('开始时间必须早于结束时间');
         }
         
+        // 直接比较，不进行时区转换
         if (endTime <= now) {
             errors.push('结束时间必须在未来');
-        }
-        
-        // 检查时间范围是否过短
-        const duration = endTime - startTime;
-        const minDuration = 30 * 60 * 1000; // 30分钟
-        if (duration < minDuration) {
-            errors.push('时间范围至少需要30分钟');
         }
     }
     

@@ -43,6 +43,13 @@ const { createRejectionModal } = require('../../modules/contest/components/rejec
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../core/utils/database');
 
+const { 
+    handleAnonymousVoteStart,
+    handleAnonymousVoteSelect,
+    handleAnonymousVoteConfirm,
+    handleAnonymousVoteCancel
+} = require('../../modules/election/components/anonymousVotingComponents');
+
 async function interactionCreateHandler(interaction) {
     try {
         // 处理命令
@@ -127,6 +134,18 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('election_withdraw_registration_')) {
                 // 撤回报名按钮
                 await handleWithdrawRegistration(interaction);
+            } else if (interaction.customId.startsWith('election_start_anonymous_vote_')) {
+                // 开始匿名投票按钮
+                await handleAnonymousVoteStart(interaction);
+            } else if (interaction.customId.startsWith('election_anonymous_vote_select_')) {
+                // 匿名投票选择菜单
+                await handleAnonymousVoteSelect(interaction);
+            } else if (interaction.customId.startsWith('election_anonymous_vote_confirm_')) {
+                // 确认匿名投票按钮
+                await handleAnonymousVoteConfirm(interaction);
+            } else if (interaction.customId.startsWith('election_anonymous_vote_cancel_')) {
+                // 取消匿名投票按钮
+                await handleAnonymousVoteCancel(interaction);
             }
             // === 赛事系统按钮处理 ===
             else if (interaction.customId === 'contest_application') {
@@ -426,6 +445,9 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('election_select_second_choice_')) {
                 // 选举第二志愿选择
                 await handleSecondChoiceSelection(interaction);
+            } else if (interaction.customId.startsWith('election_anonymous_vote_select_')) {
+                // 匿名投票候选人选择菜单
+                await handleAnonymousVoteSelect(interaction);
             } else if (interaction.customId.startsWith('external_server_select_')) {
                 // 外部服务器投稿选择
                 const applicationId = interaction.customId.replace('external_server_select_', '');

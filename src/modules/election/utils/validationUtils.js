@@ -49,10 +49,10 @@ function validatePositions(positions) {
             errors.push(`职位 ${i + 1}: 职位名称不能超过20个字符`);
         }
         
-        // 验证职位ID格式
-        const idRegex = /^[a-zA-Z0-9_]+$/;
+        // 修改：验证数字ID格式
+        const idRegex = /^\d+$/;
         if (!idRegex.test(position.id)) {
-            errors.push(`职位 ${i + 1}: 职位ID只能包含字母、数字和下划线`);
+            errors.push(`职位 ${i + 1}: 职位ID必须是数字`);
         }
     }
     

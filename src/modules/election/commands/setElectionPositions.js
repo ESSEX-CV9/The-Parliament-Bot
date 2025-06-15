@@ -35,11 +35,12 @@ module.exports = {
             const positions = {};
             const positionPairs = positionConfig.split(',');
             
-            for (const pair of positionPairs) {
+            for (let i = 0; i < positionPairs.length; i++) {
+                const pair = positionPairs[i].trim();
                 const [name, count] = pair.split(':').map(s => s.trim());
                 
                 if (!name || !count) {
-                    const errorEmbed = createErrorEmbed('配置格式错误', '请使用正确的格式：职位名1:人数1,职位名2:人数2');
+                    const errorEmbed = createErrorEmbed('配置格式错误', `职位 ${i + 1}: 请使用正确的格式：职位名1:人数1,职位名2:人数2`);
                     return await interaction.editReply({ embeds: [errorEmbed] });
                 }
                 
@@ -49,11 +50,13 @@ module.exports = {
                     return await interaction.editReply({ embeds: [errorEmbed] });
                 }
                 
-                const positionId = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+                // 使用数字ID作为标识符
+                const positionId = (i + 1).toString();
+                
                 positions[positionId] = {
                     id: positionId,
-                    name,
-                    maxWinners,
+                    name: name,
+                    maxWinners: maxWinners,
                     description: ''
                 };
             }
@@ -119,4 +122,4 @@ module.exports = {
             }
         }
     }
-}; 
+};

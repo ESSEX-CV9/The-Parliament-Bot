@@ -17,13 +17,13 @@ module.exports = {
                 .setDescription('报名结束时间 (格式: YYYY-MM-DD HH:mm)')
                 .setRequired(true))
         .addStringOption(option =>
-            option.setName('投票开始时间')
-                .setDescription('投票开始时间 (格式: YYYY-MM-DD HH:mm，默认为报名结束时间)')
-                .setRequired(false))
-        .addStringOption(option =>
             option.setName('投票结束时间')
                 .setDescription('投票结束时间 (格式: YYYY-MM-DD HH:mm)')
                 .setRequired(true))
+        .addStringOption(option =>
+            option.setName('投票开始时间')
+                .setDescription('投票开始时间 (格式: YYYY-MM-DD HH:mm，默认为报名结束时间)')
+                .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction) {
@@ -48,8 +48,8 @@ module.exports = {
             // 解析时间参数
             const regStartStr = interaction.options.getString('报名开始时间');
             const regEndStr = interaction.options.getString('报名结束时间');
-            const voteStartStr = interaction.options.getString('投票开始时间') || regEndStr;
             const voteEndStr = interaction.options.getString('投票结束时间');
+            const voteStartStr = interaction.options.getString('投票开始时间') || regEndStr;
 
             // 解析时间
             const registrationStartTime = parseElectionTime(regStartStr);
@@ -140,4 +140,4 @@ module.exports = {
             }
         }
     }
-}; 
+};

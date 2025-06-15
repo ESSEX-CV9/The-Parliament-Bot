@@ -13,7 +13,7 @@ async function calculateElectionResults(electionId) {
             throw new Error('选举不存在');
         }
 
-        // 获取所有投票
+        // 获取所有投票和报名数据
         const votes = await VoteData.getByElection(electionId);
         const registrations = await RegistrationData.getByElection(electionId);
 
@@ -29,8 +29,8 @@ async function calculateElectionResults(electionId) {
             );
         }
 
-        // 处理第二志愿逻辑
-        const finalResults = await processSecondChoiceLogic(results, election.positions, registrations);
+        // 处理第二志愿逻辑和当选状态
+        const finalResults = await processElectionLogic(results, election.positions, registrations);
 
         return finalResults;
 
@@ -49,155 +49,248 @@ async function calculateElectionResults(electionId) {
  * @returns {object} 职位结果
  */
 async function calculatePositionResults(positionId, position, votes, registrations) {
-    // 找到该职位的投票数据
-    const positionVote = votes.find(vote => vote.positionId === positionId);
+    // 获取该职位的所有候选人（包括第一志愿和第二志愿）
+    const firstChoiceCandidates = registrations.filter(reg => 
+        reg.firstChoicePosition === positionId
+    );
+    const secondChoiceCandidates = registrations.filter(reg => 
+        reg.secondChoicePosition === positionId
+    );
+
+    // 合并候选人列表，正确标记志愿类型
+    const allCandidates = [];
     
-    if (!positionVote || !positionVote.votes) {
+    // 添加第一志愿候选人
+    firstChoiceCandidates.forEach(reg => {
+        allCandidates.push({
+            ...reg,
+            choiceType: 'first'
+        });
+    });
+    
+    // 添加第二志愿候选人（去重）
+    secondChoiceCandidates.forEach(reg => {
+        if (!allCandidates.find(c => c.userId === reg.userId)) {
+            allCandidates.push({
+                ...reg,
+                choiceType: 'second'
+            });
+        }
+    });
+
+    if (allCandidates.length === 0) {
         return {
             position: position,
             candidates: [],
-            winners: [],
-            totalVotes: 0
+            totalVotes: 0,
+            totalVoters: 0,
+            isVoid: true,
+            voidReason: '无人报名参选'
+        };
+    }
+
+    // 找到该职位的投票数据
+    const positionVote = votes.find(vote => vote.positionId === positionId);
+    
+    if (!positionVote || !positionVote.votes || Object.keys(positionVote.votes).length === 0) {
+        // 没有投票，但有候选人
+        const candidateResults = allCandidates.map(candidate => ({
+            userId: candidate.userId,
+            displayName: candidate.userDisplayName,
+            votes: 0,
+            isWinner: false,
+            choiceType: candidate.choiceType
+        }));
+
+        return {
+            position: position,
+            candidates: candidateResults,
+            totalVotes: 0,
+            totalVoters: 0,
+            isVoid: true,
+            voidReason: '无人投票，该职位选举作废'
         };
     }
 
     // 统计每个候选人的票数
     const candidateVotes = {};
     let totalVotes = 0;
+    let totalVoters = 0;
 
-    // 初始化候选人票数
-    for (const candidate of positionVote.candidates) {
+    // 初始化所有候选人的票数
+    for (const candidate of allCandidates) {
         candidateVotes[candidate.userId] = {
             userId: candidate.userId,
-            displayName: candidate.displayName,
-            choiceType: candidate.choiceType,
-            selfIntroduction: candidate.selfIntroduction,
-            votes: 0
+            displayName: candidate.userDisplayName,
+            votes: 0,
+            isWinner: false,
+            choiceType: candidate.choiceType
         };
     }
 
-    // 计算票数
+    // 计算票数和投票人数
+    totalVoters = Object.keys(positionVote.votes).length; // 参与投票的人数
+    
     for (const [voterId, candidateIds] of Object.entries(positionVote.votes)) {
         if (Array.isArray(candidateIds)) {
             for (const candidateId of candidateIds) {
                 if (candidateVotes[candidateId]) {
                     candidateVotes[candidateId].votes++;
+                    totalVotes++; // 总票数（可能大于投票人数，因为每人可投多票）
                 }
             }
-            totalVotes++;
         }
     }
 
-    // 转换为数组并按票数排序
+    // 转换为数组并按票数排序，第一志愿优先
     const candidateList = Object.values(candidateVotes)
-        .sort((a, b) => b.votes - a.votes);
-
-    // 确定获胜者
-    const winners = candidateList.slice(0, position.maxWinners);
+        .sort((a, b) => {
+            // 先按票数排序
+            if (b.votes !== a.votes) {
+                return b.votes - a.votes;
+            }
+            // 票数相同时，第一志愿优先
+            if (a.choiceType === 'first' && b.choiceType === 'second') {
+                return -1;
+            }
+            if (a.choiceType === 'second' && b.choiceType === 'first') {
+                return 1;
+            }
+            return 0;
+        });
 
     return {
         position: position,
         candidates: candidateList,
-        winners: winners,
-        totalVotes: totalVotes
+        totalVotes: totalVotes,
+        totalVoters: totalVoters,
+        isVoid: false
     };
 }
 
 /**
- * 处理第二志愿逻辑
+ * 处理选举逻辑和确定当选者
  * @param {object} preliminaryResults - 初步结果
  * @param {object} positions - 职位配置
  * @param {Array} registrations - 报名数据
  * @returns {object} 最终结果
  */
-async function processSecondChoiceLogic(preliminaryResults, positions, registrations) {
+async function processElectionLogic(preliminaryResults, positions, registrations) {
     const finalResults = JSON.parse(JSON.stringify(preliminaryResults));
     const winners = new Set(); // 记录已当选的用户
 
-    // 第一轮：处理第一志愿当选者
+    // 第一阶段：处理所有职位的第一志愿候选人
     for (const [positionId, result] of Object.entries(finalResults)) {
-        for (const winner of result.winners) {
-            winners.add(winner.userId);
-        }
-    }
+        if (result.isVoid) continue;
 
-    // 第二轮：处理第二志愿
-    for (const [positionId, result] of Object.entries(finalResults)) {
-        // 移除已在第一志愿当选的候选人
-        result.candidates = result.candidates.filter(candidate => {
-            // 如果是第二志愿且已在第一志愿当选，则移除
-            if (candidate.choiceType === 'second' && winners.has(candidate.userId)) {
-                return false;
-            }
-            return true;
-        });
+        const position = positions[positionId];
+        const maxWinners = position.maxWinners;
 
-        // 重新计算获胜者（排除已当选的人）
-        const availableCandidates = result.candidates.filter(candidate => 
-            !winners.has(candidate.userId)
-        );
+        // 只考虑第一志愿候选人
+        const firstChoiceCandidates = result.candidates
+            .filter(c => c.choiceType === 'first' && c.votes > 0)
+            .sort((a, b) => b.votes - a.votes);
 
-        // 按票数重新排序并选出获胜者
-        const newWinners = availableCandidates
-            .sort((a, b) => b.votes - a.votes)
-            .slice(0, positions[positionId].maxWinners);
-
-        result.winners = newWinners;
-
-        // 更新获胜者列表
-        for (const winner of newWinners) {
-            winners.add(winner.userId);
-        }
-    }
-
-    // 第三轮：为第一志愿落选者在第二志愿中补充机会
-    await processSecondChoiceOpportunities(finalResults, positions, registrations, winners);
-
-    return finalResults;
-}
-
-/**
- * 为第一志愿落选者在第二志愿中提供机会
- * @param {object} results - 当前结果
- * @param {object} positions - 职位配置
- * @param {Array} registrations - 报名数据
- * @param {Set} winners - 已当选者集合
- */
-async function processSecondChoiceOpportunities(results, positions, registrations, winners) {
-    // 找出第一志愿落选但有第二志愿的候选人
-    const secondChoiceCandidates = registrations.filter(reg => 
-        reg.secondChoicePosition && 
-        !winners.has(reg.userId)
-    );
-
-    for (const candidate of secondChoiceCandidates) {
-        const secondChoicePositionId = candidate.secondChoicePosition;
-        const secondChoiceResult = results[secondChoicePositionId];
-        
-        if (!secondChoiceResult) continue;
-
-        // 检查第二志愿职位是否还有空位
-        const maxWinners = positions[secondChoicePositionId].maxWinners;
-        const currentWinners = secondChoiceResult.winners.length;
-        
-        if (currentWinners < maxWinners) {
-            // 检查该候选人是否在第二志愿的候选人列表中但未当选
-            const candidateInSecondChoice = secondChoiceResult.candidates.find(
-                c => c.userId === candidate.userId
-            );
-            
-            if (candidateInSecondChoice && !winners.has(candidate.userId)) {
-                // 将候选人添加到获胜者列表
-                secondChoiceResult.winners.push(candidateInSecondChoice);
+        // 标记第一志愿当选者
+        for (let i = 0; i < Math.min(maxWinners, firstChoiceCandidates.length); i++) {
+            const candidate = firstChoiceCandidates[i];
+            // 在原数组中找到对应候选人并标记
+            const originalCandidate = result.candidates.find(c => c.userId === candidate.userId);
+            if (originalCandidate) {
+                originalCandidate.isWinner = true;
                 winners.add(candidate.userId);
-                
-                // 如果达到最大人数就停止
-                if (secondChoiceResult.winners.length >= maxWinners) {
-                    continue;
+            }
+        }
+    }
+
+    // 第二阶段：处理第二志愿候选人（填补空缺）
+    for (const [positionId, result] of Object.entries(finalResults)) {
+        if (result.isVoid) continue;
+
+        const position = positions[positionId];
+        const maxWinners = position.maxWinners;
+
+        // 计算当前已当选人数
+        const currentWinners = result.candidates.filter(c => c.isWinner).length;
+        const remainingSlots = maxWinners - currentWinners;
+
+        if (remainingSlots > 0) {
+            // 获取第二志愿候选人（排除已在其他职位当选的）
+            const secondChoiceCandidates = result.candidates
+                .filter(c => 
+                    c.choiceType === 'second' && 
+                    c.votes > 0 && 
+                    !winners.has(c.userId) && 
+                    !c.isWinner
+                )
+                .sort((a, b) => b.votes - a.votes);
+
+            // 标记第二志愿当选者
+            for (let i = 0; i < Math.min(remainingSlots, secondChoiceCandidates.length); i++) {
+                const candidate = secondChoiceCandidates[i];
+                // 在原数组中找到对应候选人并标记
+                const originalCandidate = result.candidates.find(c => c.userId === candidate.userId);
+                if (originalCandidate) {
+                    originalCandidate.isWinner = true;
+                    winners.add(candidate.userId);
                 }
             }
         }
     }
+
+    // 第三阶段：最终检查和清理
+    // 确保没有人在多个职位同时当选（优先第一志愿）
+    const finalWinners = new Set();
+    
+    // 先处理所有第一志愿当选者
+    for (const [positionId, result] of Object.entries(finalResults)) {
+        if (result.isVoid) continue;
+        
+        result.candidates.forEach(candidate => {
+            if (candidate.isWinner && candidate.choiceType === 'first') {
+                finalWinners.add(candidate.userId);
+            }
+        });
+    }
+    
+    // 再处理第二志愿当选者，如果已在第一志愿当选则取消第二志愿当选
+    for (const [positionId, result] of Object.entries(finalResults)) {
+        if (result.isVoid) continue;
+        
+        const position = positions[positionId];
+        const maxWinners = position.maxWinners;
+        
+        result.candidates.forEach(candidate => {
+            if (candidate.isWinner && candidate.choiceType === 'second' && finalWinners.has(candidate.userId)) {
+                // 取消第二志愿当选
+                candidate.isWinner = false;
+            } else if (candidate.isWinner && candidate.choiceType === 'second') {
+                finalWinners.add(candidate.userId);
+            }
+        });
+        
+        // 重新填补因取消第二志愿当选而空出的位置
+        const currentWinners = result.candidates.filter(c => c.isWinner).length;
+        const remainingSlots = maxWinners - currentWinners;
+        
+        if (remainingSlots > 0) {
+            const availableCandidates = result.candidates
+                .filter(c => 
+                    !c.isWinner && 
+                    c.votes > 0 && 
+                    !finalWinners.has(c.userId)
+                )
+                .sort((a, b) => b.votes - a.votes);
+            
+            for (let i = 0; i < Math.min(remainingSlots, availableCandidates.length); i++) {
+                const candidate = availableCandidates[i];
+                candidate.isWinner = true;
+                finalWinners.add(candidate.userId);
+            }
+        }
+    }
+
+    return finalResults;
 }
 
 /**
@@ -295,7 +388,7 @@ async function generateElectionReport(electionId) {
 module.exports = {
     calculateElectionResults,
     calculatePositionResults,
-    processSecondChoiceLogic,
+    processElectionLogic,
     getElectionStatistics,
     generateElectionReport
 }; 
