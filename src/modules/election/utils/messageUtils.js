@@ -339,10 +339,10 @@ function createElectionResultEmbed(election, results) {
             );
         }
     }
-
+    
     embed.setTimestamp()
         .setFooter({ text: '募选结果统计' });
-
+    
     return embed;
 }
 

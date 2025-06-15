@@ -223,6 +223,20 @@ function analyzeScenarioImpacts(scenario, allResults, registrations) {
                 positionId: secondPosition,
                 effect: `${winner.displayName}不再竞争此职位的第二志愿`
             });
+
+            // 检查该人在第二志愿是否已经被标记为当选，如果是则状态会受影响
+            const secondPositionResult = allResults[secondPosition];
+            if (secondPositionResult && !secondPositionResult.isVoid) {
+                const candidateInSecond = secondPositionResult.candidates.find(c => c.userId === winner.userId);
+                if (candidateInSecond && candidateInSecond.isWinner) {
+                    impacts.candidateChanges.push({
+                        candidateId: winner.userId,
+                        positionId: secondPosition,
+                        mayLose: true, // 第一志愿当选会导致第二志愿失去资格
+                        reason: '第一志愿当选后失去第二志愿资格'
+                    });
+                }
+            }
         }
     });
 
@@ -235,6 +249,20 @@ function analyzeScenarioImpacts(scenario, allResults, registrations) {
                 positionId: secondPosition,
                 effect: `${loser.displayName}可能在此职位的第二志愿中当选`
             });
+
+            // 检查该人在第二志愿的当选状态是否会受影响
+            const secondPositionResult = allResults[secondPosition];
+            if (secondPositionResult && !secondPositionResult.isVoid) {
+                const candidateInSecond = secondPositionResult.candidates.find(c => c.userId === loser.userId);
+                if (candidateInSecond && candidateInSecond.isWinner) {
+                    impacts.candidateChanges.push({
+                        candidateId: loser.userId,
+                        positionId: secondPosition,
+                        mayLose: false, // 不会失去，但状态不确定
+                        reason: '第一志愿结果影响第二志愿当选确定性'
+                    });
+                }
+            }
         }
     });
 
@@ -279,7 +307,7 @@ function assignCandidateStatuses(results, chainEffects) {
             // 检查是否确定当选
             if (candidate.isWinner) {
                 // 检查是否受其他并列影响
-                const isAffected = isAffectedByOtherTies(candidate, chainEffects);
+                const isAffected = isAffectedByOtherTies(candidate, chainEffects, positionId);
                 if (isAffected) {
                     candidate.statusInfo.status = CANDIDATE_STATUS.CONDITIONAL_WINNER;
                     candidate.statusInfo.notes = '当选状态受其他职位并列影响';
@@ -290,7 +318,7 @@ function assignCandidateStatuses(results, chainEffects) {
             }
 
             // 检查是否有递补机会
-            const hasReplacementChance = checkReplacementChance(candidate, result, chainEffects);
+            const hasReplacementChance = checkReplacementChance(candidate, result, chainEffects, positionId);
             if (hasReplacementChance) {
                 candidate.statusInfo.status = CANDIDATE_STATUS.POTENTIAL_REPLACEMENT;
                 candidate.statusInfo.notes = hasReplacementChance.reason;
@@ -305,15 +333,20 @@ function assignCandidateStatuses(results, chainEffects) {
  * 检查候选人是否受其他并列影响
  * @param {object} candidate - 候选人
  * @param {object} chainEffects - 连锁影响
+ * @param {string} currentPositionId - 当前检查的职位ID
  * @returns {boolean} 是否受影响
  */
-function isAffectedByOtherTies(candidate, chainEffects) {
-    // 简化实现：检查候选人是否在任何影响链中
+function isAffectedByOtherTies(candidate, chainEffects, currentPositionId) {
+    // 检查候选人在当前职位是否受其他职位并列影响
     for (const scenario of Object.values(chainEffects.scenarios)) {
-        if (scenario.impacts.candidateChanges.some(change => 
-            change.candidateId === candidate.userId
-        )) {
-            return true;
+        // 只关心其他职位的并列对当前职位的影响
+        if (scenario.positionId !== currentPositionId) {
+            if (scenario.impacts.candidateChanges.some(change => 
+                change.candidateId === candidate.userId && 
+                change.positionId === currentPositionId
+            )) {
+                return true;
+            }
         }
     }
     return false;
@@ -324,12 +357,26 @@ function isAffectedByOtherTies(candidate, chainEffects) {
  * @param {object} candidate - 候选人
  * @param {object} positionResult - 职位结果
  * @param {object} chainEffects - 连锁影响
+ * @param {string} positionId - 职位ID
  * @returns {object|null} 递补机会信息
  */
-function checkReplacementChance(candidate, positionResult, chainEffects) {
+function checkReplacementChance(candidate, positionResult, chainEffects, positionId) {
     // 检查是否是当选边界附近的候选人
     const candidateIndex = positionResult.candidates.findIndex(c => c.userId === candidate.userId);
     const winnerCount = positionResult.candidates.filter(c => c.isWinner).length;
+    
+    // 检查是否因为其他职位的并列影响而有递补机会
+    for (const scenario of Object.values(chainEffects.scenarios)) {
+        const relevantChange = scenario.impacts.candidateChanges.find(change => 
+            change.positionId === positionId && 
+            change.mayLose === true
+        );
+        if (relevantChange && candidateIndex < winnerCount + 3) {
+            return {
+                reason: '其他职位并列处理可能产生递补机会'
+            };
+        }
+    }
     
     // 如果是紧跟在当选者后面的候选人，可能有递补机会
     if (candidateIndex >= winnerCount && candidateIndex <= winnerCount + 2) {
