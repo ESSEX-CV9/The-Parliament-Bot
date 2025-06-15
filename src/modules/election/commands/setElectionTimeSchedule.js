@@ -124,7 +124,7 @@ module.exports = {
 
             const successEmbed = createSuccessEmbed(
                 '选举时间安排设置成功',
-                `**${election.name}**\n\n${timeInfo}\n\n✅ 接下来可以使用 \`/设置报名入口\` 创建报名入口`
+                `**${election.name}**\n\n${timeInfo}\n\n✅ 接下来可以使用 \`/设置选举入口\` 创建选举入口`
             );
 
             await interaction.editReply({ embeds: [successEmbed] });

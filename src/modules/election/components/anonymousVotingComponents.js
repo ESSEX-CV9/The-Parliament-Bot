@@ -9,7 +9,7 @@ const { ElectionData, VoteData } = require('../data/electionDatabase');
 const { createErrorEmbed, createSuccessEmbed } = require('../utils/messageUtils');
 
 /**
- * 处理匿名投票开始
+ * 处理投票开始
  */
 async function handleAnonymousVoteStart(interaction) {
     try {
@@ -54,7 +54,7 @@ async function handleAnonymousVoteStart(interaction) {
 
         const embed = new EmbedBuilder()
             .setTitle(`🗳️ ${vote.positionName} - 投票`)
-            .setDescription(`请选择你支持的候选人 (最多选择 ${vote.maxSelections} 人)\n\n🔒 你的投票是匿名，不会被公开`)
+            .setDescription(`请选择你支持的候选人 (最多选择 ${vote.maxSelections} 人)`)
             .setColor('#9b59b6');
 
         await interaction.editReply({
@@ -63,7 +63,7 @@ async function handleAnonymousVoteStart(interaction) {
         });
 
     } catch (error) {
-        console.error('处理匿名投票开始时出错:', error);
+        console.error('处理投票开始时出错:', error);
         const errorEmbed = createErrorEmbed('系统错误', '处理投票时发生错误，请稍后重试');
         
         if (interaction.deferred) {
@@ -75,7 +75,7 @@ async function handleAnonymousVoteStart(interaction) {
 }
 
 /**
- * 处理匿名投票选择
+ * 处理投票选择
  */
 async function handleAnonymousVoteSelect(interaction) {
     try {
@@ -133,14 +133,14 @@ async function handleAnonymousVoteSelect(interaction) {
         });
 
     } catch (error) {
-        console.error('处理匿名投票选择时出错:', error);
+        console.error('处理投票选择时出错:', error);
         const errorEmbed = createErrorEmbed('系统错误', '处理投票时发生错误，请稍后重试');
         await interaction.editReply({ embeds: [errorEmbed], components: [] });
     }
 }
 
 /**
- * 处理匿名投票确认
+ * 处理投票确认
  */
 async function handleAnonymousVoteConfirm(interaction) {
     try {
@@ -156,12 +156,12 @@ async function handleAnonymousVoteConfirm(interaction) {
         // voteId是从索引4到倒数第二个部分
         const voteId = parts.slice(4, -1).join('_');
 
-        // 记录匿名投票
+        // 记录投票
         await VoteData.addVote(voteId, interaction.user.id, selectedCandidates);
 
         const successEmbed = createSuccessEmbed(
             '投票成功',
-            '你的投票已记录，感谢参与选举！'
+            '你的投票已记录，感谢参与！'
         );
 
         await interaction.editReply({
@@ -170,14 +170,14 @@ async function handleAnonymousVoteConfirm(interaction) {
         });
 
     } catch (error) {
-        console.error('处理匿名投票确认时出错:', error);
+        console.error('处理投票确认时出错:', error);
         const errorEmbed = createErrorEmbed('系统错误', '记录投票时发生错误，请稍后重试');
         await interaction.editReply({ embeds: [errorEmbed], components: [] });
     }
 }
 
 /**
- * 处理匿名投票取消
+ * 处理投票取消
  */
 async function handleAnonymousVoteCancel(interaction) {
     try {
@@ -199,7 +199,7 @@ async function handleAnonymousVoteCancel(interaction) {
         });
 
     } catch (error) {
-        console.error('处理匿名投票取消时出错:', error);
+        console.error('处理投票取消时出错:', error);
     }
 }
 
