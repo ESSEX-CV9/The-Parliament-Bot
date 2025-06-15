@@ -15,6 +15,7 @@ const { startCourtChecker } = require('../modules/court/services/courtChecker');
 const { startSelfModerationChecker } = require('../modules/selfModeration/services/moderationChecker');
 const { startAttachmentCleanupScheduler } = require('../modules/selfModeration/services/archiveService');
 const { startVoteChecker } = require('../modules/voting/services/voteChecker');
+const { startElectionScheduler } = require('../modules/election/services/electionScheduler');
 const { printTimeConfig } = require('./config/timeconfig');
 
 // 导入命令
@@ -89,6 +90,12 @@ const summarizeChannelCommand = require('../modules/channelSummary/commands/summ
 const createVoteCommand = require('../modules/voting/commands/createVote');
 // 添加新的通知身份组命令
 const notificationRolesCommand = require('../modules/voting/commands/notificationRoles');
+
+// 选举系统命令
+const setElectionPositionsCommand = require('../modules/election/commands/setElectionPositions');
+const setElectionTimeScheduleCommand = require('../modules/election/commands/setElectionTimeSchedule');
+const setupRegistrationEntryCommand = require('../modules/election/commands/setupRegistrationEntry');
+const getElectionStatusCommand = require('../modules/election/commands/getElectionStatus');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -193,6 +200,12 @@ client.commands.set(createVoteCommand.data.name, createVoteCommand);
 // 注册新的通知身份组命令
 client.commands.set(notificationRolesCommand.data.name, notificationRolesCommand);
 
+// 选举系统命令
+client.commands.set(setElectionPositionsCommand.data.name, setElectionPositionsCommand);
+client.commands.set(setElectionTimeScheduleCommand.data.name, setElectionTimeScheduleCommand);
+client.commands.set(setupRegistrationEntryCommand.data.name, setupRegistrationEntryCommand);
+client.commands.set(getElectionStatusCommand.data.name, getElectionStatusCommand);
+
 // 自助文件上传系统命令
 client.commands.set(uploadCommand.data.name, uploadCommand);
 client.commands.set(whoisCommand.data.name, whoisCommand);
@@ -215,6 +228,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     
     startVoteChecker(readyClient);
     console.log('✅ 投票检查器已启动');
+    
+    startElectionScheduler(readyClient);
+    console.log('✅ 选举调度器已启动');
     
     // 初始化自动清理系统
     console.log('✅ 自动清理系统已启动');
