@@ -8,7 +8,7 @@ const {
     TextInputStyle 
 } = require('discord.js');
 const { ElectionData, RegistrationData } = require('../data/electionDatabase');
-const { validateRegistration, sanitizeInput } = require('../utils/validationUtils');
+const { validateRegistration, getRegistrationPermissionDetails, sanitizeInput } = require('../utils/validationUtils');
 const { 
     createRegistrationSuccessEmbed, 
     createErrorEmbed, 
@@ -22,12 +22,40 @@ async function handleRegistrationButton(interaction) {
     try {
         await interaction.deferReply({ ephemeral: true });
 
-        // 修复选举ID提取逻辑
-        // customId格式: election_register_election_1749951053733_0pb907
-        const customIdParts = interaction.customId.split('_');
-        const electionId = customIdParts.slice(2).join('_'); // 从索引2开始拼接所有部分
+        const parts = interaction.customId.split('_');
+        const electionId = parts.slice(2).join('_'); // 从index 2开始拼接
         const userId = interaction.user.id;
         const userDisplayName = interaction.user.displayName || interaction.user.username;
+        const guildId = interaction.guild.id;
+
+        // ===== 新增：详细权限验证 =====
+        console.log(`检查用户 ${interaction.user.tag} (${userId}) 的报名权限...`);
+        const permissionDetails = await getRegistrationPermissionDetails(interaction.member, guildId);
+        
+        if (!permissionDetails.hasPermission) {
+            console.log(`用户 ${interaction.user.tag} 报名权限不足`);
+            
+            let errorMessage = '你缺少可以参与此选举报名的身份组。';
+            
+            if (permissionDetails.allowedRoles && permissionDetails.allowedRoles.length > 0) {
+                const allowedRoleNames = permissionDetails.allowedRoles.map(role => `**${role.name}**`).join('、');
+                errorMessage += `\n\n**允许报名的身份组：**\n${allowedRoleNames}`;
+                
+                if (permissionDetails.userRoles && permissionDetails.userRoles.length > 0) {
+                    const userRoleNames = permissionDetails.userRoles.map(role => role.name).join('、');
+                    errorMessage += `\n\n**你当前的身份组：**\n${userRoleNames}`;
+                } else {
+                    errorMessage += `\n\n**你当前的身份组：**\n无特殊身份组`;
+                }
+            }
+            
+            errorMessage += '\n\n请联系服务器管理员了解报名身份组要求。';
+            
+            const errorEmbed = createErrorEmbed('权限不足', errorMessage);
+            return await interaction.editReply({ embeds: [errorEmbed] });
+        }
+        console.log(`用户 ${interaction.user.tag} 报名权限验证通过`);
+        // ===== 权限验证结束 =====
 
         // 获取选举信息
         const election = await ElectionData.getById(electionId);

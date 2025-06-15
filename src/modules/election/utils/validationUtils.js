@@ -2,6 +2,10 @@
  * 验证工具
  */
 
+// 导入核心权限管理器和选举权限配置
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
+const { ElectionPermissions } = require('../data/electionDatabase');
+
 /**
  * 验证职位配置
  * @param {Array} positions - 职位数组
@@ -174,16 +178,99 @@ function validateVoteData(candidateIds, maxSelections, availableCandidates) {
 }
 
 /**
- * 验证权限
+ * 验证管理员权限 - 使用核心权限管理器
+ * @param {object} member - Discord成员对象
+ * @returns {boolean} 是否有管理员权限
+ */
+function validateAdminPermission(member) {
+    return checkAdminPermission(member);
+}
+
+/**
+ * 检查用户是否有选举报名权限
+ * @param {object} member - Discord成员对象
+ * @param {string} guildId - 服务器ID
+ * @returns {boolean} 是否有报名权限
+ */
+async function validateRegistrationPermission(member, guildId) {
+    try {
+        // 管理员总是有权限
+        if (validateAdminPermission(member)) {
+            return true;
+        }
+        
+        // 获取服务器级别的权限配置
+        const permissions = await ElectionPermissions.getByGuild(guildId);
+        
+        // 如果没有设置特定权限，默认所有人都可以报名
+        if (!permissions.registrationRoles || permissions.registrationRoles.length === 0) {
+            return true;
+        }
+        
+        // 检查是否拥有指定的身份组
+        const userRoleIds = [];
+        if (member.roles.cache) {
+            member.roles.cache.forEach(role => {
+                userRoleIds.push(role.id);
+            });
+        }
+        
+        // 检查是否有匹配的身份组
+        return permissions.registrationRoles.some(roleId => userRoleIds.includes(roleId));
+        
+    } catch (error) {
+        console.error('检查报名权限时出错:', error);
+        return false;
+    }
+}
+
+/**
+ * 检查用户是否有选举投票权限
+ * @param {object} member - Discord成员对象
+ * @param {string} guildId - 服务器ID
+ * @returns {boolean} 是否有投票权限
+ */
+async function validateVotingPermission(member, guildId) {
+    try {
+        // 管理员总是有权限
+        if (validateAdminPermission(member)) {
+            return true;
+        }
+        
+        // 获取服务器级别的权限配置
+        const permissions = await ElectionPermissions.getByGuild(guildId);
+        
+        // 如果没有设置特定权限，默认所有人都可以投票
+        if (!permissions.votingRoles || permissions.votingRoles.length === 0) {
+            return true;
+        }
+        
+        // 检查是否拥有指定的身份组
+        const userRoleIds = [];
+        if (member.roles.cache) {
+            member.roles.cache.forEach(role => {
+                userRoleIds.push(role.id);
+            });
+        }
+        
+        // 检查是否有匹配的身份组
+        return permissions.votingRoles.some(roleId => userRoleIds.includes(roleId));
+        
+    } catch (error) {
+        console.error('检查投票权限时出错:', error);
+        return false;
+    }
+}
+
+/**
+ * 验证权限（保持原有函数向后兼容）
  * @param {object} member - Discord成员对象
  * @param {Array} requiredRoles - 需要的角色ID数组
  * @returns {boolean} 是否有权限
  */
 function validatePermission(member, requiredRoles = []) {
-    if (!member) return false;
-    
-    // 检查管理员权限
-    if (member.permissions && member.permissions.has('Administrator')) {
+    // 使用核心权限管理器检查管理员权限
+    if (validateAdminPermission(member)) {
         return true;
     }
     
@@ -247,12 +334,165 @@ function validateElectionStatus(currentStatus, requiredStatus) {
     return false;
 }
 
+/**
+ * 检查用户是否有选举报名权限（详细版本）
+ * @param {object} member - Discord成员对象
+ * @param {string} guildId - 服务器ID
+ * @returns {object} 权限检查结果 {hasPermission: boolean, allowedRoles: Array, userRoles: Array}
+ */
+async function getRegistrationPermissionDetails(member, guildId) {
+    try {
+        const result = {
+            hasPermission: false,
+            allowedRoles: [],
+            userRoles: [],
+            isAdmin: false
+        };
+
+        // 检查管理员权限
+        result.isAdmin = validateAdminPermission(member);
+        if (result.isAdmin) {
+            result.hasPermission = true;
+            return result;
+        }
+        
+        // 获取用户的身份组（过滤掉@everyone）
+        if (member.roles.cache) {
+            member.roles.cache.forEach(role => {
+                // 过滤掉@everyone身份组（@everyone的ID等于服务器ID）
+                if (role.id !== member.guild.id) {
+                    result.userRoles.push({
+                        id: role.id,
+                        name: role.name
+                    });
+                }
+            });
+        }
+        
+        // 获取服务器级别的权限配置
+        const permissions = await ElectionPermissions.getByGuild(guildId);
+        
+        // 如果没有设置特定权限，默认所有人都可以报名
+        if (!permissions.registrationRoles || permissions.registrationRoles.length === 0) {
+            result.hasPermission = true;
+            return result;
+        }
+        
+        // 获取允许的身份组信息（过滤掉@everyone）
+        const guild = member.guild;
+        result.allowedRoles = permissions.registrationRoles
+            .filter(roleId => roleId !== guild.id) // 过滤掉@everyone
+            .map(roleId => {
+                const role = guild.roles.cache.get(roleId);
+                return {
+                    id: roleId,
+                    name: role ? role.name : `未知身份组(${roleId})`
+                };
+            });
+        
+        // 检查是否有匹配的身份组
+        const userRoleIds = result.userRoles.map(r => r.id);
+        result.hasPermission = permissions.registrationRoles.some(roleId => userRoleIds.includes(roleId));
+        
+        return result;
+        
+    } catch (error) {
+        console.error('检查报名权限时出错:', error);
+        return {
+            hasPermission: false,
+            allowedRoles: [],
+            userRoles: [],
+            isAdmin: false,
+            error: '权限检查失败'
+        };
+    }
+}
+
+/**
+ * 检查用户是否有选举投票权限（详细版本）
+ * @param {object} member - Discord成员对象
+ * @param {string} guildId - 服务器ID
+ * @returns {object} 权限检查结果 {hasPermission: boolean, allowedRoles: Array, userRoles: Array}
+ */
+async function getVotingPermissionDetails(member, guildId) {
+    try {
+        const result = {
+            hasPermission: false,
+            allowedRoles: [],
+            userRoles: [],
+            isAdmin: false
+        };
+
+        // 检查管理员权限
+        result.isAdmin = validateAdminPermission(member);
+        if (result.isAdmin) {
+            result.hasPermission = true;
+            return result;
+        }
+        
+        // 获取用户的身份组（过滤掉@everyone）
+        if (member.roles.cache) {
+            member.roles.cache.forEach(role => {
+                // 过滤掉@everyone身份组（@everyone的ID等于服务器ID）
+                if (role.id !== member.guild.id) {
+                    result.userRoles.push({
+                        id: role.id,
+                        name: role.name
+                    });
+                }
+            });
+        }
+        
+        // 获取服务器级别的权限配置
+        const permissions = await ElectionPermissions.getByGuild(guildId);
+        
+        // 如果没有设置特定权限，默认所有人都可以投票
+        if (!permissions.votingRoles || permissions.votingRoles.length === 0) {
+            result.hasPermission = true;
+            return result;
+        }
+        
+        // 获取允许的身份组信息（过滤掉@everyone）
+        const guild = member.guild;
+        result.allowedRoles = permissions.votingRoles
+            .filter(roleId => roleId !== guild.id) // 过滤掉@everyone
+            .map(roleId => {
+                const role = guild.roles.cache.get(roleId);
+                return {
+                    id: roleId,
+                    name: role ? role.name : `未知身份组(${roleId})`
+                };
+            });
+        
+        // 检查是否有匹配的身份组
+        const userRoleIds = result.userRoles.map(r => r.id);
+        result.hasPermission = permissions.votingRoles.some(roleId => userRoleIds.includes(roleId));
+        
+        return result;
+        
+    } catch (error) {
+        console.error('检查投票权限时出错:', error);
+        return {
+            hasPermission: false,
+            allowedRoles: [],
+            userRoles: [],
+            isAdmin: false,
+            error: '权限检查失败'
+        };
+    }
+}
+
 module.exports = {
     validatePositions,
     validateRegistration,
     validateElectionName,
     validateVoteData,
     validatePermission,
+    validateAdminPermission,
+    validateRegistrationPermission,
+    validateVotingPermission,
+    getRegistrationPermissionDetails,
+    getVotingPermissionDetails,
     generateUniqueId,
     sanitizeInput,
     validateElectionStatus

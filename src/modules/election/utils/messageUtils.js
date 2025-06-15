@@ -153,8 +153,8 @@ function createCandidateListEmbed(positionName, candidates, maxSelections) {
             { name: '暂无候选人', value: '还没有人报名这个职位', inline: false }
         );
     } else {
-        const candidateList = candidates.map((candidate, index) => {
-            let info = `**${index + 1}. ${candidate.displayName}**`;
+        const candidateList = candidates.map((candidate) => {
+            let info = `<@${candidate.userId}>`;
             if (candidate.choiceType === 'second') {
                 info += ' (第二志愿)';
             }

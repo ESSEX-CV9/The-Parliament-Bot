@@ -6,6 +6,7 @@ const {
     EmbedBuilder
 } = require('discord.js');
 const { ElectionData, VoteData } = require('../data/electionDatabase');
+const { getVotingPermissionDetails } = require('../utils/validationUtils');
 const { createErrorEmbed, createSuccessEmbed } = require('../utils/messageUtils');
 
 /**
@@ -16,15 +17,58 @@ async function handleAnonymousVoteStart(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         const parts = interaction.customId.split('_');
-        const electionId = parts.slice(4, -1).join('_');
+        // customId格式: election_start_anonymous_vote_{electionId}_{positionId}
+        // 考虑到electionId可能包含下划线，我们需要更精确的解析
+        
+        // 找到最后一个部分作为positionId
         const positionId = parts[parts.length - 1];
+        // 将中间的部分重新组合作为electionId
+        const electionId = parts.slice(4, -1).join('_');
+        
+        console.log(`解析得到 - 选举ID: ${electionId}, 职位ID: ${positionId}`);
+        
+        const userId = interaction.user.id;
+        const guildId = interaction.guild.id;
+
+        // ===== 详细权限验证 =====
+        console.log(`检查用户 ${interaction.user.tag} (${userId}) 的投票权限...`);
+        const permissionDetails = await getVotingPermissionDetails(interaction.member, guildId);
+        
+        if (!permissionDetails.hasPermission) {
+            console.log(`用户 ${interaction.user.tag} 投票权限不足`);
+            
+            let errorMessage = '你缺少可以参与此选举投票的身份组。';
+            
+            if (permissionDetails.allowedRoles && permissionDetails.allowedRoles.length > 0) {
+                const allowedRoleNames = permissionDetails.allowedRoles.map(role => `**${role.name}**`).join('、');
+                errorMessage += `\n\n**允许投票的身份组：**\n${allowedRoleNames}`;
+                
+                if (permissionDetails.userRoles && permissionDetails.userRoles.length > 0) {
+                    const userRoleNames = permissionDetails.userRoles.map(role => role.name).join('、');
+                    errorMessage += `\n\n**你当前的身份组：**\n${userRoleNames}`;
+                } else {
+                    errorMessage += `\n\n**你当前的身份组：**\n无特殊身份组`;
+                }
+            }
+            
+            errorMessage += '\n\n请联系服务器管理员了解投票身份组要求。';
+            
+            const errorEmbed = createErrorEmbed('权限不足', errorMessage);
+            return await interaction.editReply({ embeds: [errorEmbed] });
+        }
+        console.log(`用户 ${interaction.user.tag} 投票权限验证通过`);
+        // ===== 权限验证结束 =====
 
         // 获取投票数据
+        console.log(`查找投票数据 - 选举ID: ${electionId}, 职位ID: ${positionId}`);
         const votes = await VoteData.getByElection(electionId);
+        console.log(`找到 ${votes.length} 个投票记录`);
+        
         const vote = votes.find(v => v.positionId === positionId);
+        console.log(`匹配的投票记录:`, vote ? `找到 (${vote.voteId})` : '未找到');
 
         if (!vote) {
-            const errorEmbed = createErrorEmbed('投票不存在', '该投票可能已被删除或不存在');
+            const errorEmbed = createErrorEmbed('投票不存在', `该投票可能已被删除或不存在\n\n调试信息：\n选举ID: ${electionId}\n职位ID: ${positionId}`);
             return await interaction.editReply({ embeds: [errorEmbed] });
         }
 
@@ -36,8 +80,8 @@ async function handleAnonymousVoteStart(interaction) {
         }
 
         // 创建候选人选择菜单
-        const options = vote.candidates.map((candidate, index) => ({
-            label: `${index + 1}. ${candidate.displayName}`,
+        const options = vote.candidates.map((candidate) => ({
+            label: candidate.displayName,
             value: candidate.userId,
             description: candidate.choiceType === 'second' ? '第二志愿候选人' : '第一志愿候选人',
             emoji: '👤'
@@ -54,7 +98,7 @@ async function handleAnonymousVoteStart(interaction) {
 
         const embed = new EmbedBuilder()
             .setTitle(`🗳️ ${vote.positionName} - 投票`)
-            .setDescription(`请选择你支持的候选人 (最多选择 ${vote.maxSelections} 人)`)
+            .setDescription(`请选择你支持的候选人 (最多选择 ${vote.maxSelections} 人)\n\n**候选人列表：**\n${vote.candidates.map(c => `<@${c.userId}>${c.choiceType === 'second' ? ' (第二志愿)' : ''}`).join('\n')}`)
             .setColor('#9b59b6');
 
         await interaction.editReply({
