@@ -9,6 +9,19 @@ const { ElectionData, VoteData } = require('../data/electionDatabase');
 const { getVotingPermissionDetails } = require('../utils/validationUtils');
 const { createErrorEmbed, createSuccessEmbed } = require('../utils/messageUtils');
 
+// === 修复CustomId长度限制：临时存储用户选择，避免customId过长 ===
+const userSelections = new Map();
+
+// 清理过期的选择数据（10分钟过期）
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, data] of userSelections.entries()) {
+        if (now - data.timestamp > 10 * 60 * 1000) { // 10分钟
+            userSelections.delete(key);
+        }
+    }
+}, 5 * 60 * 1000); // 每5分钟清理一次
+
 /**
  * 处理投票开始
  */
@@ -145,9 +158,17 @@ async function handleAnonymousVoteSelect(interaction) {
             return await interaction.editReply({ embeds: [errorEmbed], components: [] });
         }
 
-        // 创建确认按钮
+        // === 修复CustomId长度限制：将选择存储到缓存而不是customId ===
+        const selectionKey = `${interaction.user.id}_${voteId}_${Date.now()}`;
+        userSelections.set(selectionKey, {
+            voteId,
+            selectedCandidates,
+            timestamp: Date.now()
+        });
+
+        // 创建确认按钮 - 使用短的selectionKey避免customId过长
         const confirmButton = new ButtonBuilder()
-            .setCustomId(`election_anonymous_vote_confirm_${voteId}_${selectedCandidates.join(',')}`)
+            .setCustomId(`election_anonymous_vote_confirm_${selectionKey}`)
             .setLabel('确认投票')
             .setStyle(ButtonStyle.Success)
             .setEmoji('✅');
@@ -190,18 +211,30 @@ async function handleAnonymousVoteConfirm(interaction) {
     try {
         await interaction.deferUpdate();
 
-        // 修复voteId提取逻辑
-        // customId格式: election_anonymous_vote_confirm_vote_1749959096011_abc123_userId1,userId2
+        // === 修复CustomId长度限制：从缓存中获取选择数据 ===
         const parts = interaction.customId.split('_');
-        // 找到最后一个包含逗号的部分（候选人列表）
-        const lastPart = parts[parts.length - 1];
-        const selectedCandidates = lastPart.split(',');
-        
-        // voteId是从索引4到倒数第二个部分
-        const voteId = parts.slice(4, -1).join('_');
+        const selectionKey = parts.slice(4).join('_');
+
+        // 从缓存中获取选择数据
+        const selectionData = userSelections.get(selectionKey);
+        if (!selectionData) {
+            const errorEmbed = createErrorEmbed('投票过期', '投票选择已过期，请重新选择候选人');
+            return await interaction.editReply({ embeds: [errorEmbed], components: [] });
+        }
+
+        const { voteId, selectedCandidates } = selectionData;
+
+        // 验证用户身份（确保selectionKey中的用户ID与当前用户匹配）
+        if (!selectionKey.startsWith(interaction.user.id)) {
+            const errorEmbed = createErrorEmbed('权限错误', '无法确认他人的投票');
+            return await interaction.editReply({ embeds: [errorEmbed], components: [] });
+        }
 
         // 记录投票
         await VoteData.addVote(voteId, interaction.user.id, selectedCandidates);
+
+        // 清理缓存
+        userSelections.delete(selectionKey);
 
         const successEmbed = createSuccessEmbed(
             '投票成功',
