@@ -1,4 +1,9 @@
 const { ElectionData, RegistrationData, VoteData } = require('../data/electionDatabase');
+const { 
+    detectBoundaryTies, 
+    analyzeChainEffects, 
+    assignCandidateStatuses 
+} = require('../utils/tieBreakingUtils');
 
 /**
  * 计算募选结果
@@ -32,7 +37,10 @@ async function calculateElectionResults(electionId) {
         // 处理第二志愿逻辑和当选状态
         const finalResults = await processElectionLogic(results, election.positions, registrations);
 
-        return finalResults;
+        // 新增：处理并列情况分析
+        const resultsWithTieAnalysis = await processTieAnalysis(finalResults, election.positions, registrations);
+
+        return resultsWithTieAnalysis;
 
     } catch (error) {
         console.error('计算募选结果时出错:', error);
@@ -385,10 +393,52 @@ async function generateElectionReport(electionId) {
     }
 }
 
+/**
+ * 处理并列情况分析
+ * @param {object} results - 选举结果
+ * @param {object} positions - 职位配置
+ * @param {Array} registrations - 报名数据
+ * @returns {object} 带并列分析的结果
+ */
+async function processTieAnalysis(results, positions, registrations) {
+    const analysisResults = JSON.parse(JSON.stringify(results));
+
+    // 第一步：为每个职位检测并列情况
+    for (const [positionId, result] of Object.entries(analysisResults)) {
+        if (result.isVoid) {
+            result.tieAnalysis = { hasTies: false, tieGroups: [] };
+            continue;
+        }
+
+        const position = positions[positionId];
+        const maxWinners = position.maxWinners;
+
+        // 检测边界并列
+        const tieAnalysis = detectBoundaryTies(result.candidates, maxWinners);
+        result.tieAnalysis = tieAnalysis;
+    }
+
+    // 第二步：分析连锁影响
+    const chainEffects = analyzeChainEffects(analysisResults, registrations);
+
+    // 第三步：为所有候选人分配状态
+    const finalResults = assignCandidateStatuses(analysisResults, chainEffects);
+
+    // 第四步：添加全局分析信息
+    finalResults._tieAnalysis = {
+        hasAnyTies: Object.values(finalResults).some(result => result.tieAnalysis?.hasTies),
+        chainEffects: chainEffects,
+        analysisTimestamp: new Date().toISOString()
+    };
+
+    return finalResults;
+}
+
 module.exports = {
     calculateElectionResults,
     calculatePositionResults,
     processElectionLogic,
+    processTieAnalysis,
     getElectionStatistics,
     generateElectionReport
 }; 

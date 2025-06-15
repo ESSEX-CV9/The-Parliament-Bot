@@ -1,5 +1,6 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { formatChineseTime } = require('./timeUtils');
+const { STATUS_CONFIG, CANDIDATE_STATUS } = require('./tieBreakingUtils');
 
 /**
  * 创建募选状态嵌入消息
@@ -277,11 +278,28 @@ function createElectionResultEmbed(election, results) {
             // 没有候选人
             fieldValue = '❌ **无人报名参选**';
         } else {
-            // 显示所有候选人的得票情况
+            // 显示所有候选人的得票情况，支持新的状态系统
             const candidateResults = result.candidates.map(candidate => {
-                const status = candidate.isWinner ? '✅ **当选**' : '❌ 未当选';
+                let status, statusIcon;
+                
+                // 检查是否有新的状态信息
+                if (candidate.statusInfo) {
+                    const statusConfig = STATUS_CONFIG[candidate.statusInfo.status];
+                    statusIcon = statusConfig.icon;
+                    status = `**${statusConfig.label}**`;
+                    
+                    // 添加状态说明
+                    if (candidate.statusInfo.notes) {
+                        status += ` (${candidate.statusInfo.notes})`;
+                    }
+                } else {
+                    // 兼容旧系统
+                    statusIcon = candidate.isWinner ? '✅' : '❌';
+                    status = candidate.isWinner ? '**当选**' : '未当选';
+                }
+                
                 const choiceLabel = candidate.choiceType === 'second' ? ' (第二志愿)' : '';
-                return `<@${candidate.userId}> ${candidate.votes}票 ${status}${choiceLabel}`;
+                return `<@${candidate.userId}> ${candidate.votes}票 ${statusIcon} ${status}${choiceLabel}`;
             });
             
             fieldValue = candidateResults.join('\n');
@@ -305,9 +323,111 @@ function createElectionResultEmbed(election, results) {
         );
     }
     
+        // 添加并列分析摘要（如果存在）
+    if (results._tieAnalysis && results._tieAnalysis.hasAnyTies) {
+        const tieGroups = [];
+        for (const [positionId, result] of Object.entries(results)) {
+            if (result.tieAnalysis?.hasTies) {
+                const position = election.positions[positionId];
+                tieGroups.push(`${position.name}: ${result.tieAnalysis.tieGroups.length}组并列`);
+            }
+        }
+        
+        if (tieGroups.length > 0) {
+            embed.addFields(
+                { name: '⚠️ 并列情况', value: `检测到并列情况，需要进一步处理：\n${tieGroups.join('\n')}`, inline: false }
+            );
+        }
+    }
+
     embed.setTimestamp()
         .setFooter({ text: '募选结果统计' });
-    
+
+    return embed;
+}
+
+/**
+ * 创建并列分析详细报告嵌入消息
+ * @param {object} election - 募选数据
+ * @param {object} results - 募选结果（包含并列分析）
+ * @returns {EmbedBuilder} 嵌入消息
+ */
+function createTieAnalysisEmbed(election, results) {
+    const embed = new EmbedBuilder()
+        .setTitle(`⚠️ ${election.name} - 并列分析报告`)
+        .setDescription('以下是检测到的并列情况和可能的影响：')
+        .setColor('#f39c12');
+
+    if (!results._tieAnalysis?.hasAnyTies) {
+        embed.setDescription('🎉 未检测到任何并列情况，选举结果确定！');
+        embed.setColor('#2ecc71');
+        return embed;
+    }
+
+    // 显示每个职位的并列情况
+    for (const [positionId, result] of Object.entries(results)) {
+        if (result.tieAnalysis?.hasTies) {
+            const position = election.positions[positionId];
+            
+            result.tieAnalysis.tieGroups.forEach((group, index) => {
+                const groupTitle = `${position.name} - 并列组 ${index + 1}`;
+                const tiedCandidates = group.candidates.map(c => 
+                    `<@${c.userId}> (${c.votes}票)`
+                ).join('\n');
+                
+                let description = `**并列候选人：**\n${tiedCandidates}\n`;
+                description += `**排名：** 第${group.startRank}名\n`;
+                description += `**票数：** ${group.votes}票\n`;
+                description += `**可当选名额：** ${group.slotsInGroup}人\n`;
+                description += `**志愿类型：** ${group.choiceType === 'first' ? '第一志愿' : '第二志愿'}`;
+
+                embed.addFields(
+                    { name: groupTitle, value: description, inline: false }
+                );
+            });
+        }
+    }
+
+    // 显示连锁影响摘要
+    const chainEffects = results._tieAnalysis.chainEffects;
+    if (Object.keys(chainEffects.scenarios).length > 0) {
+        let impactSummary = '并列处理的不同方案会对其他职位产生影响：\n\n';
+        
+        const processedTieGroups = new Set();
+        for (const scenario of Object.values(chainEffects.scenarios)) {
+            if (!processedTieGroups.has(scenario.tieGroupId)) {
+                const affectedPositions = scenario.impacts.affectedPositions;
+                if (affectedPositions.length > 0) {
+                    impactSummary += `**${scenario.tieGroupId}的影响：**\n`;
+                    affectedPositions.forEach(impact => {
+                        const pos = election.positions[impact.positionId];
+                        impactSummary += `• ${pos?.name || '未知职位'}: ${impact.effect}\n`;
+                    });
+                    impactSummary += '\n';
+                }
+                processedTieGroups.add(scenario.tieGroupId);
+            }
+        }
+
+        if (impactSummary.length > 50) {
+            embed.addFields(
+                { name: '🔗 连锁影响分析', value: impactSummary, inline: false }
+            );
+        }
+    }
+
+    // 添加处理建议
+    embed.addFields(
+        { 
+            name: '📋 处理建议', 
+            value: '• 管理员需要决定并列候选人的处理方式\n• 可考虑扩招、重新投票或其他公平方式\n• 处理前请考虑对其他职位的连锁影响', 
+            inline: false 
+        }
+    );
+
+    embed.setTimestamp()
+        .setFooter({ text: '并列分析系统' });
+
     return embed;
 }
 
@@ -354,6 +474,7 @@ module.exports = {
     createCandidateListEmbed,
     createRegistrationSuccessEmbed,
     createElectionResultEmbed,
+    createTieAnalysisEmbed,
     createErrorEmbed,
     createSuccessEmbed
 }; 
