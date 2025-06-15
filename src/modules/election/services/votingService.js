@@ -308,7 +308,7 @@ async function createPositionAnonymousVotingPoll(channel, election, positionId, 
         const { EmbedBuilder } = require('discord.js');
         const embed = new EmbedBuilder()
             .setTitle(`🗳️ ${position.name} - 投票`)
-            .setDescription(`请选择你支持的候选人 (最多选择 ${position.maxWinners} 人)\n\n🔒 **匿名投票** - 你的投票不会被公开`)
+            .setDescription(`请选择你支持的候选人 (最多选择 ${position.maxWinners} 人)`)
             .setColor('#9b59b6');
 
         // 显示候选人列表（不显示自我介绍，避免消息过长）
@@ -322,7 +322,7 @@ async function createPositionAnonymousVotingPoll(channel, election, positionId, 
 
         embed.addFields(
             { name: '候选人列表', value: candidateList, inline: false },
-            { name: '投票说明', value: '• 点击下方按钮进行投票\n• 每人只能投票一次\n• 投票后不可修改\n• 投票匿名', inline: false }
+            { name: '投票说明', value: '• 点击下方按钮进行投票\n• 每人只能投票一次\n• 投票后不可修改', inline: false }
         );
 
         // 创建匿名投票按钮

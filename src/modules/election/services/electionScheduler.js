@@ -129,7 +129,7 @@ class ElectionScheduler {
         try {
             console.log(`开始投票阶段: ${election.name} (${election.electionId})`);
 
-            // 创建匿名投票器
+            // 创建投票器
             await this.createAnonymousVotingPolls(election);
 
             // 更新选举状态
@@ -186,7 +186,7 @@ class ElectionScheduler {
 
             switch (phase) {
                 case 'registration_started':
-                    message = `📝 **${election.name}** 报名已开始！\n现在可以点击报名按钮参与选举了。`;
+                    message = `📝 **${election.name}** 报名已开始！\n现在可以点击报名按钮参与选举了。\n @获取投票通知`;
                     emoji = '📝';
                     break;
                 case 'voting_started':
@@ -414,7 +414,7 @@ class ElectionScheduler {
     }
 
     /**
-     * 创建匿名投票器
+     * 创建投票器
      */
     async createAnonymousVotingPolls(election) {
         try {
@@ -443,7 +443,7 @@ class ElectionScheduler {
             const { EmbedBuilder } = require('discord.js');
             const votingHeader = new EmbedBuilder()
                 .setTitle(`🗳️ ${election.name} - 投票开始`)
-                .setDescription('投票现在开始！请为你支持的候选人投票。\n\n⚠️ **注意：这是匿名投票，你的投票不会被公开。**')
+                .setDescription('投票现在开始！请为你支持的候选人投票。')
                 .setColor('#e74c3c')
                 .setTimestamp();
 
@@ -456,7 +456,7 @@ class ElectionScheduler {
 
             await channel.send({ embeds: [votingHeader] });
 
-            // 为每个职位创建匿名投票器
+            // 为每个职位创建投票器
             for (const [positionId, position] of Object.entries(election.positions)) {
                 await createPositionAnonymousVotingPoll(channel, election, positionId, position, registrations);
                 
@@ -464,10 +464,10 @@ class ElectionScheduler {
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
 
-            console.log(`选举 ${election.name} 的匿名投票器创建完成`);
+            console.log(`选举 ${election.name} 的投票器创建完成`);
 
         } catch (error) {
-            console.error('创建匿名投票器时出错:', error);
+            console.error('创建投票器时出错:', error);
             throw error;
         }
     }
