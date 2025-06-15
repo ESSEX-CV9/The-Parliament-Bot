@@ -5,13 +5,18 @@ const { createRegistrationEntryMessage, createErrorEmbed, createSuccessEmbed } =
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('设置报名入口')
-        .setDescription('在指定频道创建选举报名入口')
+        .setName('设置选举入口')
+        .setDescription('设置选举的报名和投票频道')
         .addChannelOption(option =>
-            option.setName('频道')
+            option.setName('报名频道')
                 .setDescription('发送报名入口的频道')
                 .addChannelTypes(ChannelType.GuildText)
-                .setRequired(false))
+                .setRequired(true))
+        .addChannelOption(option =>
+            option.setName('投票频道')
+                .setDescription('发送投票入口的频道')
+                .addChannelTypes(ChannelType.GuildText)
+                .setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction) {
@@ -20,12 +25,13 @@ module.exports = {
 
             // 验证权限
             if (!validatePermission(interaction.member, [])) {
-                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以设置报名入口');
+                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以设置选举入口');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
             const guildId = interaction.guild.id;
-            const channel = interaction.options.getChannel('频道') || interaction.channel;
+            const registrationChannel = interaction.options.getChannel('报名频道');
+            const votingChannel = interaction.options.getChannel('投票频道');
 
             // 获取当前活跃的选举
             const election = await ElectionData.getActiveElectionByGuild(guildId);
@@ -34,13 +40,12 @@ module.exports = {
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
-            // 检查是否已设置职位
+            // 检查是否已设置职位和时间安排
             if (!election.positions || Object.keys(election.positions).length === 0) {
                 const errorEmbed = createErrorEmbed('未设置职位', '请先使用 `/设置选举职位` 设置职位');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
-            // 检查是否已设置时间安排
             if (!election.schedule || !election.schedule.registrationStartTime || !election.schedule.registrationEndTime) {
                 const errorEmbed = createErrorEmbed('未设置时间安排', '请先使用 `/设置选举时间安排` 设置时间安排');
                 return await interaction.editReply({ embeds: [errorEmbed] });
@@ -48,10 +53,16 @@ module.exports = {
 
             // 检查频道权限
             const botMember = interaction.guild.members.me;
-            const permissions = channel.permissionsFor(botMember);
+            const regPermissions = registrationChannel.permissionsFor(botMember);
+            const votePermissions = votingChannel.permissionsFor(botMember);
             
-            if (!permissions.has(['SendMessages', 'EmbedLinks', 'UseExternalEmojis'])) {
-                const errorEmbed = createErrorEmbed('权限不足', `机器人在频道 ${channel} 中缺少必要权限（发送消息、嵌入链接、使用外部表情）`);
+            if (!regPermissions.has(['SendMessages', 'EmbedLinks', 'UseExternalEmojis'])) {
+                const errorEmbed = createErrorEmbed('权限不足', `机器人在报名频道 ${registrationChannel} 中缺少必要权限`);
+                return await interaction.editReply({ embeds: [errorEmbed] });
+            }
+
+            if (!votePermissions.has(['SendMessages', 'EmbedLinks', 'UseExternalEmojis'])) {
+                const errorEmbed = createErrorEmbed('权限不足', `机器人在投票频道 ${votingChannel} 中缺少必要权限`);
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
@@ -59,23 +70,26 @@ module.exports = {
             const registrationMessage = createRegistrationEntryMessage(election);
             
             try {
-                const sentMessage = await channel.send(registrationMessage);
+                const sentMessage = await registrationChannel.send(registrationMessage);
                 
                 // 更新选举配置
                 await ElectionData.update(election.electionId, {
                     channels: {
-                        ...election.channels,
-                        registrationChannelId: channel.id
+                        registrationChannelId: registrationChannel.id,
+                        votingChannelId: votingChannel.id
                     },
                     messageIds: {
-                        ...election.messageIds,
                         registrationEntryMessageId: sentMessage.id
                     }
                 });
 
                 const successEmbed = createSuccessEmbed(
-                    '报名入口创建成功',
-                    `报名入口已在 ${channel} 创建完成\n\n**选举名称：** ${election.name}\n**报名入口消息ID：** ${sentMessage.id}\n\n✅ 用户现在可以点击按钮开始报名了`
+                    '选举入口设置成功',
+                    `**选举名称：** ${election.name}\n\n` +
+                    `📝 **报名频道：** ${registrationChannel}\n` +
+                    `🗳️ **投票频道：** ${votingChannel}\n\n` +
+                    `✅ 报名入口已创建，用户现在可以开始报名\n` +
+                    `⏰ 投票器将在投票时间开始时自动创建`
                 );
 
                 await interaction.editReply({ embeds: [successEmbed] });
@@ -87,7 +101,7 @@ module.exports = {
             }
 
         } catch (error) {
-            console.error('设置报名入口时出错:', error);
+            console.error('设置选举入口时出错:', error);
             const errorEmbed = createErrorEmbed('系统错误', '处理命令时发生错误，请稍后重试');
             
             if (interaction.deferred) {

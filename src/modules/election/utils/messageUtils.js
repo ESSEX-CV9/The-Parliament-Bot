@@ -220,24 +220,53 @@ function createRegistrationSuccessEmbed(registration, election) {
 function createElectionResultEmbed(election, results) {
     const embed = new EmbedBuilder()
         .setTitle(`🏆 ${election.name} - 选举结果`)
-        .setDescription('恭喜以下当选者！')
+        .setDescription('各职位候选人得票情况如下：')
         .setColor('#f39c12');
     
     for (const [positionId, result] of Object.entries(results)) {
         const position = election.positions[positionId];
         if (!position) continue;
         
-        const winners = result.winners.map((winner, index) => 
-            `${index + 1}. ${winner.displayName} (${winner.votes}票)`
-        ).join('\n');
+        let fieldValue;
+        let fieldName = `${position.name} (招募${position.maxWinners}人)`;
+        
+        if (result.isVoid) {
+            // 职位投票作废
+            fieldValue = `❌ **${result.voidReason}**`;
+        } else if (result.candidates.length === 0) {
+            // 没有候选人
+            fieldValue = '❌ **无人报名参选**';
+        } else {
+            // 显示所有候选人的得票情况
+            const candidateResults = result.candidates.map(candidate => {
+                const status = candidate.isWinner ? '✅ **当选**' : '❌ 未当选';
+                const choiceLabel = candidate.choiceType === 'second' ? ' (第二志愿)' : '';
+                return `<@${candidate.userId}> ${candidate.votes}票 ${status}${choiceLabel}`;
+            });
+            
+            fieldValue = candidateResults.join('\n');
+            
+            // 添加投票统计
+            if (result.totalVoters > 0) {
+                fieldValue += `\n\n📊 **投票统计**`;
+                fieldValue += `\n• 参与投票人数：${result.totalVoters}人`;
+                fieldValue += `\n• 总票数：${result.totalVotes}票`;
+                
+                // 如果总票数大于投票人数，说明有多选
+                if (result.totalVotes > result.totalVoters) {
+                    const avgVotes = (result.totalVotes / result.totalVoters).toFixed(1);
+                    fieldValue += `\n• 平均每人投票：${avgVotes}票`;
+                }
+            }
+        }
         
         embed.addFields(
-            { name: `${position.name} (${position.maxWinners}人)`, value: winners || '暂无当选者', inline: false }
+            { name: fieldName, value: fieldValue, inline: false }
         );
     }
     
     embed.setTimestamp()
-        .setFooter({ text: '选举结果公布' });
+        .setFooter({ text: '选举结果统计' });
     
     return embed;
 }

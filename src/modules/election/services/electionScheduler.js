@@ -1,5 +1,5 @@
 const { ElectionData, VoteData } = require('../data/electionDatabase');
-const { createVotingPollsForElection } = require('./votingService');
+const { createVotingPollsForElection, createPositionAnonymousVotingPoll } = require('./votingService');
 const { calculateElectionResults } = require('./electionResultService');
 const { createElectionResultEmbed } = require('../utils/messageUtils');
 
@@ -82,8 +82,13 @@ class ElectionScheduler {
                     await this.startRegistrationPhase(election);
                 }
 
-                // 检查需要结束报名并开始投票的选举
-                if (election.status === 'registration' && now >= voteStart) {
+                // 检查需要结束报名的选举
+                if (election.status === 'registration' && now >= regEnd) {
+                    await this.endRegistrationPhase(election);
+                }
+
+                // 检查需要开始投票的选举
+                if (election.status === 'registration_ended' && now >= voteStart) {
                     await this.startVotingPhase(election);
                 }
 
@@ -124,8 +129,8 @@ class ElectionScheduler {
         try {
             console.log(`开始投票阶段: ${election.name} (${election.electionId})`);
 
-            // 生成投票器
-            await createVotingPollsForElection(this.client, election);
+            // 创建匿名投票器
+            await this.createAnonymousVotingPolls(election);
 
             // 更新选举状态
             await ElectionData.update(election.electionId, {
@@ -241,6 +246,230 @@ class ElectionScheduler {
             isRunning: this.isRunning,
             intervalId: this.intervalId !== null
         };
+    }
+
+    /**
+     * 结束报名阶段
+     */
+    async endRegistrationPhase(election) {
+        try {
+            console.log(`结束报名阶段: ${election.name} (${election.electionId})`);
+
+            // 禁用报名入口按钮
+            await this.disableRegistrationEntry(election);
+
+            // 发送候选人自我介绍到投票频道
+            await this.sendCandidateIntroductions(election);
+
+            // 更新选举状态
+            await ElectionData.update(election.electionId, {
+                status: 'registration_ended'
+            });
+
+            console.log(`报名阶段已结束: ${election.name}`);
+
+        } catch (error) {
+            console.error(`结束报名阶段时出错 (${election.electionId}):`, error);
+        }
+    }
+
+    /**
+     * 禁用报名入口按钮
+     */
+    async disableRegistrationEntry(election) {
+        try {
+            const registrationChannelId = election.channels?.registrationChannelId;
+            const registrationMessageId = election.messageIds?.registrationEntryMessageId;
+
+            if (!registrationChannelId || !registrationMessageId) {
+                console.log('未找到报名入口消息，跳过禁用');
+                return;
+            }
+
+            const channel = this.client.channels.cache.get(registrationChannelId);
+            if (!channel) {
+                console.error(`找不到报名频道: ${registrationChannelId}`);
+                return;
+            }
+
+            const message = await channel.messages.fetch(registrationMessageId);
+            if (!message) {
+                console.error(`找不到报名入口消息: ${registrationMessageId}`);
+                return;
+            }
+
+            // 创建禁用的按钮
+            const { ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = require('discord.js');
+            const disabledButton = new ButtonBuilder()
+                .setCustomId('election_registration_closed')
+                .setLabel('报名已结束')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('🔒')
+                .setDisabled(true);
+
+            const row = new ActionRowBuilder().addComponents(disabledButton);
+
+            // 更新嵌入消息
+            const originalEmbed = message.embeds[0];
+            const updatedEmbed = EmbedBuilder.from(originalEmbed)
+                .setColor('#95a5a6') // 灰色表示已结束
+                .setTitle(`📝 ${election.name} - 报名已结束`);
+
+            await message.edit({
+                embeds: [updatedEmbed],
+                components: [row]
+            });
+
+            console.log('报名入口已禁用');
+
+        } catch (error) {
+            console.error('禁用报名入口时出错:', error);
+        }
+    }
+
+    /**
+     * 发送候选人自我介绍到投票频道
+     */
+    async sendCandidateIntroductions(election) {
+        try {
+            const votingChannelId = election.channels?.votingChannelId;
+            if (!votingChannelId) {
+                console.error('未设置投票频道');
+                return;
+            }
+
+            const channel = this.client.channels.cache.get(votingChannelId);
+            if (!channel) {
+                console.error(`找不到投票频道: ${votingChannelId}`);
+                return;
+            }
+
+            // 获取所有报名记录，按报名时间排序
+            const { RegistrationData } = require('../data/electionDatabase');
+            const registrations = await RegistrationData.getByElection(election.electionId);
+            
+            if (registrations.length === 0) {
+                await channel.send('📝 **候选人介绍**\n\n暂无候选人报名参选。');
+                return;
+            }
+
+            // 按报名时间排序
+            registrations.sort((a, b) => new Date(a.registeredAt) - new Date(b.registeredAt));
+
+            // 发送介绍标题
+            const { EmbedBuilder } = require('discord.js');
+            const introHeader = new EmbedBuilder()
+                .setTitle(`📝 ${election.name} - 候选人介绍`)
+                .setDescription('以下是所有候选人的自我介绍，按报名顺序排列：')
+                .setColor('#3498db')
+                .setTimestamp();
+
+            await channel.send({ embeds: [introHeader] });
+
+            // 逐个发送候选人介绍
+            for (let i = 0; i < registrations.length; i++) {
+                const registration = registrations[i];
+                const firstPosition = election.positions[registration.firstChoicePosition];
+                const secondPosition = registration.secondChoicePosition ? 
+                    election.positions[registration.secondChoicePosition] : null;
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`${i + 1}. ${registration.userDisplayName}`)
+                    .setColor('#2ecc71')
+                    .addFields(
+                        { name: '第一志愿', value: firstPosition?.name || '未知职位', inline: true }
+                    );
+
+                if (secondPosition) {
+                    embed.addFields(
+                        { name: '第二志愿', value: secondPosition.name, inline: true }
+                    );
+                }
+
+                if (registration.selfIntroduction) {
+                    embed.addFields(
+                        { name: '自我介绍', value: registration.selfIntroduction, inline: false }
+                    );
+                } else {
+                    embed.addFields(
+                        { name: '自我介绍', value: '该候选人未填写自我介绍', inline: false }
+                    );
+                }
+
+                embed.addFields(
+                    { name: '报名时间', value: `<t:${Math.floor(new Date(registration.registeredAt).getTime() / 1000)}:f>`, inline: true }
+                );
+
+                await channel.send({ embeds: [embed] });
+
+                // 延迟避免API限制
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
+            console.log(`已发送 ${registrations.length} 个候选人介绍到投票频道`);
+
+        } catch (error) {
+            console.error('发送候选人介绍时出错:', error);
+        }
+    }
+
+    /**
+     * 创建匿名投票器
+     */
+    async createAnonymousVotingPolls(election) {
+        try {
+            const votingChannelId = election.channels?.votingChannelId;
+            if (!votingChannelId) {
+                console.error('未设置投票频道');
+                return;
+            }
+
+            const channel = this.client.channels.cache.get(votingChannelId);
+            if (!channel) {
+                console.error(`找不到投票频道: ${votingChannelId}`);
+                return;
+            }
+
+            // 获取所有报名
+            const { RegistrationData } = require('../data/electionDatabase');
+            const registrations = await RegistrationData.getByElection(election.electionId);
+            
+            if (registrations.length === 0) {
+                console.log('没有候选人报名，跳过投票器创建');
+                return;
+            }
+
+            // 发送投票开始通知
+            const { EmbedBuilder } = require('discord.js');
+            const votingHeader = new EmbedBuilder()
+                .setTitle(`🗳️ ${election.name} - 投票开始`)
+                .setDescription('投票现在开始！请为你支持的候选人投票。\n\n⚠️ **注意：这是匿名投票，你的投票不会被公开。**')
+                .setColor('#e74c3c')
+                .setTimestamp();
+
+            if (election.schedule?.votingEndTime) {
+                const endTime = Math.floor(new Date(election.schedule.votingEndTime).getTime() / 1000);
+                votingHeader.addFields(
+                    { name: '投票截止时间', value: `<t:${endTime}:f>`, inline: false }
+                );
+            }
+
+            await channel.send({ embeds: [votingHeader] });
+
+            // 为每个职位创建匿名投票器
+            for (const [positionId, position] of Object.entries(election.positions)) {
+                await createPositionAnonymousVotingPoll(channel, election, positionId, position, registrations);
+                
+                // 延迟避免API限制
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+
+            console.log(`选举 ${election.name} 的匿名投票器创建完成`);
+
+        } catch (error) {
+            console.error('创建匿名投票器时出错:', error);
+            throw error;
+        }
     }
 }
 
