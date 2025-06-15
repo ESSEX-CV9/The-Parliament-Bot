@@ -1,16 +1,16 @@
 const { ElectionData, RegistrationData, VoteData } = require('../data/electionDatabase');
 
 /**
- * 计算选举结果
- * @param {string} electionId - 选举ID
- * @returns {object} 选举结果
+ * 计算募选结果
+ * @param {string} electionId - 募选ID
+ * @returns {object} 募选结果
  */
 async function calculateElectionResults(electionId) {
     try {
-        // 获取选举信息
+        // 获取募选信息
         const election = await ElectionData.getById(electionId);
         if (!election) {
-            throw new Error('选举不存在');
+            throw new Error('募选不存在');
         }
 
         // 获取所有投票和报名数据
@@ -35,7 +35,7 @@ async function calculateElectionResults(electionId) {
         return finalResults;
 
     } catch (error) {
-        console.error('计算选举结果时出错:', error);
+        console.error('计算募选结果时出错:', error);
         throw error;
     }
 }
@@ -108,7 +108,7 @@ async function calculatePositionResults(positionId, position, votes, registratio
             totalVotes: 0,
             totalVoters: 0,
             isVoid: true,
-            voidReason: '无人投票，该职位选举作废'
+            voidReason: '无人投票，该职位募选作废'
         };
     }
 
@@ -169,7 +169,7 @@ async function calculatePositionResults(positionId, position, votes, registratio
 }
 
 /**
- * 处理选举逻辑和确定当选者
+ * 处理募选逻辑和确定当选者
  * @param {object} preliminaryResults - 初步结果
  * @param {object} positions - 职位配置
  * @param {Array} registrations - 报名数据
@@ -294,8 +294,8 @@ async function processElectionLogic(preliminaryResults, positions, registrations
 }
 
 /**
- * 获取选举统计信息
- * @param {string} electionId - 选举ID
+ * 获取募选统计信息
+ * @param {string} electionId - 募选ID
  * @returns {object} 统计信息
  */
 async function getElectionStatistics(electionId) {
@@ -351,15 +351,15 @@ async function getElectionStatistics(electionId) {
         return stats;
 
     } catch (error) {
-        console.error('获取选举统计信息时出错:', error);
+        console.error('获取募选统计信息时出错:', error);
         throw error;
     }
 }
 
 /**
- * 生成选举报告
- * @param {string} electionId - 选举ID
- * @returns {object} 选举报告
+ * 生成募选报告
+ * @param {string} electionId - 募选ID
+ * @returns {object} 募选报告
  */
 async function generateElectionReport(electionId) {
     try {
@@ -380,7 +380,7 @@ async function generateElectionReport(electionId) {
         };
 
     } catch (error) {
-        console.error('生成选举报告时出错:', error);
+        console.error('生成募选报告时出错:', error);
         throw error;
     }
 }

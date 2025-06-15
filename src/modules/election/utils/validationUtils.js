@@ -2,7 +2,7 @@
  * 验证工具
  */
 
-// 导入核心权限管理器和选举权限配置
+// 导入核心权限管理器和募选权限配置
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 const { ElectionPermissions } = require('../data/electionDatabase');
 
@@ -69,7 +69,7 @@ function validatePositions(positions) {
 /**
  * 验证报名数据
  * @param {object} registrationData - 报名数据
- * @param {object} electionData - 选举数据
+ * @param {object} electionData - 募选数据
  * @returns {object} 验证结果
  */
 function validateRegistration(registrationData, electionData) {
@@ -115,19 +115,19 @@ function validateRegistration(registrationData, electionData) {
 }
 
 /**
- * 验证选举名称
- * @param {string} name - 选举名称
+ * 验证募选名称
+ * @param {string} name - 募选名称
  * @returns {object} 验证结果
  */
 function validateElectionName(name) {
     const errors = [];
     
     if (!name || name.trim().length === 0) {
-        errors.push('选举名称不能为空');
+        errors.push('募选名称不能为空');
     } else if (name.length > 50) {
-        errors.push('选举名称不能超过50个字符');
+        errors.push('募选名称不能超过50个字符');
     } else if (name.length < 3) {
-        errors.push('选举名称至少需要3个字符');
+        errors.push('募选名称至少需要3个字符');
     }
     
     return {
@@ -187,7 +187,7 @@ function validateAdminPermission(member) {
 }
 
 /**
- * 检查用户是否有选举报名权限
+ * 检查用户是否有募选报名权限
  * @param {object} member - Discord成员对象
  * @param {string} guildId - 服务器ID
  * @returns {boolean} 是否有报名权限
@@ -225,7 +225,7 @@ async function validateRegistrationPermission(member, guildId) {
 }
 
 /**
- * 检查用户是否有选举投票权限
+ * 检查用户是否有募选投票权限
  * @param {object} member - Discord成员对象
  * @param {string} guildId - 服务器ID
  * @returns {boolean} 是否有投票权限
@@ -310,7 +310,7 @@ function sanitizeInput(input, maxLength = 500) {
 }
 
 /**
- * 检查选举状态是否允许操作
+ * 检查募选状态是否允许操作
  * @param {string} currentStatus - 当前状态
  * @param {string} requiredStatus - 需要的状态
  * @returns {boolean} 是否允许操作
@@ -335,7 +335,7 @@ function validateElectionStatus(currentStatus, requiredStatus) {
 }
 
 /**
- * 检查用户是否有选举报名权限（详细版本）
+ * 检查用户是否有募选报名权限（详细版本）
  * @param {object} member - Discord成员对象
  * @param {string} guildId - 服务器ID
  * @returns {object} 权限检查结果 {hasPermission: boolean, allowedRoles: Array, userRoles: Array}
@@ -409,7 +409,7 @@ async function getRegistrationPermissionDetails(member, guildId) {
 }
 
 /**
- * 检查用户是否有选举投票权限（详细版本）
+ * 检查用户是否有募选投票权限（详细版本）
  * @param {object} member - Discord成员对象
  * @param {string} guildId - 服务器ID
  * @returns {object} 权限检查结果 {hasPermission: boolean, allowedRoles: Array, userRoles: Array}

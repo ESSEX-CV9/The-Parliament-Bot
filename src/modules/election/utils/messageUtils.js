@@ -2,8 +2,8 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const { formatChineseTime } = require('./timeUtils');
 
 /**
- * 创建选举状态嵌入消息
- * @param {object} election - 选举数据
+ * 创建募选状态嵌入消息
+ * @param {object} election - 募选数据
  * @returns {EmbedBuilder} 嵌入消息
  */
 function createElectionStatusEmbed(election) {
@@ -20,7 +20,7 @@ function createElectionStatusEmbed(election) {
     };
     
     embed.addFields(
-        { name: '选举状态', value: statusMap[election.status] || '未知', inline: true }
+        { name: '募选状态', value: statusMap[election.status] || '未知', inline: true }
     );
     
     // 职位信息
@@ -53,14 +53,14 @@ function createElectionStatusEmbed(election) {
     }
     
     embed.setTimestamp()
-        .setFooter({ text: '选举系统' });
+        .setFooter({ text: '募选系统' });
     
     return embed;
 }
 
 /**
  * 创建报名入口嵌入消息
- * @param {object} election - 选举数据
+ * @param {object} election - 募选数据
  * @returns {object} 消息组件
  */
 function createRegistrationEntryMessage(election) {
@@ -72,7 +72,7 @@ function createRegistrationEntryMessage(election) {
     // 显示职位列表
     if (election.positions) {
         const positionList = Object.values(election.positions)
-            .map(pos => `• **${pos.name}** (招募${pos.maxWinners}人)${pos.description ? ` - ${pos.description}` : ''}`)
+            .map(pos => `• **${pos.name}** (募选${pos.maxWinners}人)${pos.description ? ` - ${pos.description}` : ''}`)
             .join('\n');
         
         embed.addFields(
@@ -107,7 +107,7 @@ function createRegistrationEntryMessage(election) {
 
 /**
  * 创建投票入口嵌入消息
- * @param {object} election - 选举数据
+ * @param {object} election - 募选数据
  * @param {Array} votes - 投票数据数组
  * @returns {object} 消息组件
  */
@@ -175,7 +175,7 @@ function createCandidateListEmbed(positionName, candidates, maxSelections) {
 /**
  * 创建报名成功嵌入消息
  * @param {object} registration - 报名数据
- * @param {object} election - 选举数据
+ * @param {object} election - 募选数据
  * @returns {EmbedBuilder} 嵌入消息
  */
 function createRegistrationSuccessEmbed(registration, election) {
@@ -212,14 +212,14 @@ function createRegistrationSuccessEmbed(registration, election) {
 }
 
 /**
- * 创建选举结果嵌入消息
- * @param {object} election - 选举数据
- * @param {object} results - 选举结果
+ * 创建募选结果嵌入消息
+ * @param {object} election - 募选数据
+ * @param {object} results - 募选结果
  * @returns {EmbedBuilder} 嵌入消息
  */
 function createElectionResultEmbed(election, results) {
     const embed = new EmbedBuilder()
-        .setTitle(`🏆 ${election.name} - 选举结果`)
+        .setTitle(`🏆 ${election.name} - 募选结果`)
         .setDescription('各职位候选人得票情况如下：')
         .setColor('#f39c12');
     
@@ -228,7 +228,7 @@ function createElectionResultEmbed(election, results) {
         if (!position) continue;
         
         let fieldValue;
-        let fieldName = `${position.name} (招募${position.maxWinners}人)`;
+        let fieldName = `${position.name} (募选${position.maxWinners}人)`;
         
         if (result.isVoid) {
             // 职位投票作废
@@ -266,7 +266,7 @@ function createElectionResultEmbed(election, results) {
     }
     
     embed.setTimestamp()
-        .setFooter({ text: '选举结果统计' });
+        .setFooter({ text: '募选结果统计' });
     
     return embed;
 }

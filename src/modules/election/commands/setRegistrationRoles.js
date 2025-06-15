@@ -5,8 +5,8 @@ const { createErrorEmbed, createSuccessEmbed } = require('../utils/messageUtils'
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('设置允许选举报名身份组')
-        .setDescription('设置哪些身份组的成员可以参与选举报名（服务器级别持久化配置）')
+        .setName('设置允许募选报名身份组')
+        .setDescription('设置哪些身份组的成员可以参与募选报名（服务器级别持久化配置）')
         .addSubcommand(subcommand =>
             subcommand
                 .setName('设置')
@@ -47,7 +47,7 @@ module.exports = {
 
             // 验证权限 - 使用核心权限管理器
             if (!validateAdminPermission(interaction.member)) {
-                const errorEmbed = createErrorEmbed('缺少指定的身份组', '只有管理员或指定身份组成员可以设置选举权限');
+                const errorEmbed = createErrorEmbed('缺少指定的身份组', '只有管理员或指定身份组成员可以设置募选权限');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
@@ -91,7 +91,7 @@ module.exports = {
                 const successEmbed = createSuccessEmbed(
                     '报名权限清空成功',
                     '📝 **报名权限配置已清空**\n\n' +
-                    '✅ 现在所有服务器成员都可以参与选举报名\n' +
+                    '✅ 现在所有服务器成员都可以参与募选报名\n' +
                     '⚠️ 管理员始终拥有报名权限'
                 );
                 return await interaction.editReply({ embeds: [successEmbed] });
@@ -121,9 +121,9 @@ module.exports = {
                 const successEmbed = createSuccessEmbed(
                     '报名权限设置成功',
                     `📝 **允许报名的身份组：**\n${roleNames.map(name => `• ${name}`).join('\n')}\n\n` +
-                    `✅ 只有拥有以上身份组的成员才能参与选举报名\n` +
+                    `✅ 只有拥有以上身份组的成员才能参与募选报名\n` +
                     `⚠️ 管理员始终拥有报名权限\n\n` +
-                    `💾 **配置已持久化保存**，将在所有未来的选举中生效`
+                    `💾 **配置已持久化保存**，将在所有未来的募选中生效`
                 );
 
                 await interaction.editReply({ embeds: [successEmbed] });

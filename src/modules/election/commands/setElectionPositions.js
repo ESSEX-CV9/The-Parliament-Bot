@@ -5,11 +5,11 @@ const { createSuccessEmbed, createErrorEmbed } = require('../utils/messageUtils'
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('设置选举职位')
-        .setDescription('设置选举的职位和人数')
+        .setName('设置募选职位')
+        .setDescription('设置募选的职位和人数')
         .addStringOption(option =>
-            option.setName('选举名称')
-                .setDescription('选举的名称')
+            option.setName('募选名称')
+                .setDescription('募选的名称')
                 .setRequired(true))
         .addStringOption(option =>
             option.setName('职位配置')
@@ -23,11 +23,11 @@ module.exports = {
 
             // 验证权限
             if (!validatePermission(interaction.member, [])) {
-                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以设置选举职位');
+                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以设置募选职位');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
-            const electionName = interaction.options.getString('选举名称').trim();
+            const electionName = interaction.options.getString('募选名称').trim();
             const positionConfig = interaction.options.getString('职位配置').trim();
             const guildId = interaction.guild.id;
 
@@ -68,18 +68,18 @@ module.exports = {
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
-            // 检查是否已存在活跃的选举
+            // 检查是否已存在活跃的募选
             const existingElection = await ElectionData.getActiveElectionByGuild(guildId);
             
             let election;
             if (existingElection) {
-                // 更新现有选举的职位
+                // 更新现有募选的职位
                 election = await ElectionData.update(existingElection.electionId, {
                     name: electionName,
                     positions: positions
                 });
             } else {
-                // 创建新选举
+                // 创建新募选
                 const electionId = generateUniqueId('election_');
                 election = await ElectionData.create({
                     electionId,
@@ -95,7 +95,7 @@ module.exports = {
             }
 
             if (!election) {
-                const errorEmbed = createErrorEmbed('操作失败', '无法保存选举配置，请稍后重试');
+                const errorEmbed = createErrorEmbed('操作失败', '无法保存募选配置，请稍后重试');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
@@ -105,14 +105,14 @@ module.exports = {
                 .join('\n');
 
             const successEmbed = createSuccessEmbed(
-                '选举职位设置成功',
-                `选举名称：**${electionName}**\n\n**设置的职位：**\n${positionList}\n\n✅ 接下来请使用 \`/设置选举时间安排\` 设置时间安排`
+                '募选职位设置成功',
+                `募选名称：**${electionName}**\n\n**设置的职位：**\n${positionList}\n\n✅ 接下来请使用 \`/设置募选时间安排\` 设置时间安排`
             );
 
             await interaction.editReply({ embeds: [successEmbed] });
 
         } catch (error) {
-            console.error('设置选举职位时出错:', error);
+            console.error('设置募选职位时出错:', error);
             const errorEmbed = createErrorEmbed('系统错误', '处理命令时发生错误，请稍后重试');
             
             if (interaction.deferred) {

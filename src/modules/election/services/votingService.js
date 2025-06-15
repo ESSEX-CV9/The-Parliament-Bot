@@ -2,13 +2,13 @@ const { ElectionData, RegistrationData, VoteData } = require('../data/electionDa
 const { generateUniqueId } = require('../utils/validationUtils');
 
 /**
- * 为选举创建投票器
+ * 为募选创建投票器
  * @param {Client} client - Discord客户端
- * @param {object} election - 选举数据
+ * @param {object} election - 募选数据
  */
 async function createVotingPollsForElection(client, election) {
     try {
-        console.log(`为选举 ${election.name} 创建投票器...`);
+        console.log(`为募选 ${election.name} 创建投票器...`);
 
         // 获取所有报名
         const registrations = await RegistrationData.getByElection(election.electionId);
@@ -38,7 +38,7 @@ async function createVotingPollsForElection(client, election) {
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-        console.log(`选举 ${election.name} 的投票器创建完成`);
+        console.log(`募选 ${election.name} 的投票器创建完成`);
 
     } catch (error) {
         console.error('创建投票器时出错:', error);
@@ -49,7 +49,7 @@ async function createVotingPollsForElection(client, election) {
 /**
  * 为单个职位创建投票器
  * @param {Channel} channel - 投票频道
- * @param {object} election - 选举数据
+ * @param {object} election - 募选数据
  * @param {string} positionId - 职位ID
  * @param {object} position - 职位信息
  * @param {Array} registrations - 所有报名记录
@@ -123,7 +123,7 @@ async function createPositionVotingPoll(channel, election, positionId, position,
 
 /**
  * 创建投票组件
- * @param {string} electionId - 选举ID
+ * @param {string} electionId - 募选ID
  * @param {string} positionId - 职位ID
  * @param {Array} candidates - 候选人列表
  * @param {number} maxSelections - 最大选择数
