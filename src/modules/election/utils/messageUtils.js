@@ -60,19 +60,41 @@ function createElectionStatusEmbed(election) {
 
 /**
  * 创建报名入口嵌入消息
- * @param {object} election - 募选数据
+ * @param {object} election - 选举数据
  * @returns {object} 消息组件
  */
 function createRegistrationEntryMessage(election) {
+    const now = new Date();
+    const regStartTime = election.schedule ? new Date(election.schedule.registrationStartTime) : null;
+    const regEndTime = election.schedule ? new Date(election.schedule.registrationEndTime) : null;
+    
+    // 确定当前状态
+    let isBeforeStart = regStartTime && now < regStartTime;
+    let isAfterEnd = regEndTime && now > regEndTime;
+    let isActive = regStartTime && regEndTime && now >= regStartTime && now <= regEndTime;
+    
     const embed = new EmbedBuilder()
         .setTitle(`📝 ${election.name} - 报名入口`)
-        .setDescription('点击下方按钮开始报名参选')
         .setColor('#2ecc71');
+    
+    // 根据状态设置描述和颜色
+    if (isBeforeStart) {
+        embed.setDescription('报名尚未开始，请耐心等待')
+             .setColor('#ffa500'); // 橙色表示等待中
+    } else if (isAfterEnd) {
+        embed.setDescription('报名时间已结束')
+             .setColor('#95a5a6'); // 灰色表示已结束
+    } else if (isActive) {
+        embed.setDescription('点击下方按钮开始报名参选')
+             .setColor('#2ecc71'); // 绿色表示活跃
+    } else {
+        embed.setDescription('点击下方按钮开始报名参选');
+    }
     
     // 显示职位列表
     if (election.positions) {
         const positionList = Object.values(election.positions)
-            .map(pos => `• **${pos.name}** (募选${pos.maxWinners}人)${pos.description ? ` - ${pos.description}` : ''}`)
+            .map(pos => `• **${pos.name}** (招募${pos.maxWinners}人)${pos.description ? ` - ${pos.description}` : ''}`)
             .join('\n');
         
         embed.addFields(
@@ -94,11 +116,29 @@ function createRegistrationEntryMessage(election) {
         { name: '报名须知', value: '• 每人只能报名一次\n• 可设置第一志愿和第二志愿\n• 可填写自我介绍(可选)\n• 报名后可修改或撤回', inline: false }
     );
     
-    const button = new ButtonBuilder()
-        .setCustomId(`election_register_${election.electionId}`)
-        .setLabel('开始报名')
-        .setStyle(ButtonStyle.Primary)
-        .setEmoji('📝');
+    // 根据状态创建不同的按钮
+    let button;
+    if (isBeforeStart) {
+        button = new ButtonBuilder()
+            .setCustomId('election_registration_not_started')
+            .setLabel('报名未开始')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('⏰')
+            .setDisabled(true);
+    } else if (isAfterEnd) {
+        button = new ButtonBuilder()
+            .setCustomId('election_registration_closed')
+            .setLabel('报名已结束')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('🔒')
+            .setDisabled(true);
+    } else {
+        button = new ButtonBuilder()
+            .setCustomId(`election_register_${election.electionId}`)
+            .setLabel('开始报名')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('📝');
+    }
     
     const row = new ActionRowBuilder().addComponents(button);
     

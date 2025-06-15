@@ -99,6 +99,7 @@ const getElectionStatusCommand = require('../modules/election/commands/getElecti
 // 新增的选举权限设置命令
 const setRegistrationRolesCommand = require('../modules/election/commands/setRegistrationRoles');
 const setVotingRolesCommand = require('../modules/election/commands/setVotingRoles');
+const setNotificationRolesCommand = require('../modules/election/commands/setNotificationRoles');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -211,6 +212,7 @@ client.commands.set(getElectionStatusCommand.data.name, getElectionStatusCommand
 // 注册新的选举权限设置命令
 client.commands.set(setRegistrationRolesCommand.data.name, setRegistrationRolesCommand);
 client.commands.set(setVotingRolesCommand.data.name, setVotingRolesCommand);
+client.commands.set(setNotificationRolesCommand.data.name, setNotificationRolesCommand);
 
 // 自助文件上传系统命令
 client.commands.set(uploadCommand.data.name, uploadCommand);
