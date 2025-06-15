@@ -16,6 +16,16 @@ const { createVoteSetupModal, handleVoteSetupSubmit } = require('../../modules/v
 const { handleVoteButton } = require('../../modules/voting/components/voteButtons');
 const { handleNotificationButton } = require('../../modules/voting/components/notificationButtons');
 
+// 选举系统相关处理
+const { 
+    handleRegistrationButton,
+    handleFirstChoiceSelection,
+    handleSecondChoiceSelection,
+    handleIntroductionModal,
+    handleEditRegistration,
+    handleWithdrawRegistration
+} = require('../../modules/election/components/registrationComponents');
+
 // 赛事系统相关处理
 const { createContestApplicationModal } = require('../../modules/contest/components/applicationModal');
 const { createSubmissionModal } = require('../../modules/contest/components/submissionModal');
@@ -106,6 +116,17 @@ async function interactionCreateHandler(interaction) {
             else if (interaction.customId === 'notification_roles_entry') {
                 // 通知身份组入口按钮
                 await handleNotificationButton(interaction);
+            }
+            // === 选举系统按钮处理 ===
+            else if (interaction.customId.startsWith('election_register_')) {
+                // 选举报名按钮
+                await handleRegistrationButton(interaction);
+            } else if (interaction.customId.startsWith('election_edit_registration_')) {
+                // 编辑报名按钮
+                await handleEditRegistration(interaction);
+            } else if (interaction.customId.startsWith('election_withdraw_registration_')) {
+                // 撤回报名按钮
+                await handleWithdrawRegistration(interaction);
             }
             // === 赛事系统按钮处理 ===
             else if (interaction.customId === 'contest_application') {
@@ -360,6 +381,11 @@ async function interactionCreateHandler(interaction) {
                 // 投票设置模态窗口提交
                 await handleVoteSetupSubmit(interaction);
             }
+            // === 选举系统模态窗口处理 ===
+            else if (interaction.customId.startsWith('election_introduction_modal_')) {
+                // 选举自我介绍模态窗口提交
+                await handleIntroductionModal(interaction);
+            }
             // === 赛事系统模态窗口处理 ===
             else if (interaction.customId === 'contest_application') {
                 // 赛事申请表单提交
@@ -394,6 +420,12 @@ async function interactionCreateHandler(interaction) {
                 await processSubmissionAction(interaction);
             } else if (interaction.customId === 'notification_roles_select') {
                 await handleNotificationButton(interaction);
+            } else if (interaction.customId.startsWith('election_select_first_choice_')) {
+                // 选举第一志愿选择
+                await handleFirstChoiceSelection(interaction);
+            } else if (interaction.customId.startsWith('election_select_second_choice_')) {
+                // 选举第二志愿选择
+                await handleSecondChoiceSelection(interaction);
             } else if (interaction.customId.startsWith('external_server_select_')) {
                 // 外部服务器投稿选择
                 const applicationId = interaction.customId.replace('external_server_select_', '');
