@@ -35,7 +35,7 @@ async function handleRegistrationButton(interaction) {
         if (!permissionDetails.hasPermission) {
             console.log(`用户 ${interaction.user.tag} 报名权限不足`);
             
-            let errorMessage = '你缺少可以参与此选举报名的身份组。';
+            let errorMessage = '你缺少可以参与此募选报名的身份组。';
             
             if (permissionDetails.allowedRoles && permissionDetails.allowedRoles.length > 0) {
                 const allowedRoleNames = permissionDetails.allowedRoles.map(role => `**${role.name}**`).join('、');
@@ -57,14 +57,14 @@ async function handleRegistrationButton(interaction) {
         console.log(`用户 ${interaction.user.tag} 报名权限验证通过`);
         // ===== 权限验证结束 =====
 
-        // 获取选举信息
+        // 获取募选信息
         const election = await ElectionData.getById(electionId);
         if (!election) {
-            const errorEmbed = createErrorEmbed('选举不存在', '该选举可能已被删除或不存在');
+            const errorEmbed = createErrorEmbed('募选不存在', '该募选可能已被删除或不存在');
             return await interaction.editReply({ embeds: [errorEmbed] });
         }
 
-        // 检查选举状态
+        // 检查募选状态
         const now = new Date();
         const regStartTime = new Date(election.schedule.registrationStartTime);
         const regEndTime = new Date(election.schedule.registrationEndTime);
@@ -136,7 +136,7 @@ async function startRegistrationFlow(interaction, election, userId, userDisplayN
     const options = positions.map(pos => ({
         label: pos.name,
         value: pos.id,
-        description: `招募 ${pos.maxWinners} 人` + (pos.description ? ` - ${pos.description}` : ''),
+        description: `募选 ${pos.maxWinners} 人` + (pos.description ? ` - ${pos.description}` : ''),
         emoji: '🎯'
     }));
 
@@ -159,17 +159,17 @@ async function startRegistrationFlow(interaction, election, userId, userDisplayN
  */
 async function handleFirstChoiceSelection(interaction) {
     try {
-        // 修复选举ID提取逻辑
+        // 修复募选ID提取逻辑
         // customId格式: election_select_first_choice_election_1749951053733_0pb907
         const customIdParts = interaction.customId.split('_');
         const electionId = customIdParts.slice(4).join('_'); // 从索引4开始拼接所有部分
         const firstChoice = interaction.values[0];
         const userId = interaction.user.id;
 
-        // 获取选举信息
+        // 获取募选信息
         const election = await ElectionData.getById(electionId);
         if (!election) {
-            const errorEmbed = createErrorEmbed('选举不存在', '该选举可能已被删除或不存在');
+            const errorEmbed = createErrorEmbed('募选不存在', '该募选可能已被删除或不存在');
             return await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
         }
 
@@ -189,7 +189,7 @@ async function handleFirstChoiceSelection(interaction) {
             const options = positions.map(pos => ({
                 label: pos.name,
                 value: pos.id,
-                description: `招募 ${pos.maxWinners} 人` + (pos.description ? ` - ${pos.description}` : ''),
+                description: `募选 ${pos.maxWinners} 人` + (pos.description ? ` - ${pos.description}` : ''),
                 emoji: '🎯'
             }));
 
@@ -240,13 +240,13 @@ async function handleSecondChoiceSelection(interaction) {
         const parts = interaction.customId.split('_');
         // customId格式: election_select_second_choice_election_1749951053733_0pb907_1
         const firstChoice = parts[parts.length - 1]; // 最后一个是第一志愿
-        const electionId = parts.slice(4, -1).join('_'); // 中间部分是选举ID
+        const electionId = parts.slice(4, -1).join('_'); // 中间部分是募选ID
         const secondChoice = interaction.values[0] === 'skip_second_choice' ? null : interaction.values[0];
 
-        // 获取选举信息
+        // 获取募选信息
         const election = await ElectionData.getById(electionId);
         if (!election) {
-            const errorEmbed = createErrorEmbed('选举不存在', '该选举可能已被删除或不存在');
+            const errorEmbed = createErrorEmbed('募选不存在', '该募选可能已被删除或不存在');
             return await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
         }
 
@@ -294,8 +294,8 @@ async function handleIntroductionModal(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         const parts = interaction.customId.split('_');
-        // 修复选举ID提取：election_introduction_modal_election_1749951053733_0pb907_1_none
-        const electionId = parts.slice(3, -2).join('_'); // 提取选举ID部分
+        // 修复募选ID提取：election_introduction_modal_election_1749951053733_0pb907_1_none
+        const electionId = parts.slice(3, -2).join('_'); // 提取募选ID部分
         const firstChoice = parts[parts.length - 2];
         const secondChoice = parts[parts.length - 1] === 'none' ? null : parts[parts.length - 1];
 
@@ -303,10 +303,10 @@ async function handleIntroductionModal(interaction) {
         const userId = interaction.user.id;
         const userDisplayName = interaction.user.displayName || interaction.user.username;
 
-        // 获取选举信息
+        // 获取募选信息
         const election = await ElectionData.getById(electionId);
         if (!election) {
-            const errorEmbed = createErrorEmbed('选举不存在', '该选举可能已被删除或不存在');
+            const errorEmbed = createErrorEmbed('募选不存在', '该募选可能已被删除或不存在');
             return await interaction.editReply({ embeds: [errorEmbed] });
         }
 
@@ -358,17 +358,17 @@ async function handleEditRegistration(interaction) {
         // 先延迟回复
         await interaction.deferReply({ ephemeral: true });
 
-        // 修复选举ID提取：election_edit_registration_election_1749951053733_0pb907
+        // 修复募选ID提取：election_edit_registration_election_1749951053733_0pb907
         const customIdParts = interaction.customId.split('_');
         const electionId = customIdParts.slice(3).join('_'); // 从索引3开始拼接
         const userId = interaction.user.id;
 
-        // 获取选举和报名信息
+        // 获取募选和报名信息
         const election = await ElectionData.getById(electionId);
         const registration = await RegistrationData.getByUserAndElection(userId, electionId);
 
         if (!election || !registration || registration.status !== 'active') {
-            const errorEmbed = createErrorEmbed('数据不存在', '选举或报名信息不存在');
+            const errorEmbed = createErrorEmbed('数据不存在', '募选或报名信息不存在');
             return await interaction.editReply({ embeds: [errorEmbed] });
         }
 
@@ -403,7 +403,7 @@ async function handleWithdrawRegistration(interaction) {
     try {
         await interaction.deferReply({ ephemeral: true });
 
-        // 修复选举ID提取：election_withdraw_registration_election_1749951053733_0pb907
+        // 修复募选ID提取：election_withdraw_registration_election_1749951053733_0pb907
         const customIdParts = interaction.customId.split('_');
         const electionId = customIdParts.slice(3).join('_'); // 从索引3开始拼接
         const userId = interaction.user.id;

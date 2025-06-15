@@ -6,8 +6,8 @@ const { getElectionStatistics } = require('../services/electionResultService');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('查看选举状态')
-        .setDescription('查看当前选举的状态和统计信息')
+        .setName('查看募选状态')
+        .setDescription('查看当前募选的状态和统计信息')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction) {
@@ -16,16 +16,16 @@ module.exports = {
 
             // 验证权限
             if (!validatePermission(interaction.member, [])) {
-                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以查看选举状态');
+                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以查看募选状态');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
             const guildId = interaction.guild.id;
 
-            // 获取当前活跃的选举
+            // 获取当前活跃的募选
             const election = await ElectionData.getActiveElectionByGuild(guildId);
             if (!election) {
-                const errorEmbed = createErrorEmbed('未找到选举', '当前没有活跃的选举，请先使用 `/设置选举职位` 创建选举');
+                const errorEmbed = createErrorEmbed('未找到募选', '当前没有活跃的募选，请先使用 `/设置募选职位` 创建募选');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
@@ -79,10 +79,10 @@ module.exports = {
             switch (election.status) {
                 case 'setup':
                     if (!election.positions || Object.keys(election.positions).length === 0) {
-                        suggestions += '• 使用 `/设置选举职位` 设置竞选职位\n';
+                        suggestions += '• 使用 `/设置募选职位` 设置竞选职位\n';
                     }
                     if (!election.schedule || !election.schedule.registrationStartTime) {
-                        suggestions += '• 使用 `/设置选举时间安排` 设置时间安排\n';
+                        suggestions += '• 使用 `/设置募选时间安排` 设置时间安排\n';
                     }
                     if (!election.messageIds?.registrationEntryMessageId) {
                         suggestions += '• 使用 `/设置报名入口` 创建报名入口\n';
@@ -97,8 +97,8 @@ module.exports = {
                     suggestions += '• 投票结束后将自动计算和公布结果\n';
                     break;
                 case 'completed':
-                    suggestions += '• 选举已完成，结果已公布\n';
-                    suggestions += '• 可以创建新的选举\n';
+                    suggestions += '• 募选已完成，结果已公布\n';
+                    suggestions += '• 可以创建新的募选\n';
                     break;
             }
 
@@ -120,7 +120,7 @@ module.exports = {
             await interaction.editReply({ embeds: [statusEmbed] });
 
         } catch (error) {
-            console.error('查看选举状态时出错:', error);
+            console.error('查看募选状态时出错:', error);
             const errorEmbed = createErrorEmbed('系统错误', '处理命令时发生错误，请稍后重试');
             
             if (interaction.deferred) {
@@ -133,8 +133,8 @@ module.exports = {
 };
 
 /**
- * 检查选举配置是否完整
- * @param {object} election - 选举数据
+ * 检查募选配置是否完整
+ * @param {object} election - 募选数据
  * @returns {Array} 配置问题列表
  */
 function checkElectionConfiguration(election) {
@@ -142,7 +142,7 @@ function checkElectionConfiguration(election) {
 
     // 检查职位配置
     if (!election.positions || Object.keys(election.positions).length === 0) {
-        issues.push('• 未设置选举职位');
+        issues.push('• 未设置募选职位');
     }
 
     // 检查时间安排
@@ -170,7 +170,7 @@ function checkElectionConfiguration(election) {
                 issues.push('• 报名结束时间不能晚于投票开始时间');
             }
             if (voteEnd <= now && election.status !== 'completed') {
-                issues.push('• 投票结束时间已过，但选举状态未更新');
+                issues.push('• 投票结束时间已过，但募选状态未更新');
             }
         }
     }

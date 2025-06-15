@@ -6,8 +6,8 @@ const { createSuccessEmbed, createErrorEmbed } = require('../utils/messageUtils'
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('设置选举时间安排')
-        .setDescription('设置选举的时间安排')
+        .setName('设置募选时间安排')
+        .setDescription('设置募选的时间安排')
         .addStringOption(option =>
             option.setName('报名开始时间')
                 .setDescription('报名开始时间 (格式: YYYY-MM-DD HH:mm)')
@@ -32,16 +32,16 @@ module.exports = {
 
             // 验证权限
             if (!validatePermission(interaction.member, [])) {
-                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以设置选举时间安排');
+                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以设置募选时间安排');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
             const guildId = interaction.guild.id;
 
-            // 获取当前活跃的选举
+            // 获取当前活跃的募选
             const election = await ElectionData.getActiveElectionByGuild(guildId);
             if (!election) {
-                const errorEmbed = createErrorEmbed('未找到选举', '请先使用 `/设置选举职位` 创建选举');
+                const errorEmbed = createErrorEmbed('未找到募选', '请先使用 `/设置募选职位` 创建募选');
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
@@ -93,7 +93,7 @@ module.exports = {
                 return await interaction.editReply({ embeds: [errorEmbed] });
             }
 
-            // 更新选举时间安排
+            // 更新募选时间安排
             const schedule = {
                 registrationStartTime: registrationStartTime.toISOString(),
                 registrationEndTime: registrationEndTime.toISOString(),
@@ -123,14 +123,14 @@ module.exports = {
             ].join('\n');
 
             const successEmbed = createSuccessEmbed(
-                '选举时间安排设置成功',
-                `**${election.name}**\n\n${timeInfo}\n\n✅ 接下来可以使用 \`/设置选举入口\` 创建选举入口`
+                '募选时间安排设置成功',
+                `**${election.name}**\n\n${timeInfo}\n\n✅ 接下来可以使用 \`/设置募选入口\` 创建募选入口`
             );
 
             await interaction.editReply({ embeds: [successEmbed] });
 
         } catch (error) {
-            console.error('设置选举时间安排时出错:', error);
+            console.error('设置募选时间安排时出错:', error);
             const errorEmbed = createErrorEmbed('系统错误', '处理命令时发生错误，请稍后重试');
             
             if (interaction.deferred) {

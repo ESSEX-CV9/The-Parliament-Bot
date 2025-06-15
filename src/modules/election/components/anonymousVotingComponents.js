@@ -25,7 +25,7 @@ async function handleAnonymousVoteStart(interaction) {
         // 将中间的部分重新组合作为electionId
         const electionId = parts.slice(4, -1).join('_');
         
-        console.log(`解析得到 - 选举ID: ${electionId}, 职位ID: ${positionId}`);
+        console.log(`解析得到 - 募选ID: ${electionId}, 职位ID: ${positionId}`);
         
         const userId = interaction.user.id;
         const guildId = interaction.guild.id;
@@ -37,7 +37,7 @@ async function handleAnonymousVoteStart(interaction) {
         if (!permissionDetails.hasPermission) {
             console.log(`用户 ${interaction.user.tag} 投票权限不足`);
             
-            let errorMessage = '你缺少可以参与此选举投票的身份组。';
+            let errorMessage = '你缺少可以参与此募选投票的身份组。';
             
             if (permissionDetails.allowedRoles && permissionDetails.allowedRoles.length > 0) {
                 const allowedRoleNames = permissionDetails.allowedRoles.map(role => `**${role.name}**`).join('、');
@@ -60,7 +60,7 @@ async function handleAnonymousVoteStart(interaction) {
         // ===== 权限验证结束 =====
 
         // 获取投票数据
-        console.log(`查找投票数据 - 选举ID: ${electionId}, 职位ID: ${positionId}`);
+        console.log(`查找投票数据 - 募选ID: ${electionId}, 职位ID: ${positionId}`);
         const votes = await VoteData.getByElection(electionId);
         console.log(`找到 ${votes.length} 个投票记录`);
         
@@ -68,7 +68,7 @@ async function handleAnonymousVoteStart(interaction) {
         console.log(`匹配的投票记录:`, vote ? `找到 (${vote.voteId})` : '未找到');
 
         if (!vote) {
-            const errorEmbed = createErrorEmbed('投票不存在', `该投票可能已被删除或不存在\n\n调试信息：\n选举ID: ${electionId}\n职位ID: ${positionId}`);
+            const errorEmbed = createErrorEmbed('投票不存在', `该投票可能已被删除或不存在\n\n调试信息：\n募选ID: ${electionId}\n职位ID: ${positionId}`);
             return await interaction.editReply({ embeds: [errorEmbed] });
         }
 

@@ -4,7 +4,7 @@ const { calculateElectionResults } = require('./electionResultService');
 const { createElectionResultEmbed } = require('../utils/messageUtils');
 
 /**
- * 选举调度器
+ * 募选调度器
  */
 class ElectionScheduler {
     constructor(client) {
@@ -18,23 +18,23 @@ class ElectionScheduler {
      */
     start() {
         if (this.isRunning) {
-            console.log('选举调度器已在运行中');
+            console.log('募选调度器已在运行中');
             return;
         }
 
         this.isRunning = true;
-        console.log('✅ 选举调度器已启动');
+        console.log('✅ 募选调度器已启动');
 
         // 每分钟检查一次
         this.intervalId = setInterval(() => {
             this.checkElectionStates().catch(error => {
-                console.error('选举状态检查时出错:', error);
+                console.error('募选状态检查时出错:', error);
             });
         }, 60000);
 
         // 立即执行一次检查
         this.checkElectionStates().catch(error => {
-            console.error('选举状态检查时出错:', error);
+            console.error('募选状态检查时出错:', error);
         });
     }
 
@@ -47,11 +47,11 @@ class ElectionScheduler {
             this.intervalId = null;
         }
         this.isRunning = false;
-        console.log('选举调度器已停止');
+        console.log('募选调度器已停止');
     }
 
     /**
-     * 检查所有选举的状态
+     * 检查所有募选的状态
      */
     async checkElectionStates() {
         try {
@@ -77,29 +77,29 @@ class ElectionScheduler {
                 const voteStart = new Date(votingStartTime);
                 const voteEnd = new Date(votingEndTime);
 
-                // 检查需要开始报名的选举
+                // 检查需要开始报名的募选
                 if (election.status === 'setup' && now >= regStart && now <= regEnd) {
                     await this.startRegistrationPhase(election);
                 }
 
-                // 检查需要结束报名的选举
+                // 检查需要结束报名的募选
                 if (election.status === 'registration' && now >= regEnd) {
                     await this.endRegistrationPhase(election);
                 }
 
-                // 检查需要开始投票的选举
+                // 检查需要开始投票的募选
                 if (election.status === 'registration_ended' && now >= voteStart) {
                     await this.startVotingPhase(election);
                 }
 
-                // 检查需要结束投票的选举
+                // 检查需要结束投票的募选
                 if (election.status === 'voting' && now >= voteEnd) {
                     await this.endVotingPhase(election);
                 }
             }
 
         } catch (error) {
-            console.error('检查选举状态时出错:', error);
+            console.error('检查募选状态时出错:', error);
         }
     }
 
@@ -132,7 +132,7 @@ class ElectionScheduler {
             // 创建投票器
             await this.createAnonymousVotingPolls(election);
 
-            // 更新选举状态
+            // 更新募选状态
             await ElectionData.update(election.electionId, {
                 status: 'voting'
             });
@@ -152,20 +152,92 @@ class ElectionScheduler {
         try {
             console.log(`结束投票阶段: ${election.name} (${election.electionId})`);
 
-            // 计算选举结果
+            // 禁用所有投票器按钮
+            await this.disableVotingButtons(election);
+
+            // 计算募选结果
             const results = await calculateElectionResults(election.electionId);
             
-            // 更新选举状态
+            // 更新募选状态
             await ElectionData.update(election.electionId, {
                 status: 'completed',
                 results: results
             });
 
-            // 发布选举结果
+            // 发布募选结果
             await this.publishElectionResults(election, results);
 
         } catch (error) {
             console.error(`结束投票阶段时出错 (${election.electionId}):`, error);
+        }
+    }
+
+    /**
+     * 禁用投票器按钮
+     */
+    async disableVotingButtons(election) {
+        try {
+            const votingChannelId = election.channels?.votingChannelId;
+            if (!votingChannelId) {
+                console.log('未设置投票频道，跳过禁用投票按钮');
+                return;
+            }
+
+            const channel = this.client.channels.cache.get(votingChannelId);
+            if (!channel) {
+                console.error(`找不到投票频道: ${votingChannelId}`);
+                return;
+            }
+
+            // 获取所有投票记录
+            const votes = await VoteData.getByElection(election.electionId);
+            
+            for (const vote of votes) {
+                if (!vote.messageId) {
+                    console.log(`投票 ${vote.voteId} 没有消息ID，跳过`);
+                    continue;
+                }
+
+                try {
+                    const message = await channel.messages.fetch(vote.messageId);
+                    if (!message) {
+                        console.log(`找不到投票消息: ${vote.messageId}`);
+                        continue;
+                    }
+
+                    // 创建禁用的按钮
+                    const { ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = require('discord.js');
+                    const disabledButton = new ButtonBuilder()
+                        .setCustomId('election_voting_closed')
+                        .setLabel('投票已结束')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('🔒')
+                        .setDisabled(true);
+
+                    const row = new ActionRowBuilder().addComponents(disabledButton);
+
+                    // 更新嵌入消息
+                    const originalEmbed = message.embeds[0];
+                    const updatedEmbed = EmbedBuilder.from(originalEmbed)
+                        .setColor('#95a5a6') // 灰色表示已结束
+                        .setTitle(`🔒 ${vote.positionName} - 投票已结束`);
+
+                    await message.edit({
+                        embeds: [updatedEmbed],
+                        components: [row]
+                    });
+
+                    console.log(`投票器 ${vote.positionName} 已禁用`);
+
+                } catch (messageError) {
+                    console.error(`禁用投票器 ${vote.voteId} 时出错:`, messageError);
+                }
+            }
+
+            console.log('所有投票器按钮已禁用');
+
+        } catch (error) {
+            console.error('禁用投票器按钮时出错:', error);
         }
     }
 
@@ -186,7 +258,7 @@ class ElectionScheduler {
 
             switch (phase) {
                 case 'registration_started':
-                    message = `📝 **${election.name}** 报名已开始！\n现在可以点击报名按钮参与选举了。\n @获取投票通知`;
+                    message = `📝 **${election.name}** 报名已开始！\n现在可以点击报名按钮参与募选了。\n @获取投票通知`;
                     emoji = '📝';
                     break;
                 case 'voting_started':
@@ -208,7 +280,7 @@ class ElectionScheduler {
     }
 
     /**
-     * 发布选举结果
+     * 发布募选结果
      */
     async publishElectionResults(election, results) {
         try {
@@ -221,12 +293,12 @@ class ElectionScheduler {
             const resultEmbed = createElectionResultEmbed(election, results);
             
             await channel.send({
-                content: `🏆 **${election.name}** 选举结果公布！`,
+                content: `🏆 **${election.name}** 募选结果公布！`,
                 embeds: [resultEmbed]
             });
 
         } catch (error) {
-            console.error('发布选举结果时出错:', error);
+            console.error('发布募选结果时出错:', error);
         }
     }
 
@@ -234,7 +306,7 @@ class ElectionScheduler {
      * 手动触发状态检查
      */
     async forceCheck() {
-        console.log('手动触发选举状态检查...');
+        console.log('手动触发募选状态检查...');
         await this.checkElectionStates();
     }
 
@@ -261,7 +333,7 @@ class ElectionScheduler {
             // 发送候选人自我介绍到投票频道
             await this.sendCandidateIntroductions(election);
 
-            // 更新选举状态
+            // 更新募选状态
             await ElectionData.update(election.electionId, {
                 status: 'registration_ended'
             });
@@ -464,7 +536,7 @@ class ElectionScheduler {
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
 
-            console.log(`选举 ${election.name} 的投票器创建完成`);
+            console.log(`募选 ${election.name} 的投票器创建完成`);
 
         } catch (error) {
             console.error('创建投票器时出错:', error);
@@ -477,12 +549,12 @@ class ElectionScheduler {
 let schedulerInstance = null;
 
 /**
- * 启动选举调度器
+ * 启动募选调度器
  * @param {Client} client Discord客户端
  */
 function startElectionScheduler(client) {
     if (schedulerInstance) {
-        console.log('选举调度器已存在，停止旧的调度器');
+        console.log('募选调度器已存在，停止旧的调度器');
         schedulerInstance.stop();
     }
 
@@ -491,7 +563,7 @@ function startElectionScheduler(client) {
 }
 
 /**
- * 停止选举调度器
+ * 停止募选调度器
  */
 function stopElectionScheduler() {
     if (schedulerInstance) {
