@@ -30,17 +30,19 @@ module.exports = {
                     });
                 }
             } else {
-                // 获取最新的募选
-                const allElections = await ElectionData.getAll();
+                // 修复：使用 getByGuild 而不是 getAll，避免对象转数组的问题
+                const guildId = interaction.guild.id;
+                const allElections = await ElectionData.getByGuild(guildId);
+                
                 if (allElections.length === 0) {
                     return await interaction.editReply({
-                        embeds: [createErrorEmbed('无募选数据', '当前没有任何募选记录')]
+                        embeds: [createErrorEmbed('无募选数据', '当前服务器没有任何募选记录')]
                     });
                 }
                 
                 // 获取最新的募选（按创建时间排序）
                 election = allElections.sort((a, b) => 
-                    new Date(b.createdAt) - new Date(a.createdAt)
+                    new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
                 )[0];
                 electionId = election.electionId;
             }

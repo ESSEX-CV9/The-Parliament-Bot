@@ -91,15 +91,16 @@ const createVoteCommand = require('../modules/voting/commands/createVote');
 // 添加新的通知身份组命令
 const notificationRolesCommand = require('../modules/voting/commands/notificationRoles');
 
-// 选举系统命令
+// 选举系统命令 - 完整的命令列表
 const setElectionPositionsCommand = require('../modules/election/commands/setElectionPositions');
 const setElectionTimeScheduleCommand = require('../modules/election/commands/setElectionTimeSchedule');
 const setupElectionEntryCommand = require('../modules/election/commands/setupElectionEntry');
 const getElectionStatusCommand = require('../modules/election/commands/getElectionStatus');
-// 新增的选举权限设置命令
 const setRegistrationRolesCommand = require('../modules/election/commands/setRegistrationRoles');
 const setVotingRolesCommand = require('../modules/election/commands/setVotingRoles');
 const setNotificationRolesCommand = require('../modules/election/commands/setNotificationRoles');
+const getTieAnalysisCommand = require('../modules/election/commands/getTieAnalysis');
+const reprocessElectionResultsCommand = require('../modules/election/commands/reprocessElectionResults');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -201,15 +202,16 @@ client.commands.set(createVoteCommand.data.name, createVoteCommand);
 // 注册新的通知身份组命令
 client.commands.set(notificationRolesCommand.data.name, notificationRolesCommand);
 
-// 选举系统命令
+// 选举系统命令 - 完整注册
 client.commands.set(setElectionPositionsCommand.data.name, setElectionPositionsCommand);
 client.commands.set(setElectionTimeScheduleCommand.data.name, setElectionTimeScheduleCommand);
 client.commands.set(setupElectionEntryCommand.data.name, setupElectionEntryCommand);
 client.commands.set(getElectionStatusCommand.data.name, getElectionStatusCommand);
-// 注册新的选举权限设置命令
 client.commands.set(setRegistrationRolesCommand.data.name, setRegistrationRolesCommand);
 client.commands.set(setVotingRolesCommand.data.name, setVotingRolesCommand);
 client.commands.set(setNotificationRolesCommand.data.name, setNotificationRolesCommand);
+client.commands.set(getTieAnalysisCommand.data.name, getTieAnalysisCommand);
+client.commands.set(reprocessElectionResultsCommand.data.name, reprocessElectionResultsCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
@@ -238,7 +240,8 @@ client.once(Events.ClientReady, async (readyClient) => {
     
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
-    console.log('�� 自动消息清理系统已加载');
+    console.log('🧹 自动消息清理系统已加载');
+    console.log('🗳️ 选举系统已完全加载 (包含9个命令)');
 })
 
 client.on(Events.InteractionCreate, interactionCreateHandler)
