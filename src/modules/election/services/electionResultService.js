@@ -2,7 +2,9 @@ const { ElectionData, RegistrationData, VoteData } = require('../data/electionDa
 const { 
     detectBoundaryTies, 
     analyzeChainEffects, 
-    assignCandidateStatuses 
+    assignCandidateStatuses,
+    analyzeCrossPositionDependencies,
+    recalculateWithDependencies
 } = require('../utils/tieBreakingUtils');
 
 /**
@@ -35,12 +37,18 @@ async function calculateElectionResults(electionId) {
         }
 
         // 处理第二志愿逻辑和当选状态
-        const finalResults = await processElectionLogic(results, election.positions, registrations);
+        const preliminaryResults = await processElectionLogic(results, election.positions, registrations);
 
-        // 新增：处理并列情况分析
-        const resultsWithTieAnalysis = await processTieAnalysis(finalResults, election.positions, registrations);
+        // 新增：分析跨职位依赖关系
+        const dependencies = analyzeCrossPositionDependencies(preliminaryResults, registrations);
+        
+        // 新增：重新计算考虑依赖关系的状态
+        const resultsWithDependencies = recalculateWithDependencies(preliminaryResults, dependencies);
 
-        return resultsWithTieAnalysis;
+        // 处理并列情况分析
+        const finalResults = await processTieAnalysis(resultsWithDependencies, election.positions, registrations);
+
+        return finalResults;
 
     } catch (error) {
         console.error('计算募选结果时出错:', error);

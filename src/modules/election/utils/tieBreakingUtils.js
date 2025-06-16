@@ -388,11 +388,284 @@ function checkReplacementChance(candidate, positionResult, chainEffects, positio
     return null;
 }
 
+/**
+ * 分析跨职位依赖关系
+ * @param {object} allResults - 所有职位的选举结果
+ * @param {Array} registrations - 报名数据
+ * @returns {object} 依赖关系分析结果
+ */
+function analyzeCrossPositionDependencies(allResults, registrations) {
+    const dependencies = {
+        conditionalCandidates: new Map(), // 条件候选人
+        affectedPositions: new Set(),
+        dependencyChains: []
+    };
+
+    // 找出所有有第一志愿在其他职位并列的候选人
+    for (const [positionId, result] of Object.entries(allResults)) {
+        if (result.isVoid) continue;
+
+        result.candidates.forEach(candidate => {
+            if (candidate.choiceType === 'second') {
+                // 这是第二志愿候选人，需要检查其第一志愿状态
+                const firstChoicePosition = findFirstChoicePosition(candidate.userId, registrations);
+                if (firstChoicePosition && allResults[firstChoicePosition]) {
+                    const firstChoiceResult = allResults[firstChoicePosition];
+                    const firstChoiceCandidate = firstChoiceResult.candidates.find(c => c.userId === candidate.userId);
+                    
+                    if (firstChoiceCandidate && isInTieOrBoundary(firstChoiceCandidate, firstChoiceResult)) {
+                        // 这个候选人在第一志愿职位存在不确定性
+                        dependencies.conditionalCandidates.set(candidate.userId, {
+                            firstChoicePosition,
+                            secondChoicePosition: positionId,
+                            firstChoiceRank: getEffectiveRank(firstChoiceCandidate, firstChoiceResult),
+                            secondChoiceRank: getEffectiveRank(candidate, result),
+                            status: 'conditional'
+                        });
+                        
+                        dependencies.affectedPositions.add(positionId);
+                        dependencies.affectedPositions.add(firstChoicePosition);
+                    }
+                }
+            }
+        });
+    }
+
+    return dependencies;
+}
+
+/**
+ * 重新计算考虑跨职位依赖的候选人状态
+ * @param {object} allResults - 所有职位的选举结果
+ * @param {object} dependencies - 依赖关系分析
+ * @returns {object} 更新后的结果
+ */
+function recalculateWithDependencies(allResults, dependencies) {
+    const updatedResults = JSON.parse(JSON.stringify(allResults));
+
+    // 为每个职位重新计算状态
+    for (const [positionId, result] of Object.entries(updatedResults)) {
+        if (result.isVoid) continue;
+
+        const position = result.position;
+        const maxWinners = position.maxWinners;
+
+        // 重新分析当选情况
+        result.candidates.forEach(candidate => {
+            const newStatus = calculateAdvancedStatus(
+                candidate, 
+                result, 
+                maxWinners,
+                dependencies,
+                positionId,
+                updatedResults
+            );
+            
+            candidate.statusInfo = newStatus;
+        });
+    }
+
+    return updatedResults;
+}
+
+/**
+ * 计算高级候选人状态（考虑跨职位依赖）
+ */
+function calculateAdvancedStatus(candidate, positionResult, maxWinners, dependencies, positionId, allResults) {
+    const rank = getEffectiveRank(candidate, positionResult);
+    const isConditional = dependencies.conditionalCandidates.has(candidate.userId);
+    
+    // 确定当选：排名在前且无依赖问题
+    if (rank <= maxWinners && !hasBlockingDependencies(candidate, dependencies, allResults)) {
+        return {
+            status: CANDIDATE_STATUS.CONFIRMED_WINNER,
+            notes: null
+        };
+    }
+    
+    // 条件当选：取决于其他候选人在其他职位的结果
+    if (rank <= maxWinners && hasBlockingDependencies(candidate, dependencies, allResults)) {
+        const blockingInfo = getBlockingInfo(candidate, dependencies, allResults);
+        return {
+            status: CANDIDATE_STATUS.CONDITIONAL_WINNER,
+            notes: `取决于${blockingInfo}的结果`
+        };
+    }
+    
+    // 并列待处理
+    if (isInTieAtBoundary(candidate, positionResult, maxWinners)) {
+        return {
+            status: CANDIDATE_STATUS.TIED_PENDING,
+            notes: `与${getTieGroupSize(candidate, positionResult) - 1}人并列第${rank}名`
+        };
+    }
+    
+    // 可能递补
+    if (rank === maxWinners + 1 || hasReplacementChance(candidate, dependencies, allResults)) {
+        return {
+            status: CANDIDATE_STATUS.POTENTIAL_REPLACEMENT,
+            notes: '排名靠前，如有并列处理或当选者退出可能递补'
+        };
+    }
+    
+    // 确定落选
+    return {
+        status: CANDIDATE_STATUS.CONFIRMED_LOSER,
+        notes: null
+    };
+}
+
+/**
+ * 查找候选人的第一志愿职位
+ * @param {string} userId - 用户ID
+ * @param {Array} registrations - 报名数据
+ * @returns {string|null} 第一志愿职位ID
+ */
+function findFirstChoicePosition(userId, registrations) {
+    const registration = registrations.find(reg => reg.userId === userId);
+    return registration ? registration.firstChoicePosition : null;
+}
+
+/**
+ * 检查候选人是否在并列或边界状态
+ * @param {object} candidate - 候选人
+ * @param {object} positionResult - 职位结果
+ * @returns {boolean} 是否在并列或边界状态
+ */
+function isInTieOrBoundary(candidate, positionResult) {
+    const maxWinners = positionResult.position.maxWinners;
+    const rank = getEffectiveRank(candidate, positionResult);
+    
+    // 检查是否在当选边界附近
+    if (rank <= maxWinners + 2) {
+        // 检查是否有并列情况
+        const sameVoteCandidates = positionResult.candidates.filter(c => 
+            c.votes === candidate.votes && c.choiceType === candidate.choiceType
+        );
+        return sameVoteCandidates.length > 1;
+    }
+    
+    return false;
+}
+
+/**
+ * 获取候选人的有效排名
+ * @param {object} candidate - 候选人
+ * @param {object} positionResult - 职位结果
+ * @returns {number} 有效排名
+ */
+function getEffectiveRank(candidate, positionResult) {
+    const sortedCandidates = positionResult.candidates.slice().sort((a, b) => {
+        if (b.votes !== a.votes) {
+            return b.votes - a.votes;
+        }
+        if (a.choiceType === 'first' && b.choiceType === 'second') {
+            return -1;
+        }
+        if (a.choiceType === 'second' && b.choiceType === 'first') {
+            return 1;
+        }
+        return 0;
+    });
+    
+    const index = sortedCandidates.findIndex(c => c.userId === candidate.userId);
+    return index + 1;
+}
+
+/**
+ * 检查候选人是否有阻塞性依赖
+ * @param {object} candidate - 候选人
+ * @param {object} dependencies - 依赖关系
+ * @param {object} allResults - 所有结果
+ * @returns {boolean} 是否有阻塞性依赖
+ */
+function hasBlockingDependencies(candidate, dependencies, allResults) {
+    // 检查是否有其他候选人的状态会影响当前候选人
+    if (candidate.choiceType === 'first') {
+        // 第一志愿候选人，检查是否有第二志愿候选人可能影响他
+        return false; // 简化处理，第一志愿通常不受阻塞
+    } else {
+        // 第二志愿候选人，检查第一志愿是否确定
+        const dependency = dependencies.conditionalCandidates.get(candidate.userId);
+        return dependency ? true : false;
+    }
+}
+
+/**
+ * 获取阻塞信息
+ * @param {object} candidate - 候选人
+ * @param {object} dependencies - 依赖关系
+ * @param {object} allResults - 所有结果
+ * @returns {string} 阻塞信息描述
+ */
+function getBlockingInfo(candidate, dependencies, allResults) {
+    const dependency = dependencies.conditionalCandidates.get(candidate.userId);
+    if (dependency) {
+        return `在${dependency.firstChoicePosition}的结果`;
+    }
+    return '其他职位的并列结果';
+}
+
+/**
+ * 检查是否在边界并列
+ * @param {object} candidate - 候选人
+ * @param {object} positionResult - 职位结果
+ * @param {number} maxWinners - 最大当选人数
+ * @returns {boolean} 是否在边界并列
+ */
+function isInTieAtBoundary(candidate, positionResult, maxWinners) {
+    const rank = getEffectiveRank(candidate, positionResult);
+    const sameVoteCandidates = positionResult.candidates.filter(c => 
+        c.votes === candidate.votes && c.choiceType === candidate.choiceType
+    );
+    
+    return sameVoteCandidates.length > 1 && 
+           rank <= maxWinners + 1 && 
+           rank >= maxWinners - 1;
+}
+
+/**
+ * 获取并列组大小
+ * @param {object} candidate - 候选人
+ * @param {object} positionResult - 职位结果
+ * @returns {number} 并列组大小
+ */
+function getTieGroupSize(candidate, positionResult) {
+    const sameVoteCandidates = positionResult.candidates.filter(c => 
+        c.votes === candidate.votes && c.choiceType === candidate.choiceType
+    );
+    return sameVoteCandidates.length;
+}
+
+/**
+ * 检查是否有递补机会
+ * @param {object} candidate - 候选人
+ * @param {object} dependencies - 依赖关系
+ * @param {object} allResults - 所有结果
+ * @returns {boolean} 是否有递补机会
+ */
+function hasReplacementChance(candidate, dependencies, allResults) {
+    // 检查是否受其他职位并列影响而有递补机会
+    return dependencies.conditionalCandidates.has(candidate.userId) ||
+           dependencies.affectedPositions.size > 0;
+}
+
 module.exports = {
     CANDIDATE_STATUS,
     STATUS_CONFIG,
     detectBoundaryTies,
     analyzeChainEffects,
     assignCandidateStatuses,
-    generateTieResolutionScenarios
+    generateTieResolutionScenarios,
+    analyzeCrossPositionDependencies,
+    recalculateWithDependencies,
+    calculateAdvancedStatus,
+    findFirstChoicePosition,
+    isInTieOrBoundary,
+    getEffectiveRank,
+    hasBlockingDependencies,
+    getBlockingInfo,
+    isInTieAtBoundary,
+    getTieGroupSize,
+    hasReplacementChance
 }; 

@@ -299,10 +299,15 @@ function createElectionResultEmbed(election, results) {
                 }
                 
                 const choiceLabel = candidate.choiceType === 'second' ? ' (第二志愿)' : '';
-                return `<@${candidate.userId}> ${candidate.votes}票 ${statusIcon} ${status}${choiceLabel}`;
+                
+                // 两行显示格式
+                const userMention = `<@${candidate.userId}>`;
+                const userInfo = `${candidate.displayName || '未知用户'} ${candidate.votes}票 ${statusIcon} ${status}${choiceLabel}`;
+                
+                return `${userMention}\n${userInfo}`;
             });
             
-            fieldValue = candidateResults.join('\n');
+            fieldValue = candidateResults.join('\n\n');
             
             // 添加投票统计
             if (result.totalVoters > 0) {
@@ -371,11 +376,13 @@ function createTieAnalysisEmbed(election, results) {
             
             result.tieAnalysis.tieGroups.forEach((group, index) => {
                 const groupTitle = `${position.name} - 并列组 ${index + 1}`;
-                const tiedCandidates = group.candidates.map(c => 
-                    `<@${c.userId}> (${c.votes}票)`
-                ).join('\n');
+                const tiedCandidates = group.candidates.map(c => {
+                    const userMention = `<@${c.userId}>`;
+                    const userInfo = `${c.displayName || '未知用户'} (${c.votes}票)`;
+                    return `${userMention}\n${userInfo}`;
+                }).join('\n\n');
                 
-                let description = `**并列候选人：**\n${tiedCandidates}\n`;
+                let description = `**并列候选人：**\n${tiedCandidates}\n\n`;
                 description += `**排名：** 第${group.startRank}名\n`;
                 description += `**票数：** ${group.votes}票\n`;
                 description += `**可当选名额：** ${group.slotsInGroup}人\n`;

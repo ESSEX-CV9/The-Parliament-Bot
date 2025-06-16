@@ -60,6 +60,11 @@ const ElectionData = {
         return elections[electionId] || null;
     },
     
+    async getByGuild(guildId) {
+        const elections = await this.getAll();
+        return Object.values(elections).filter(election => election.guildId === guildId);
+    },
+    
     async create(electionData) {
         const elections = await this.getAll();
         elections[electionData.electionId] = {
