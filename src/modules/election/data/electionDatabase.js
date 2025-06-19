@@ -100,7 +100,7 @@ const ElectionData = {
         const elections = await this.getAll();
         return Object.values(elections).find(
             election => election.guildId === guildId && 
-            ['setup', 'registration', 'voting'].includes(election.status)
+            ['setup', 'registration', 'registration_ended', 'voting'].includes(election.status)
         );
     }
 };
@@ -165,6 +165,38 @@ const RegistrationData = {
         const registrations = await this.getByElection(electionId);
         const fieldName = choiceType === 'first' ? 'firstChoicePosition' : 'secondChoicePosition';
         return registrations.filter(reg => reg[fieldName] === positionId);
+    },
+
+    // 新增：候选人管理相关方法
+    async getByUserAndElectionWithAllStatuses(userId, electionId) {
+        const registrations = await this.getAll();
+        const regId = `reg_${electionId}_${userId}`;
+        return registrations[regId] || null;
+    },
+
+    async rejectCandidate(registrationId, reason, operatorId) {
+        return await this.update(registrationId, { 
+            status: 'rejected',
+            rejectedAt: new Date().toISOString(),
+            rejectedBy: operatorId,
+            rejectedReason: reason
+        });
+    },
+
+    async revokeCandidate(registrationId, reason, operatorId) {
+        return await this.update(registrationId, { 
+            status: 'revoked',
+            revokedAt: new Date().toISOString(),
+            revokedBy: operatorId,
+            revokedReason: reason
+        });
+    },
+
+    async setIntroductionMessage(registrationId, messageId, channelId) {
+        return await this.update(registrationId, {
+            introductionMessageId: messageId,
+            introductionChannelId: channelId
+        });
     }
 };
 

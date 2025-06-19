@@ -540,12 +540,23 @@ class ElectionScheduler {
                     { name: '报名时间', value: `<t:${Math.floor(new Date(registration.registeredAt).getTime() / 1000)}:f>`, inline: true }
                 );
 
-                await channel.send({ 
+                const message = await channel.send({ 
                     embeds: [embed],
                     allowedMentions: { 
                         users: [registration.userId]  // 允许@指定用户
                     }
                 });
+
+                // 记录候选人简介消息ID
+                try {
+                    await RegistrationData.setIntroductionMessage(
+                        registration.registrationId, 
+                        message.id, 
+                        channel.id
+                    );
+                } catch (error) {
+                    console.error(`记录候选人简介消息ID失败 (${registration.userId}):`, error);
+                }
 
                 // 延迟避免API限制
                 await new Promise(resolve => setTimeout(resolve, 1000));
