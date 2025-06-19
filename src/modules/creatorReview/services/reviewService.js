@@ -95,9 +95,9 @@ async function getThreadTotalReactions(thread) {
 }
 
 /**
- * 获取帖子首楼的反应数
+ * 获取帖子首楼不重复反应用户数
  * @param {ThreadChannel} thread - 论坛帖子频道
- * @returns {number} 首楼反应数
+ * @returns {number} 不重复反应用户数
  */
 async function getThreadFirstMessageReactions(thread) {
     try {
@@ -109,18 +109,33 @@ async function getThreadFirstMessageReactions(thread) {
             return 0;
         }
         
-        // 计算首楼的反应数
-        let totalReactions = 0;
+        // 收集所有不重复的反应用户
+        const uniqueUsers = new Set();
+        
         if (starterMessage.reactions && starterMessage.reactions.cache) {
-            starterMessage.reactions.cache.forEach(reaction => {
-                totalReactions += reaction.count;
-            });
+            // 遍历所有反应类型
+            for (const reaction of starterMessage.reactions.cache.values()) {
+                try {
+                    // 获取该反应的所有用户
+                    const users = await reaction.users.fetch();
+                    
+                    // 将用户ID添加到Set中（自动去重）
+                    users.forEach(user => {
+                        if (!user.bot) { // 排除机器人
+                            uniqueUsers.add(user.id);
+                        }
+                    });
+                } catch (error) {
+                    console.error(`获取反应用户失败 (${reaction.emoji.name}):`, error);
+                }
+            }
         }
         
-        console.log(`帖子 ${thread.name} 首楼反应数: ${totalReactions}`);
-        return totalReactions;
+        const uniqueUserCount = uniqueUsers.size;
+        console.log(`帖子 ${thread.name} 首楼不重复反应用户数: ${uniqueUserCount}`);
+        return uniqueUserCount;
     } catch (error) {
-        console.error('获取帖子首楼反应数失败:', error);
+        console.error('获取帖子首楼不重复反应用户数失败:', error);
         return 0;
     }
 }
@@ -317,17 +332,17 @@ async function processReviewSubmission(interaction) {
             });
         }
         
-        // 计算总反应数
+        // 计算不重复用户反应数
         const totalReactions = await getThreadFirstMessageReactions(targetChannel);
         const requiredReactions = reviewSettings.requiredReactions;
         
-        console.log(`帖子反应统计: 当前=${totalReactions}, 需要=${requiredReactions}`);
+        console.log(`帖子反应统计: 当前不重复用户数=${totalReactions}, 需要=${requiredReactions}`);
         console.log(`帖子信息: 服务器=${targetGuild.name}, 频道=${targetChannel.name}, 作者=${threadAuthor.tag}`);
         
         // 检查是否达到要求
         if (totalReactions < requiredReactions) {
             return interaction.editReply({ 
-                content: `❌ **审核未通过**\n\n您的帖子当前反应数为 **${totalReactions}**，需要达到 **${requiredReactions}** 个反应才能通过审核。\n\n**帖子信息：**\n• 服务器：${targetGuild.name}\n• 帖子：${targetChannel.name}\n• 链接：[点击查看](${postLink})\n\n请继续努力获取更多反应后再次提交。`
+                content: `❌ **审核未通过**\n\n您的帖子当前有 **${totalReactions}** 个独特用户的反应，需要达到 **${requiredReactions}** 个独特用户的反应才能通过审核。\n\n**帖子信息：**\n• 服务器：${targetGuild.name}\n• 帖子：${targetChannel.name}\n• 链接：[点击查看](${postLink})\n\n请继续努力获取更多独特用户的反应后再次提交。`
             });
         }
         
@@ -355,7 +370,7 @@ async function processReviewSubmission(interaction) {
             console.log(`成功为用户 ${interaction.user.tag} 添加身份组 ${rewardRole.name}`);
             
             await interaction.editReply({ 
-                content: `✅ **审核通过！**\n\n🎉 恭喜您！您的帖子已达到 **${totalReactions}** 个反应，成功通过审核。\n\n您已获得 ${rewardRole} 身份组！\n\n**帖子信息：**\n• 服务器：${targetGuild.name}\n• 帖子：${targetChannel.name}\n• 反应数：${totalReactions}/${requiredReactions}\n• 帖子链接：[点击查看](${postLink})`
+                content: `✅ **审核通过！**\n\n🎉 恭喜您！您的帖子已获得 **${totalReactions}** 个独特用户的反应，成功通过审核。\n\n您已获得 ${rewardRole} 身份组！\n\n**帖子信息：**\n• 服务器：${targetGuild.name}\n• 帖子：${targetChannel.name}\n• 不重复反应用户数：${totalReactions}/${requiredReactions}\n• 帖子链接：[点击查看](${postLink})`
             });
             
         } catch (error) {
