@@ -197,8 +197,15 @@ async function handleExpiredVote(client, vote) {
         
         // 如果是禁言投票，投票结束后删除消息并归档
         if (type === 'mute') {
-            console.log(`禁言投票结束，开始删除消息: ${targetMessageId}`);
-            deleteResult = await deleteMessageAfterVoteEnd(client, vote);
+            // 检查是否达到禁言阈值
+            const thresholdCheck = checkReactionThreshold(currentReactionCount, type);
+            
+            if (thresholdCheck.reached) {
+                console.log(`禁言投票结束且达到阈值 (${currentReactionCount} >= ${thresholdCheck.threshold})，开始删除消息: ${targetMessageId}`);
+                deleteResult = await deleteMessageAfterVoteEnd(client, vote);
+            } else {
+                console.log(`禁言投票结束但未达到阈值 (${currentReactionCount} < ${thresholdCheck.threshold})，不删除消息: ${targetMessageId}`);
+            }
         }
         
         // 更新投票状态为已完成
