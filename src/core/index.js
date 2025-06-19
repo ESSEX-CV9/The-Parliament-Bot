@@ -101,6 +101,9 @@ const setVotingRolesCommand = require('../modules/election/commands/setVotingRol
 const setNotificationRolesCommand = require('../modules/election/commands/setNotificationRoles');
 const getTieAnalysisCommand = require('../modules/election/commands/getTieAnalysis');
 const reprocessElectionResultsCommand = require('../modules/election/commands/reprocessElectionResults');
+const viewCandidateInfoCommand = require('../modules/election/commands/viewCandidateInfo');
+const manageCandidateStatusCommand = require('../modules/election/commands/manageCandidateStatus');
+const scanCandidateMessagesCommand = require('../modules/election/commands/scanCandidateMessages');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -215,6 +218,9 @@ client.commands.set(setVotingRolesCommand.data.name, setVotingRolesCommand);
 client.commands.set(setNotificationRolesCommand.data.name, setNotificationRolesCommand);
 client.commands.set(getTieAnalysisCommand.data.name, getTieAnalysisCommand);
 client.commands.set(reprocessElectionResultsCommand.data.name, reprocessElectionResultsCommand);
+client.commands.set(viewCandidateInfoCommand.data.name, viewCandidateInfoCommand);
+client.commands.set(manageCandidateStatusCommand.data.name, manageCandidateStatusCommand);
+client.commands.set(scanCandidateMessagesCommand.data.name, scanCandidateMessagesCommand);
 
 // 自助文件上传系统命令
 client.commands.set(uploadCommand.data.name, uploadCommand);

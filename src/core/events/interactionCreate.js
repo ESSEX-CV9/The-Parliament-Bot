@@ -146,6 +146,14 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('election_anonymous_vote_cancel_')) {
                 // 取消匿名投票按钮
                 await handleAnonymousVoteCancel(interaction);
+            } else if (interaction.customId.startsWith('appeal_registration_')) {
+                // 申诉报名按钮
+                const { handleAppealRegistration } = require('../../modules/election/components/appealComponents');
+                await handleAppealRegistration(interaction);
+            } else if (interaction.customId.startsWith('withdraw_registration_')) {
+                // 放弃参选按钮
+                const { handleWithdrawRegistration } = require('../../modules/election/components/appealComponents');
+                await handleWithdrawRegistration(interaction);
             }
             // === 赛事系统按钮处理 ===
             else if (interaction.customId === 'contest_application') {
@@ -404,6 +412,10 @@ async function interactionCreateHandler(interaction) {
             else if (interaction.customId.startsWith('election_introduction_modal_')) {
                 // 选举自我介绍模态窗口提交
                 await handleIntroductionModal(interaction);
+            } else if (interaction.customId.startsWith('appeal_modal_')) {
+                // 申诉报名模态窗口提交
+                const { handleAppealModal } = require('../../modules/election/components/appealComponents');
+                await handleAppealModal(interaction);
             }
             // === 赛事系统模态窗口处理 ===
             else if (interaction.customId === 'contest_application') {
