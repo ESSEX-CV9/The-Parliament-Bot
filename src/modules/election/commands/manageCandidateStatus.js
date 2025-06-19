@@ -104,7 +104,7 @@ module.exports = {
                 const successEmbed = new EmbedBuilder()
                     .setTitle(`${statusEmoji} 操作成功`)
                     .setDescription(`已成功${actionName}候选人 ${candidate.tag} 的参选资格`)
-                    .setColor(action === 'reject' ? '#e74c3c' : '#f39c12')
+                    .setColor(action === 'reject' ? '#f39c12' : '#e74c3c')
                     .addFields(
                         { name: '候选人', value: `<@${candidate.id}>`, inline: true },
                         { name: '操作类型', value: actionName, inline: true },
