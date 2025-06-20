@@ -226,7 +226,7 @@ async function handleAdminEditInfo(interaction) {
         const displayName = sanitizeInput(interaction.fields.getTextInputValue('display_name'), 32);
         const firstChoice = sanitizeInput(interaction.fields.getTextInputValue('first_choice'), 50);
         const secondChoice = sanitizeInput(interaction.fields.getTextInputValue('second_choice') || '', 50) || null;
-        const selfIntroduction = sanitizeInput(interaction.fields.getTextInputValue('self_introduction') || '', 2000) || null;
+        const selfIntroduction = interaction.fields.getTextInputValue('self_introduction')?.trim().substring(0, 2000) || null;
 
         // 获取募选信息
         const election = await ElectionData.getById(electionId);
