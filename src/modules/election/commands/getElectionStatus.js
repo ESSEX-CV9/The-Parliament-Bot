@@ -7,18 +7,18 @@ const { getElectionStatistics } = require('../services/electionResultService');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('查看募选状态')
-        .setDescription('查看当前募选的状态和统计信息')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDescription('查看当前募选的状态和统计信息'),
+        // .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction) {
         try {
             await interaction.deferReply({ ephemeral: true });
 
             // 验证权限
-            if (!validatePermission(interaction.member, [])) {
-                const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以查看募选状态');
-                return await interaction.editReply({ embeds: [errorEmbed] });
-            }
+            // if (!validatePermission(interaction.member, [])) {
+            //     const errorEmbed = createErrorEmbed('权限不足', '只有管理员可以查看募选状态');
+            //     return await interaction.editReply({ embeds: [errorEmbed] });
+            // }
 
             const guildId = interaction.guild.id;
 
