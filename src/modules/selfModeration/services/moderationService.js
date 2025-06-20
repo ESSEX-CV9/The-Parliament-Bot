@@ -284,7 +284,11 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         const actionName = type === 'delete' ? '删除搬屎消息' : '禁言搬屎用户';
         const endTimestamp = Math.floor(new Date(endTime).getTime() / 1000);
         
-        // 获取当前⚠️反应数量
+        // 获取对应投票类型的表情符号
+        const voteEmoji = type === 'mute' ? '🚫' : '⚠️';
+        const emojiName = type === 'mute' ? '🚫' : '⚠️';
+        
+        // 获取当前反应数量
         const initialReactionCount = await getShitReactionCount(
             interaction.client,
             voteData.guildId,
@@ -302,15 +306,15 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         // 🔥 构建执行条件文本
         const executionCondition = type === 'delete' 
             ? `${deleteThreshold}个⚠️删除消息 (${currentTimeMode})` 
-            : `${muteThreshold}个⚠️开始禁言 (${currentTimeMode})`;
+            : `${muteThreshold}个🚫开始禁言 (${currentTimeMode})`;
         
         const embed = new EmbedBuilder()
             .setTitle(`🗳️ ${actionName}投票已启动`)
-            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加⚠️反应来表达支持，**或者直接对本消息添加⚠️反应**。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${targetUserId}>\n**发起人：** <@${initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前⚠️数量：** ${initialReactionCount}\n**执行条件：** ${executionCondition}`)
+            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加${voteEmoji}反应来表达支持，**或者直接对本消息添加${voteEmoji}反应**。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${targetUserId}>\n**发起人：** <@${initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前${emojiName}数量：** ${initialReactionCount}\n**执行条件：** ${executionCondition}`)
             .setColor('#FFA500')
             .setTimestamp()
             .setFooter({
-                text: '⚠️反应数量会定时检查，达到条件后会自动执行相应操作。可以对目标消息或本公告添加⚠️反应，同一用户只计算一次。'
+                text: `${emojiName}反应数量会定时检查，达到条件后会自动执行相应操作。可以对目标消息或本公告添加${emojiName}反应，同一用户只计算一次。`
             });
         
         // 检查是否有冲突的投票
@@ -327,10 +331,10 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         // 发送投票公告
         const announcementMessage = await interaction.channel.send({ embeds: [embed] });
         
-        // 自动添加⚠️反应到公告消息
+        // 根据投票类型自动添加对应的反应到公告消息
         try {
-            await announcementMessage.react('⚠️');
-            console.log(`已为投票公告消息 ${announcementMessage.id} 添加⚠️反应`);
+            await announcementMessage.react(voteEmoji);
+            console.log(`已为投票公告消息 ${announcementMessage.id} 添加${voteEmoji}反应`);
         } catch (error) {
             console.error('添加反应到投票公告失败:', error);
         }

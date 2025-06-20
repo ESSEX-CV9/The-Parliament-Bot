@@ -28,13 +28,32 @@ async function checkMessageExists(client, channelId, messageId) {
 }
 
 /**
- * 获取消息的⚠️反应用户列表
+ * 根据投票类型获取对应的表情符号
+ * @param {string} type - 投票类型 ('delete' 或 'mute')
+ * @returns {Array<string>} 表情符号数组
+ */
+function getVoteEmojis(type) {
+    if (type === 'delete') {
+        // 删除投票使用⚠️表情
+        return ['⚠️', '⚠', 'warning', ':warning:'];
+    } else if (type === 'mute') {
+        // 禁言投票使用🚫表情
+        return ['🚫', '🚯', 'no_entry_sign', ':no_entry_sign:'];
+    }
+    
+    // 默认返回⚠️表情（向后兼容）
+    return ['⚠️', '⚠', 'warning', ':warning:'];
+}
+
+/**
+ * 获取消息的投票反应用户列表（支持不同投票类型）
  * @param {Client} client - Discord客户端
  * @param {string} channelId - 频道ID
  * @param {string} messageId - 消息ID
+ * @param {string} type - 投票类型 ('delete' 或 'mute')
  * @returns {Set<string>} 用户ID集合
  */
-async function getShitReactionUsers(client, channelId, messageId) {
+async function getVoteReactionUsers(client, channelId, messageId, type = 'delete') {
     try {
         const channel = await client.channels.fetch(channelId);
         if (!channel) {
@@ -48,22 +67,26 @@ async function getShitReactionUsers(client, channelId, messageId) {
             return new Set();
         }
         
-        // 查找⚠️反应
-        const shitReaction = message.reactions.cache.find(reaction => {
-            return reaction.emoji.name === '⚠️' || 
-                   reaction.emoji.name === '⚠' ||
-                   reaction.emoji.name === 'warning' ||
-                   reaction.emoji.name === ':warning:' ||
-                   reaction.emoji.unicode === '⚠️';
+        // 根据投票类型获取对应的表情符号
+        const emojis = getVoteEmojis(type);
+        
+        // 查找对应的反应
+        const voteReaction = message.reactions.cache.find(reaction => {
+            return emojis.some(emoji => 
+                reaction.emoji.name === emoji || 
+                reaction.emoji.unicode === emoji ||
+                (emoji.startsWith(':') && emoji.endsWith(':') && reaction.emoji.name === emoji.slice(1, -1))
+            );
         });
         
-        if (!shitReaction) {
-            console.log(`消息 ${messageId} 没有⚠️反应`);
+        if (!voteReaction) {
+            const emojiText = type === 'mute' ? '🚫' : '⚠️';
+            console.log(`消息 ${messageId} 没有${emojiText}反应`);
             return new Set();
         }
         
-        // 获取所有添加了⚠️反应的用户
-        const users = await shitReaction.users.fetch();
+        // 获取所有添加了反应的用户
+        const users = await voteReaction.users.fetch();
         const userIds = new Set();
         
         users.forEach(user => {
@@ -72,17 +95,19 @@ async function getShitReactionUsers(client, channelId, messageId) {
             }
         });
         
-        console.log(`消息 ${messageId} 的⚠️反应用户数量: ${userIds.size}`);
+        const emojiText = type === 'mute' ? '🚫' : '⚠️';
+        console.log(`消息 ${messageId} 的${emojiText}反应用户数量: ${userIds.size}`);
         return userIds;
         
     } catch (error) {
-        console.error('获取⚠️反应用户时出错:', error);
+        const emojiText = type === 'mute' ? '🚫' : '⚠️';
+        console.error(`获取${emojiText}反应用户时出错:`, error);
         return new Set();
     }
 }
 
 /**
- * 获取目标消息和投票公告的⚠️反应数量（去重后）
+ * 获取目标消息和投票公告的反应数量（去重后）
  * @param {Client} client - Discord客户端
  * @param {object} voteData - 投票数据
  * @returns {object} {uniqueUsers: Set, totalCount: number, targetMessageExists: boolean}
@@ -107,7 +132,7 @@ async function getDeduplicatedReactionCount(client, voteData) {
         
         // 如果目标消息存在，获取其反应用户
         if (targetMessageExists) {
-            const targetUsers = await getShitReactionUsers(client, targetChannelId, targetMessageId);
+            const targetUsers = await getVoteReactionUsers(client, targetChannelId, targetMessageId, type);
             console.log(`目标消息反应用户: ${targetUsers.size}`);
             targetUsers.forEach(userId => allUsers.add(userId));
         } else {
@@ -116,7 +141,7 @@ async function getDeduplicatedReactionCount(client, voteData) {
         
         // 获取投票公告的反应用户（投票公告应该始终存在）
         if (voteAnnouncementMessageId && voteAnnouncementChannelId) {
-            const announcementUsers = await getShitReactionUsers(client, voteAnnouncementChannelId, voteAnnouncementMessageId);
+            const announcementUsers = await getVoteReactionUsers(client, voteAnnouncementChannelId, voteAnnouncementMessageId, type);
             console.log(`投票公告反应用户: ${announcementUsers.size}`);
             announcementUsers.forEach(userId => allUsers.add(userId));
         }
@@ -149,14 +174,13 @@ async function getDeduplicatedReactionCount(client, voteData) {
  */
 async function getShitReactionCount(client, guildId, channelId, messageId) {
     try {
-        const users = await getShitReactionUsers(client, channelId, messageId);
+        const users = await getVoteReactionUsers(client, channelId, messageId, 'delete');
         return users.size;
     } catch (error) {
         console.error('获取⚠️反应数量时出错:', error);
         return 0;
     }
 }
-
 
 /**
  * 更新投票的反应数量（使用去重逻辑）
@@ -277,7 +301,7 @@ function getReactionChangeDescription(oldCount, newCount) {
 
 module.exports = {
     getShitReactionCount,
-    getShitReactionUsers,
+    getVoteReactionUsers,
     getDeduplicatedReactionCount,
     updateVoteReactionCountWithDeduplication,
     checkMessageExists,
