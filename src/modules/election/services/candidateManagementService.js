@@ -217,7 +217,53 @@ class CandidateManagementService {
                     { name: '撤销原因', value: reason || '无', inline: false },
                     { name: '撤销时间', value: `<t:${timestamp}:f>`, inline: true }
                 );
+        } else if (status === 'active') {
+            // 创建正常的候选人介绍消息
+            return this.createNormalIntroductionEmbed(registration);
         }
+    }
+
+    /**
+     * 创建正常的候选人介绍嵌入消息
+     * @param {object} registration - 报名信息
+     * @returns {EmbedBuilder} 嵌入消息
+     */
+    createNormalIntroductionEmbed(registration) {
+        const statusText = registration.isAppealed ? '🔄 恢复参选' : '✅ 正常参选';
+        const color = registration.isAppealed ? '#9b59b6' : '#2ecc71';
+        
+        const embed = new EmbedBuilder()
+            .setTitle('候选人介绍')
+            .setColor(color)
+            .addFields(
+                { name: '候选人', value: `<@${registration.userId}>`, inline: true },
+                { name: '状态', value: statusText, inline: true }
+            );
+
+        // 如果有自我介绍，添加到消息中
+        if (registration.selfIntroduction) {
+            embed.addFields(
+                { name: '自我介绍', value: registration.selfIntroduction, inline: false }
+            );
+        }
+
+        // 添加报名时间
+        if (registration.registeredAt) {
+            const regTimestamp = Math.floor(new Date(registration.registeredAt).getTime() / 1000);
+            embed.addFields(
+                { name: '报名时间', value: `<t:${regTimestamp}:f>`, inline: true }
+            );
+        }
+
+        // 如果是申诉恢复，添加申诉时间
+        if (registration.isAppealed && registration.appealedAt) {
+            const appealTimestamp = Math.floor(new Date(registration.appealedAt).getTime() / 1000);
+            embed.addFields(
+                { name: '申诉恢复时间', value: `<t:${appealTimestamp}:f>`, inline: true }
+            );
+        }
+
+        return embed;
     }
 
     /**

@@ -26,6 +26,13 @@ const {
     handleWithdrawRegistration
 } = require('../../modules/election/components/registrationComponents');
 
+// 管理员编辑候选人相关处理
+const {
+    handleAdminStatusChange,
+    handleReasonModal,
+    handleAdminEditInfo
+} = require('../../modules/election/components/adminEditComponents');
+
 // 赛事系统相关处理
 const { createContestApplicationModal } = require('../../modules/contest/components/applicationModal');
 const { createSubmissionModal } = require('../../modules/contest/components/submissionModal');
@@ -416,6 +423,12 @@ async function interactionCreateHandler(interaction) {
                 // 申诉报名模态窗口提交
                 const { handleAppealModal } = require('../../modules/election/components/appealComponents');
                 await handleAppealModal(interaction);
+            } else if (interaction.customId.startsWith('admin_reason_')) {
+                // 管理员原因输入模态窗口提交
+                await handleReasonModal(interaction);
+            } else if (interaction.customId.startsWith('admin_edit_info_')) {
+                // 管理员编辑候选人信息模态窗口提交
+                await handleAdminEditInfo(interaction);
             }
             // === 赛事系统模态窗口处理 ===
             else if (interaction.customId === 'contest_application') {
@@ -460,6 +473,9 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('election_anonymous_vote_select_')) {
                 // 匿名投票候选人选择菜单
                 await handleAnonymousVoteSelect(interaction);
+            } else if (interaction.customId.startsWith('admin_status_change_')) {
+                // 管理员状态变更选择菜单
+                await handleAdminStatusChange(interaction);
             } else if (interaction.customId.startsWith('external_server_select_')) {
                 // 外部服务器投稿选择
                 const applicationId = interaction.customId.replace('external_server_select_', '');
