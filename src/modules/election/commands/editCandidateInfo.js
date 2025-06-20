@@ -26,19 +26,22 @@ module.exports = {
 
     async execute(interaction) {
         try {
-            await interaction.deferReply({ ephemeral: true });
-
             // 权限检查
             if (!checkAdminPermission(interaction.member)) {
                 const embed = new EmbedBuilder()
                     .setColor('#ff0000')
                     .setDescription(getPermissionDeniedMessage());
-                return await interaction.editReply({ embeds: [embed] });
+                return await interaction.reply({ embeds: [embed], ephemeral: true });
             }
 
             const candidate = interaction.options.getUser('候选人');
             const operationType = interaction.options.getString('操作类型');
             let electionId = interaction.options.getString('募选id');
+
+            // 对于状态管理，需要 defer reply；对于信息编辑，直接显示 modal
+            if (operationType === 'status_management') {
+                await interaction.deferReply({ ephemeral: true });
+            }
 
             // 如果没有指定募选ID，获取当前活跃募选
             if (!electionId) {
@@ -48,7 +51,12 @@ module.exports = {
                         .setTitle('❌ 错误')
                         .setDescription('当前没有活跃的募选，请指定募选ID')
                         .setColor('#e74c3c');
-                    return await interaction.editReply({ embeds: [errorEmbed] });
+                    
+                    if (interaction.deferred) {
+                        return await interaction.editReply({ embeds: [errorEmbed] });
+                    } else {
+                        return await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                    }
                 }
                 electionId = activeElection.electionId;
             }
@@ -60,7 +68,12 @@ module.exports = {
                     .setTitle('❌ 错误')
                     .setDescription('指定的募选不存在')
                     .setColor('#e74c3c');
-                return await interaction.editReply({ embeds: [errorEmbed] });
+                
+                if (interaction.deferred) {
+                    return await interaction.editReply({ embeds: [errorEmbed] });
+                } else {
+                    return await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                }
             }
 
             // 验证募选是否属于当前服务器
@@ -69,7 +82,12 @@ module.exports = {
                     .setTitle('❌ 错误')
                     .setDescription('指定的募选不属于当前服务器')
                     .setColor('#e74c3c');
-                return await interaction.editReply({ embeds: [errorEmbed] });
+                
+                if (interaction.deferred) {
+                    return await interaction.editReply({ embeds: [errorEmbed] });
+                } else {
+                    return await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                }
             }
 
             // 获取候选人信息
@@ -90,7 +108,12 @@ module.exports = {
                         .setTitle('❌ 操作失败')
                         .setDescription(`用户 ${candidate.tag} 未报名 **${election.name}**`)
                         .setColor('#e74c3c');
-                    return await interaction.editReply({ embeds: [errorEmbed] });
+                    
+                    if (interaction.deferred) {
+                        return await interaction.editReply({ embeds: [errorEmbed] });
+                    } else {
+                        return await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                    }
                 } else {
                     throw error;
                 }
@@ -232,6 +255,12 @@ async function showStatusManagementMenu(interaction, candidateInfo, election) {
  */
 async function showInfoEditModal(interaction, candidateInfo, election) {
     const { registration } = candidateInfo;
+    
+    // 确保交互还没有被回复或延迟
+    if (interaction.replied || interaction.deferred) {
+        console.error('交互已经被处理，无法显示模态框');
+        return;
+    }
     
     const modal = new ModalBuilder()
         .setCustomId(`admin_edit_info_${election.electionId}_${registration.userId}`)
