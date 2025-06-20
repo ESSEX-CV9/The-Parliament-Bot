@@ -15,11 +15,35 @@ async function ensureDataDir() {
 }
 
 // 读取投票数据
+// 读取投票数据
 async function loadVoteData() {
     try {
         await ensureDataDir();
         const data = await fs.readFile(VOTE_DATA_FILE, 'utf8');
-        const votes = JSON.parse(data);
+        
+        // 添加JSON验证和修复逻辑
+        let votes;
+        try {
+            votes = JSON.parse(data);
+        } catch (parseError) {
+            console.error('JSON解析失败，尝试修复:', parseError.message);
+            // 尝试找到最后一个完整的JSON对象
+            const lastBraceIndex = data.lastIndexOf('}');
+            if (lastBraceIndex > 0) {
+                const truncatedData = data.substring(0, lastBraceIndex + 1);
+                try {
+                    votes = JSON.parse(truncatedData);
+                    console.log('成功修复损坏的JSON文件');
+                    // 立即保存修复后的数据
+                    await saveAllVoteData(votes);
+                } catch (secondError) {
+                    console.error('无法修复JSON文件，返回空对象');
+                    return {};
+                }
+            } else {
+                return {};
+            }
+        }
         
         // 转换日期字符串为Date对象
         Object.values(votes).forEach(vote => {
