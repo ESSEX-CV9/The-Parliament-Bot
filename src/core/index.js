@@ -107,6 +107,7 @@ const scanCandidateMessagesCommand = require('../modules/election/commands/scanC
 const editCandidateInfoCommand = require('../modules/election/commands/editCandidateInfo');
 const clearElectionVoteCommand = require('../modules/election/commands/clearElectionVote');
 const viewVoteRemovalLogsCommand = require('../modules/election/commands/viewVoteRemovalLogs');
+const updateVotingCandidatesCommand = require('../modules/election/commands/updateVotingCandidates');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -224,6 +225,7 @@ client.commands.set(scanCandidateMessagesCommand.data.name, scanCandidateMessage
 client.commands.set(editCandidateInfoCommand.data.name, editCandidateInfoCommand);
 client.commands.set(clearElectionVoteCommand.data.name, clearElectionVoteCommand);
 client.commands.set(viewVoteRemovalLogsCommand.data.name, viewVoteRemovalLogsCommand);
+client.commands.set(updateVotingCandidatesCommand.data.name, updateVotingCandidatesCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
@@ -253,7 +255,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
     console.log('🧹 自动消息清理系统已加载');
-    console.log('🗳️ 选举系统已完全加载 (包含15个命令)');
+    console.log('🗳️ 选举系统已完全加载 (包含16个命令)');
 })
 
 client.on(Events.InteractionCreate, interactionCreateHandler)
