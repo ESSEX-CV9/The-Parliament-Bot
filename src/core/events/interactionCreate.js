@@ -54,7 +54,9 @@ const {
     handleAnonymousVoteStart,
     handleAnonymousVoteSelect,
     handleAnonymousVoteConfirm,
-    handleAnonymousVoteCancel
+    handleAnonymousVoteCancel,
+    handleVotingPagination,
+    handleVoteComplete
 } = require('../../modules/election/components/anonymousVotingComponents');
 
 async function interactionCreateHandler(interaction) {
@@ -153,6 +155,13 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('election_anonymous_vote_cancel_')) {
                 // 取消匿名投票按钮
                 await handleAnonymousVoteCancel(interaction);
+            } else if (interaction.customId.startsWith('election_vote_prev_') || 
+                       interaction.customId.startsWith('election_vote_next_')) {
+                // 投票分页按钮
+                await handleVotingPagination(interaction);
+            } else if (interaction.customId.startsWith('election_vote_complete_')) {
+                // 完成选择按钮
+                await handleVoteComplete(interaction);
             } else if (interaction.customId.startsWith('appeal_registration_')) {
                 // 申诉报名按钮
                 const { handleAppealRegistration } = require('../../modules/election/components/appealComponents');
