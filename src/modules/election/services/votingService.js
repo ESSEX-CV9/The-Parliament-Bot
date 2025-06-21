@@ -370,6 +370,173 @@ function createAnonymousVotingComponents(electionId, positionId, candidates, max
     return [row];
 }
 
+/**
+ * 更新单个投票器的候选人名单
+ * @param {Client} client - Discord客户端
+ * @param {object} election - 选举数据
+ * @param {object} vote - 投票器数据
+ * @param {Array} registrations - 最新的报名数据
+ * @returns {object} 更新结果
+ */
+async function updateVotingPollCandidates(client, election, vote, registrations) {
+    const result = {
+        voteId: vote.voteId,
+        positionId: vote.positionId,
+        positionName: vote.positionName,
+        updated: false,
+        newCandidates: [],
+        newCandidatesCount: 0,
+        error: null
+    };
+
+    try {
+        // 从报名数据中获取该职位的最新候选人
+        const firstChoiceCandidates = registrations.filter(reg => 
+            reg.firstChoicePosition === vote.positionId && reg.status === 'active'
+        ).map(reg => ({
+            userId: reg.userId,
+            displayName: reg.userDisplayName,
+            choiceType: 'first',
+            selfIntroduction: reg.selfIntroduction
+        }));
+
+        const secondChoiceCandidates = registrations.filter(reg => 
+            reg.secondChoicePosition === vote.positionId && reg.status === 'active'
+        ).map(reg => ({
+            userId: reg.userId,
+            displayName: reg.userDisplayName,
+            choiceType: 'second',
+            selfIntroduction: reg.selfIntroduction
+        }));
+
+        // 合并候选人（去重）
+        const latestCandidates = [...firstChoiceCandidates];
+        secondChoiceCandidates.forEach(secondCandidate => {
+            if (!latestCandidates.find(c => c.userId === secondCandidate.userId)) {
+                latestCandidates.push(secondCandidate);
+            }
+        });
+
+        // 获取当前投票器中的候选人ID列表
+        const currentCandidateIds = vote.candidates.map(c => c.userId);
+        
+        // 找出新增的候选人
+        const newCandidates = latestCandidates.filter(candidate => 
+            !currentCandidateIds.includes(candidate.userId)
+        );
+
+        // 如果没有新候选人，直接返回
+        if (newCandidates.length === 0) {
+            result.updated = true; // 虽然没有变化，但操作成功
+            return result;
+        }
+
+        // 更新候选人列表
+        const updatedCandidates = [...vote.candidates, ...newCandidates];
+        
+        // 更新votes.json文件中的候选人数据
+        const votes = await VoteData.getAll();
+        if (votes[vote.voteId]) {
+            votes[vote.voteId].candidates = updatedCandidates;
+            
+            // 直接写入文件更新数据
+            const fs = require('fs').promises;
+            const path = require('path');
+            const VOTES_FILE = path.join(__dirname, '../data/votes.json');
+            await fs.writeFile(VOTES_FILE, JSON.stringify(votes, null, 2), 'utf8');
+        }
+
+        // 更新Discord消息
+        await updateDiscordVotingMessage(client, election, vote, updatedCandidates);
+
+        // 设置返回结果
+        result.updated = true;
+        result.newCandidates = newCandidates;
+        result.newCandidatesCount = newCandidates.length;
+
+        console.log(`投票器 ${vote.positionName} 已更新，新增 ${newCandidates.length} 个候选人`);
+
+    } catch (error) {
+        console.error(`更新投票器 ${vote.positionName} 时出错:`, error);
+        result.error = error.message;
+    }
+
+    return result;
+}
+
+/**
+ * 更新Discord中的投票器消息
+ * @param {Client} client - Discord客户端
+ * @param {object} election - 选举数据
+ * @param {object} vote - 投票器数据
+ * @param {Array} updatedCandidates - 更新后的候选人列表
+ */
+async function updateDiscordVotingMessage(client, election, vote, updatedCandidates) {
+    try {
+        const votingChannelId = election.channels?.votingChannelId;
+        if (!votingChannelId || !vote.messageId) {
+            throw new Error('缺少频道ID或消息ID');
+        }
+
+        const channel = client.channels.cache.get(votingChannelId);
+        if (!channel) {
+            throw new Error(`找不到投票频道: ${votingChannelId}`);
+        }
+
+        const message = await channel.messages.fetch(vote.messageId);
+        if (!message) {
+            throw new Error(`找不到投票消息: ${vote.messageId}`);
+        }
+
+        // 判断是否为匿名投票
+        if (vote.isAnonymous) {
+            // 匿名投票：重新生成嵌入消息
+            const { EmbedBuilder } = require('discord.js');
+            const embed = new EmbedBuilder()
+                .setTitle(`🗳️ ${vote.positionName} - 投票`)
+                .setDescription(`请选择你支持的候选人 (最多选择 ${vote.maxSelections} 人)`)
+                .setColor('#9b59b6');
+
+            // 显示更新后的候选人列表
+            const candidateList = updatedCandidates.map((candidate) => {
+                let info = `<@${candidate.userId}>`;
+                if (candidate.choiceType === 'second') {
+                    info += ' (第二志愿)';
+                }
+                return info;
+            }).join('\n');
+
+            embed.addFields(
+                { name: '候选人列表', value: candidateList, inline: false }
+            );
+
+            // 保持原有的按钮组件
+            await message.edit({
+                embeds: [embed],
+                components: message.components
+            });
+        } else {
+            // 实名投票：重新生成投票按钮和嵌入消息
+            const { createCandidateListEmbed } = require('../utils/messageUtils');
+            const embed = createCandidateListEmbed(vote.positionName, updatedCandidates, vote.maxSelections);
+            
+            // 重新生成投票按钮
+            const components = createVotingComponents(election.electionId, vote.positionId, updatedCandidates, vote.maxSelections);
+
+            await message.edit({
+                embeds: [embed],
+                components: components
+            });
+        }
+
+        console.log(`Discord投票器消息已更新: ${vote.positionName}`);
+
+    } catch (error) {
+        console.error('更新Discord投票器消息时出错:', error);
+        throw error;
+    }
+}
+
 module.exports = {
     createVotingPollsForElection,
     createPositionVotingPoll,
@@ -379,5 +546,6 @@ module.exports = {
     hasUserVoted,
     recordVote,
     createPositionAnonymousVotingPoll,
-    createAnonymousVotingComponents
+    createAnonymousVotingComponents,
+    updateVotingPollCandidates
 }; 
