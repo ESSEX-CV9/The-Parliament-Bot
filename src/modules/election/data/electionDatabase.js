@@ -242,6 +242,60 @@ const VoteData = {
     async hasUserVoted(voteId, userId) {
         const voteData = await this.getById(voteId);
         return voteData && voteData.votes && voteData.votes[userId] !== undefined;
+    },
+
+    async removeUserVote(voteId, userId) {
+        const votes = await this.getAll();
+        if (votes[voteId] && votes[voteId].votes && votes[voteId].votes[userId]) {
+            const removedVote = votes[voteId].votes[userId];
+            delete votes[voteId].votes[userId];
+            await writeJsonFile(VOTES_FILE, votes);
+            return removedVote;
+        }
+        return null;
+    },
+
+    async getUserVotesInElection(electionId, userId) {
+        const votes = await this.getByElection(electionId);
+        const userVotes = [];
+        
+        for (const vote of votes) {
+            if (vote.votes && vote.votes[userId]) {
+                userVotes.push({
+                    voteId: vote.voteId,
+                    positionId: vote.positionId,
+                    positionName: vote.positionName,
+                    candidateIds: vote.votes[userId],
+                    candidates: vote.candidates.filter(c => vote.votes[userId].includes(c.userId))
+                });
+            }
+        }
+        
+        return userVotes;
+    },
+
+    async removeUserVotesFromElection(electionId, userId) {
+        const votes = await this.getAll();
+        const removedVotes = [];
+        
+        for (const [voteId, voteData] of Object.entries(votes)) {
+            if (voteData.electionId === electionId && voteData.votes && voteData.votes[userId]) {
+                removedVotes.push({
+                    voteId: voteId,
+                    positionId: voteData.positionId,
+                    positionName: voteData.positionName,
+                    candidateIds: voteData.votes[userId],
+                    candidates: voteData.candidates.filter(c => voteData.votes[userId].includes(c.userId))
+                });
+                delete voteData.votes[userId];
+            }
+        }
+        
+        if (removedVotes.length > 0) {
+            await writeJsonFile(VOTES_FILE, votes);
+        }
+        
+        return removedVotes;
     }
 };
 
