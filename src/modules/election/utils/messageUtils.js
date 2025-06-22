@@ -3,6 +3,61 @@ const { formatChineseTime } = require('./timeUtils');
 const { STATUS_CONFIG, CANDIDATE_STATUS } = require('./tieBreakingUtils');
 
 /**
+ * 添加字段并处理长度限制
+ * @param {EmbedBuilder} embed - 嵌入消息构建器
+ * @param {string} fieldName - 字段名称
+ * @param {string} fieldValue - 字段值
+ */
+function addFieldWithLengthLimit(embed, fieldName, fieldValue) {
+    const FIELD_VALUE_LIMIT = 1024;
+    
+    // 如果内容不超过限制，直接添加
+    if (fieldValue.length <= FIELD_VALUE_LIMIT) {
+        embed.addFields({ name: fieldName, value: fieldValue, inline: false });
+        return;
+    }
+    
+    // 内容过长，需要拆分
+    // 首先分离候选人信息和统计信息
+    const parts = fieldValue.split('\n\n📊 **投票统计**');
+    const candidatesText = parts[0];
+    const statisticsText = parts[1] ? `📊 **投票统计**${parts[1]}` : '';
+    
+    // 拆分候选人信息
+    const candidateEntries = candidatesText.split('\n\n');
+    const chunks = [];
+    let currentChunk = '';
+    
+    for (const entry of candidateEntries) {
+        const testChunk = currentChunk ? `${currentChunk}\n\n${entry}` : entry;
+        
+        if (testChunk.length <= FIELD_VALUE_LIMIT - 50) { // 留50字符余量
+            currentChunk = testChunk;
+        } else {
+            if (currentChunk) {
+                chunks.push(currentChunk);
+            }
+            currentChunk = entry;
+        }
+    }
+    
+    if (currentChunk) {
+        chunks.push(currentChunk);
+    }
+    
+    // 添加拆分后的字段
+    chunks.forEach((chunk, index) => {
+        const chunkFieldName = chunks.length > 1 ? `${fieldName} (第${index + 1}部分)` : fieldName;
+        embed.addFields({ name: chunkFieldName, value: chunk, inline: false });
+    });
+    
+    // 单独添加统计信息
+    if (statisticsText) {
+        embed.addFields({ name: `${fieldName} - 统计信息`, value: statisticsText, inline: false });
+    }
+}
+
+/**
  * 创建募选状态嵌入消息
  * @param {object} election - 募选数据
  * @returns {EmbedBuilder} 嵌入消息
@@ -323,9 +378,8 @@ function createElectionResultEmbed(election, results) {
             }
         }
         
-        embed.addFields(
-            { name: fieldName, value: fieldValue, inline: false }
-        );
+        // 处理字段长度限制（Discord限制为1024字符）
+        addFieldWithLengthLimit(embed, fieldName, fieldValue);
     }
     
         // 添加并列分析摘要（如果存在）
