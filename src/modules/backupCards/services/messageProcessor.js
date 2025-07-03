@@ -39,7 +39,7 @@ class MessageProcessor {
     /**
      * 处理单个补卡项目
      */
-    async processBackupItem(backupItem, testMode = false) {
+    async processBackupItem(backupItem, testMode = false, autoArchive = null) {
         try {
             console.log(`开始处理补卡项目: ${backupItem.threadId} - ${backupItem.title}`);
             
@@ -59,6 +59,7 @@ class MessageProcessor {
 
             // 处理每个补卡内容
             let processedCount = 0;
+            let failedCount = 0;
             for (const contentItem of backupItem.cardContents) {
                 try {
                     const result = await this.processContentItem(contentItem, backupItem, targetChannel, testMode);
@@ -67,6 +68,7 @@ class MessageProcessor {
                         this.updateStats(result.type);
                     } else {
                         this.stats.failed++;
+                        failedCount++;
                     }
                     
                     // 控制发送频率
@@ -77,13 +79,20 @@ class MessageProcessor {
                 } catch (error) {
                     console.error(`处理补卡内容失败:`, error);
                     this.stats.failed++;
+                    failedCount++;
                 }
             }
 
             this.stats.processed++;
             console.log(`完成处理补卡项目: ${backupItem.threadId}, 处理了 ${processedCount}/${backupItem.cardContents.length} 个内容`);
             
-            return { success: true, processedCount };
+            // 检查是否需要归档线程
+            const shouldArchive = this.shouldArchiveThread(autoArchive, processedCount, failedCount, testMode);
+            if (shouldArchive) {
+                await this.archiveThread(targetChannel, backupItem);
+            }
+            
+            return { success: true, processedCount, archived: shouldArchive };
             
         } catch (error) {
             console.error(`处理补卡项目失败:`, error);
@@ -331,6 +340,92 @@ class MessageProcessor {
                 discordLinks: this.stats.discordLinks
             }
         };
+    }
+
+    /**
+     * 检查是否需要归档线程
+     */
+    shouldArchiveThread(autoArchive, processedCount, failedCount, testMode) {
+        // 测试模式下不归档
+        if (testMode) {
+            return false;
+        }
+
+        // 如果参数直接指定了归档设置，使用参数
+        if (autoArchive !== null) {
+            return autoArchive;
+        }
+
+        // 使用配置文件设置
+        const archiveConfig = config.discord.autoArchive;
+        
+        // 检查是否启用了自动归档
+        if (!archiveConfig || !archiveConfig.enabled) {
+            return false;
+        }
+
+        // 如果配置要求只在成功时归档，检查是否有失败的内容
+        if (archiveConfig.onlyOnSuccess && failedCount > 0) {
+            console.log(`不归档线程：有 ${failedCount} 个内容处理失败`);
+            return false;
+        }
+
+        // 如果有内容被处理了，就归档
+        return processedCount > 0;
+    }
+
+    /**
+     * 归档线程
+     */
+    async archiveThread(targetChannel, backupItem) {
+        try {
+            console.log(`📁 正在归档线程: ${backupItem.threadId} - ${backupItem.title}`);
+
+            // 检查频道是否是线程
+            if (!targetChannel.isThread || !targetChannel.isThread()) {
+                console.log(`⚠️ 频道 ${backupItem.threadId} 不是线程，跳过归档`);
+                return false;
+            }
+
+            // 检查机器人权限
+            const permissions = targetChannel.permissionsFor(targetChannel.guild.members.me);
+            if (!permissions || !permissions.has(['ManageThreads'])) {
+                console.log(`⚠️ 机器人缺少管理线程权限，无法归档 ${backupItem.threadId}`);
+                return false;
+            }
+
+            // 检查线程是否已经归档
+            if (targetChannel.archived) {
+                console.log(`ℹ️ 线程 ${backupItem.threadId} 已经归档，跳过操作`);
+                return true;
+            }
+
+            // 归档前延迟，确保最后的消息发送完成
+            const archiveConfig = config.discord.autoArchive;
+            if (archiveConfig && archiveConfig.delay) {
+                await this.delay(archiveConfig.delay);
+            }
+
+            // 执行归档
+            const reason = (archiveConfig && archiveConfig.reason) || '补卡完成，自动归档';
+            await targetChannel.setArchived(true, reason);
+
+            console.log(`✅ 线程已成功归档: ${backupItem.threadId} - ${backupItem.title}`);
+            return true;
+
+        } catch (error) {
+            console.error(`❌ 归档线程失败 ${backupItem.threadId}:`, error.message);
+            
+            // 常见错误的友好提示
+            if (error.code === 50013) {
+                console.log(`💡 提示: 机器人缺少"管理线程"权限`);
+            } else if (error.code === 50083) {
+                console.log(`💡 提示: 线程可能已经归档或不存在`);
+            }
+            
+            // 归档失败不影响补卡处理成功
+            return false;
+        }
     }
 }
 

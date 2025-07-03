@@ -24,7 +24,8 @@ class ProgressTracker {
             files: 0,
             textDescriptions: 0,
             discordLinks: 0,
-            errors: []
+            errors: [],
+            archived: 0
         };
     }
 
@@ -80,6 +81,11 @@ class ProgressTracker {
                 this.stats.files += itemResult.stats.files || 0;
                 this.stats.textDescriptions += itemResult.stats.textDescriptions || 0;
                 this.stats.discordLinks += itemResult.stats.discordLinks || 0;
+            }
+
+            // 更新归档统计
+            if (itemResult.archived) {
+                this.stats.archived++;
             }
         } else {
             this.progress.failed++;

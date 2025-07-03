@@ -25,7 +25,18 @@ module.exports = {
         // 发送消息间隔（毫秒）
         rateLimitDelay: 1000,
         // 批处理大小
-        batchSize: 10
+        batchSize: 10,
+        // 自动归档设置
+        autoArchive: {
+            // 是否启用自动归档
+            enabled: true,
+            // 归档原因
+            reason: '补卡完成，自动归档以释放活跃线程数',
+            // 是否只在所有内容都成功处理后归档
+            onlyOnSuccess: true,
+            // 归档前延迟（毫秒，确保最后的消息发送完成）
+            delay: 2000
+        }
     },
     
     processing: {

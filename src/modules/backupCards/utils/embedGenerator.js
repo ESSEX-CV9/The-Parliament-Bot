@@ -41,11 +41,11 @@ class EmbedGenerator {
                 inline: true
             });
 
-            // embed.fields.push({
-            //     name: '📂 文件路径',
-            //     value: `\`${file.path}\``,
-            //     inline: false
-            // });
+            embed.fields.push({
+                name: '📂 文件路径',
+                value: `\`${file.path}\``,
+                inline: false
+            });
 
             // 如果是模糊匹配，显示相似度
             if (file.matchType === 'fuzzy') {
@@ -195,7 +195,7 @@ class EmbedGenerator {
     }
 
     /**
-     * 生成进度统计的Embed消息
+     * 生成进度跟踪的Embed消息
      */
     generateProgressEmbed(stats, currentIndex, totalItems) {
         const embed = {
@@ -247,6 +247,15 @@ class EmbedGenerator {
             inline: true
         });
 
+        // 添加归档统计（如果有的话）
+        if (stats.archived !== undefined) {
+            embed.fields.push({
+                name: '📦 已归档',
+                value: `${stats.archived || 0} 个帖子`,
+                inline: true
+            });
+        }
+
         return embed;
     }
 
@@ -285,6 +294,15 @@ class EmbedGenerator {
             value: `${duration} 秒`,
             inline: true
         });
+
+        // 添加归档统计（如果有的话）
+        if (stats.archived !== undefined) {
+            embed.fields.push({
+                name: '📦 归档统计',
+                value: `${stats.archived || 0} 个帖子已自动归档`,
+                inline: false
+            });
+        }
 
         embed.description = '所有补卡项目处理完成！';
 
