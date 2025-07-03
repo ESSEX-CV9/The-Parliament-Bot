@@ -112,6 +112,9 @@ module.exports = {
             let deletedMessages = 0;
             let failedDeletions = 0;
             let skippedThreads = 0;
+            let tempUnarchiveCount = 0;
+            let reArchiveCount = 0;
+            let failedReArchiveCount = 0;
             const errors = [];
             const cutoffDate = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
 
@@ -132,43 +135,106 @@ module.exports = {
                         continue;
                     }
 
-                    // 检查是否为线程或频道
-                    if (targetChannel.isThread && targetChannel.isThread() && targetChannel.archived) {
-                        console.log(`线程 ${backupItem.threadId} 已归档，跳过`);
+                    // 检查是否为线程
+                    if (!targetChannel.isThread || !targetChannel.isThread()) {
+                        console.log(`频道 ${backupItem.threadId} 不是线程，跳过`);
                         skippedThreads++;
                         continue;
                     }
 
-                    scannedThreads++;
-
-                    // 搜索机器人发送的消息
-                    const messages = await this.fetchBotMessages(targetChannel, interaction.client.user.id, cutoffDate);
-                    
-                    // 筛选模糊匹配消息
-                    const fuzzyMessages = messages.filter(message => this.isFuzzyMatchMessage(message));
-                    
-                    if (fuzzyMessages.length > 0) {
-                        console.log(`发现 ${fuzzyMessages.length} 个模糊匹配消息`);
-                        foundMessages += fuzzyMessages.length;
+                    // 检查线程是否已归档，如果是则临时解除归档
+                    let wasArchived = false;
+                    if (targetChannel.archived) {
+                        console.log(`线程 ${backupItem.threadId} 已归档，临时解除归档进行清理`);
+                        wasArchived = true;
+                        
+                        // 检查权限
+                        const permissions = targetChannel.permissionsFor(targetChannel.guild.members.me);
+                        if (!permissions || !permissions.has(['ManageThreads'])) {
+                            console.log(`缺少管理线程权限，无法解除归档: ${backupItem.threadId}`);
+                            skippedThreads++;
+                            errors.push(`${backupItem.threadId}: 缺少管理线程权限`);
+                            continue;
+                        }
 
                         if (!dryRun) {
-                            // 删除消息
-                            for (const message of fuzzyMessages) {
-                                try {
-                                    await message.delete();
-                                    deletedMessages++;
-                                    console.log(`✅ 删除消息: ${message.id}`);
-                                    
-                                    // 控制删除频率
-                                    await delay(500);
-                                    
-                                } catch (deleteError) {
-                                    console.error(`删除消息失败 ${message.id}:`, deleteError);
-                                    failedDeletions++;
-                                    errors.push(`${backupItem.threadId}: 删除消息失败 - ${deleteError.message}`);
+                            try {
+                                await targetChannel.setArchived(false, '临时解除归档以清理模糊匹配消息');
+                                tempUnarchiveCount++;
+                                console.log(`📂 临时解除归档: ${backupItem.threadId}`);
+                                // 等待一下确保状态更新
+                                await delay(1000);
+                            } catch (unarchiveError) {
+                                console.error(`解除归档失败 ${backupItem.threadId}:`, unarchiveError);
+                                skippedThreads++;
+                                errors.push(`${backupItem.threadId}: 解除归档失败 - ${unarchiveError.message}`);
+                                continue;
+                            }
+                        }
+                    }
+
+                    scannedThreads++;
+
+                    try {
+                        // 搜索机器人发送的消息
+                        const messages = await this.fetchBotMessages(targetChannel, interaction.client.user.id, cutoffDate);
+                        
+                        // 筛选模糊匹配消息
+                        const fuzzyMessages = messages.filter(message => this.isFuzzyMatchMessage(message));
+                        
+                        if (fuzzyMessages.length > 0) {
+                            console.log(`发现 ${fuzzyMessages.length} 个模糊匹配消息`);
+                            foundMessages += fuzzyMessages.length;
+
+                            if (!dryRun) {
+                                // 删除消息
+                                for (const message of fuzzyMessages) {
+                                    try {
+                                        await message.delete();
+                                        deletedMessages++;
+                                        console.log(`✅ 删除消息: ${message.id}`);
+                                        
+                                        // 控制删除频率
+                                        await delay(500);
+                                        
+                                    } catch (deleteError) {
+                                        console.error(`删除消息失败 ${message.id}:`, deleteError);
+                                        failedDeletions++;
+                                        errors.push(`${backupItem.threadId}: 删除消息失败 - ${deleteError.message}`);
+                                    }
                                 }
                             }
                         }
+
+                        // 如果线程原本是归档状态，清理完后重新归档
+                        if (wasArchived && !dryRun) {
+                            try {
+                                await delay(1000); // 等待删除操作完成
+                                await targetChannel.setArchived(true, '清理模糊匹配消息完成，重新归档');
+                                reArchiveCount++;
+                                console.log(`📁 重新归档: ${backupItem.threadId}`);
+                            } catch (reArchiveError) {
+                                console.error(`重新归档失败 ${backupItem.threadId}:`, reArchiveError);
+                                failedReArchiveCount++;
+                                errors.push(`${backupItem.threadId}: 重新归档失败 - ${reArchiveError.message}`);
+                            }
+                        }
+
+                    } catch (processError) {
+                        console.error(`处理线程内容失败 ${backupItem.threadId}:`, processError);
+                        
+                        // 如果处理失败，但线程被临时解除了归档，尝试重新归档
+                        if (wasArchived && !dryRun) {
+                            try {
+                                await targetChannel.setArchived(true, '处理失败，恢复归档状态');
+                                console.log(`🔄 因处理失败，恢复归档状态: ${backupItem.threadId}`);
+                            } catch (recoveryError) {
+                                console.error(`恢复归档状态失败 ${backupItem.threadId}:`, recoveryError);
+                                errors.push(`${backupItem.threadId}: 恢复归档状态失败 - ${recoveryError.message}`);
+                            }
+                        }
+                        
+                        errors.push(`${backupItem.threadId}: 处理失败 - ${processError.message}`);
                     }
 
                     // 每处理10个更新一次进度
@@ -180,7 +246,9 @@ module.exports = {
                                     `• 跳过线程: ${skippedThreads}\n` +
                                     `• 发现模糊匹配: ${foundMessages}\n` +
                                     `• ${dryRun ? '可删除' : '已删除'}: ${dryRun ? foundMessages : deletedMessages}\n` +
-                                    `• 删除失败: ${failedDeletions}\n\n` +
+                                    `• 删除失败: ${failedDeletions}\n` +
+                                    `• 临时解除归档: ${tempUnarchiveCount}\n` +
+                                    `• 重新归档: ${reArchiveCount}\n\n` +
                                     `⏳ 继续处理中...`
                         });
                     }
@@ -206,6 +274,16 @@ module.exports = {
                 finalContent += `• 成功删除: ${deletedMessages}\n`;
                 finalContent += `• 删除失败: ${failedDeletions}\n`;
                 finalContent += `• 删除成功率: ${successRate}%\n`;
+                
+                // 归档操作统计
+                if (tempUnarchiveCount > 0 || reArchiveCount > 0 || failedReArchiveCount > 0) {
+                    finalContent += `\n📁 **归档操作统计**\n`;
+                    finalContent += `• 临时解除归档: ${tempUnarchiveCount}\n`;
+                    finalContent += `• 成功重新归档: ${reArchiveCount}\n`;
+                    if (failedReArchiveCount > 0) {
+                        finalContent += `• 重新归档失败: ${failedReArchiveCount}\n`;
+                    }
+                }
             }
             finalContent += `\n`;
 
@@ -232,6 +310,9 @@ module.exports = {
 
             console.log('\n=== 模糊匹配清理完成 ===');
             console.log(`扫描: ${scannedThreads}, 发现: ${foundMessages}, ${dryRun ? '可删除' : '已删除'}: ${dryRun ? foundMessages : deletedMessages}`);
+            if (!dryRun && (tempUnarchiveCount > 0 || reArchiveCount > 0)) {
+                console.log(`归档操作: 临时解除${tempUnarchiveCount}, 重新归档${reArchiveCount}, 失败${failedReArchiveCount}`);
+            }
 
         } catch (error) {
             console.error('清理操作失败:', error);
