@@ -122,6 +122,10 @@ const deleteRebuiltMessageCommand = require('../modules/threadRebuilder/commands
 const uploadCommand = require('../modules/selfFileUpload/commands/uploadFile');
 const whoisCommand = require('../modules/selfFileUpload/commands/queryAnonymousLog');
 
+// 补卡系统命令
+const processBackupCardsCommand = require('../modules/backupCards/commands/processBackupCards');
+const testBackupCardsCommand = require('../modules/backupCards/commands/testBackupCards');
+
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,
@@ -204,6 +208,11 @@ client.commands.set(rebuildForumCommand.data.name, rebuildForumCommand);
 // 帖子重建系统命令
 client.commands.set(rebuildThreadsCommand.data.name, rebuildThreadsCommand);
 client.commands.set(deleteRebuiltMessageCommand.data.name, deleteRebuiltMessageCommand);
+
+// 补卡系统命令
+client.commands.set(processBackupCardsCommand.data.name, processBackupCardsCommand);
+client.commands.set(testBackupCardsCommand.data.name, testBackupCardsCommand);
+
 // 频道总结系统命令
 client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);
 
@@ -263,6 +272,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log('🏆 赛事管理系统已加载');
     console.log('🧹 自动消息清理系统已加载');
     console.log('🗳️ 选举系统已完全加载 (包含16个命令)');
+    console.log('🎴 补卡管理系统已加载 (包含2个命令)');
 })
 
 client.on(Events.InteractionCreate, interactionCreateHandler)
