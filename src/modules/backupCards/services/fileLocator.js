@@ -167,12 +167,6 @@ class FileLocator {
             });
         }
 
-        // 3. 如果没找到精确匹配，尝试模糊匹配
-        if (results.length === 0) {
-            const fuzzyResults = await this.fuzzySearch(fileName);
-            results.push(...fuzzyResults);
-        }
-
         return results;
     }
 

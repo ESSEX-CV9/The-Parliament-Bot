@@ -121,6 +121,8 @@ const deleteRebuiltMessageCommand = require('../modules/threadRebuilder/commands
 // 补卡系统命令
 const processBackupCardsCommand = require('../modules/backupCards/commands/processBackupCards');
 const testBackupCardsCommand = require('../modules/backupCards/commands/testBackupCards');
+const archiveBackupThreadsCommand = require('../modules/backupCards/commands/archiveBackupThreads');
+const cleanupFuzzyMatchesCommand = require('../modules/backupCards/commands/cleanupFuzzyMatches');
 
 const client = new Client({ 
     intents: [
@@ -208,6 +210,8 @@ client.commands.set(deleteRebuiltMessageCommand.data.name, deleteRebuiltMessageC
 // 补卡系统命令
 client.commands.set(processBackupCardsCommand.data.name, processBackupCardsCommand);
 client.commands.set(testBackupCardsCommand.data.name, testBackupCardsCommand);
+client.commands.set(archiveBackupThreadsCommand.data.name, archiveBackupThreadsCommand);
+client.commands.set(cleanupFuzzyMatchesCommand.data.name, cleanupFuzzyMatchesCommand);
 
 // 频道总结系统命令
 client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);
