@@ -23,3 +23,17 @@ temp/summaries/制度改革-messages-2025-06-12T12-22-30-143Z.json
 对于复杂的前端卡来说，回复格式应该要设计比较严格，并且要区分好各个区域.md
 src/modules/election/TIE_BREAKING.md
 然后是你可以为我模拟描述一个场景，.md
+新建文件夹/elections.json
+新建文件夹/registrations.json
+新建文件夹/votes.json
+.gitignore
+EMBED_LENGTH_FIX.md
+VOTE_REMOVAL.md
+交互修复说明.md
+管理员候选人编辑功能说明.md
+src/modules/election/README.md
+新建文件夹/新建文件夹/elections.json
+新建文件夹/新建文件夹/registrations.json
+新建文件夹/新建文件夹/votes.json
+新建文件夹/新建文件夹 (2)/votes.json
+src/modules/election/logs/vote_removal_logs.txt

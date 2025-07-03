@@ -510,10 +510,15 @@ async function updateDiscordVotingMessage(client, election, vote, updatedCandida
                 { name: '候选人列表', value: candidateList, inline: false }
             );
 
-            // 保持原有的按钮组件
+            // 保持原有的按钮组件，并设置允许@所有候选人
+            const allowedUserIds = updatedCandidates.map(candidate => candidate.userId);
+            
             await message.edit({
                 embeds: [embed],
-                components: message.components
+                components: message.components,
+                allowedMentions: {
+                    users: allowedUserIds
+                }
             });
         } else {
             // 实名投票：重新生成投票按钮和嵌入消息
@@ -523,9 +528,15 @@ async function updateDiscordVotingMessage(client, election, vote, updatedCandida
             // 重新生成投票按钮
             const components = createVotingComponents(election.electionId, vote.positionId, updatedCandidates, vote.maxSelections);
 
+            // 为实名投票也设置allowedMentions
+            const allowedUserIds = updatedCandidates.map(candidate => candidate.userId);
+
             await message.edit({
                 embeds: [embed],
-                components: components
+                components: components,
+                allowedMentions: {
+                    users: allowedUserIds
+                }
             });
         }
 
