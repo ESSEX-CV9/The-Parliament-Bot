@@ -30,6 +30,10 @@ module.exports = {
             option.setName('autoarchive')
                 .setDescription('自动归档：补卡完成后自动归档帖子（默认使用配置文件设置）')
                 .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('allowarchiveintest')
+                .setDescription('测试模式下允许归档：在测试模式下也执行归档操作（默认false）')
+                .setRequired(false))
         .addStringOption(option =>
             option.setName('excelfile')
                 .setDescription('指定Excel文件路径（可选，默认使用配置中的文件）')
@@ -50,9 +54,10 @@ module.exports = {
         const count = interaction.options.getInteger('count');
         const testMode = interaction.options.getBoolean('testmode') || false;
         const autoArchive = interaction.options.getBoolean('autoarchive'); // null表示使用配置文件设置
+        const allowArchiveInTest = interaction.options.getBoolean('allowarchiveintest') || false;
         const customExcelFile = interaction.options.getString('excelfile');
 
-        console.log(`开始处理补卡命令 - 开始行: ${startRow}, 数量: ${count || '全部'}, 测试模式: ${testMode}`);
+        console.log(`开始处理补卡命令 - 开始行: ${startRow}, 数量: ${count || '全部'}, 测试模式: ${testMode}, 测试模式归档: ${allowArchiveInTest}`);
 
         // 初始回复
         await interaction.reply({
@@ -62,6 +67,7 @@ module.exports = {
                     `• 处理数量: ${count || '全部'}\n` +
                     `• 测试模式: ${testMode ? '是' : '否'}\n` +
                     `• 自动归档: ${autoArchive === null ? '使用配置' : autoArchive ? '是' : '否'}\n` +
+                    `• 测试模式归档: ${allowArchiveInTest ? '是' : '否'}\n` +
                     `• Excel文件: ${customExcelFile || '默认配置文件'}\n\n` +
                     `⏳ 正在初始化...`,
             ephemeral: false
@@ -143,7 +149,7 @@ module.exports = {
                 try {
                     console.log(`\n=== 处理项目 ${i + 1}/${itemsToProcess.length}: ${backupItem.threadId} ===`);
                     
-                    const result = await messageProcessor.processBackupItem(backupItem, testMode, autoArchive);
+                    const result = await messageProcessor.processBackupItem(backupItem, testMode, autoArchive, allowArchiveInTest);
                     
                     if (result.success) {
                         if (result.skipped) {

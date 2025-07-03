@@ -39,7 +39,7 @@ class MessageProcessor {
     /**
      * 处理单个补卡项目
      */
-    async processBackupItem(backupItem, testMode = false, autoArchive = null) {
+    async processBackupItem(backupItem, testMode = false, autoArchive = null, allowArchiveInTest = false) {
         try {
             console.log(`开始处理补卡项目: ${backupItem.threadId} - ${backupItem.title}`);
             
@@ -87,7 +87,7 @@ class MessageProcessor {
             console.log(`完成处理补卡项目: ${backupItem.threadId}, 处理了 ${processedCount}/${backupItem.cardContents.length} 个内容`);
             
             // 检查是否需要归档线程
-            const shouldArchive = this.shouldArchiveThread(autoArchive, processedCount, failedCount, testMode);
+            const shouldArchive = this.shouldArchiveThread(autoArchive, processedCount, failedCount, testMode, allowArchiveInTest);
             if (shouldArchive) {
                 await this.archiveThread(targetChannel, backupItem);
             }
@@ -345,10 +345,14 @@ class MessageProcessor {
     /**
      * 检查是否需要归档线程
      */
-    shouldArchiveThread(autoArchive, processedCount, failedCount, testMode) {
-        // 测试模式下不归档
+    shouldArchiveThread(autoArchive, processedCount, failedCount, testMode, allowArchiveInTest = false) {
+        // 测试模式下的归档逻辑
         if (testMode) {
-            return false;
+            // 如果明确允许测试模式下归档，则继续检查其他条件
+            if (!allowArchiveInTest) {
+                return false;
+            }
+            // 在测试模式下如果允许归档，则跳过消息发送检查，直接检查其他条件
         }
 
         // 如果参数直接指定了归档设置，使用参数
@@ -368,6 +372,12 @@ class MessageProcessor {
         if (archiveConfig.onlyOnSuccess && failedCount > 0) {
             console.log(`不归档线程：有 ${failedCount} 个内容处理失败`);
             return false;
+        }
+
+        // 在测试模式下，如果允许归档，即使没有实际发送内容也可以归档
+        if (testMode && allowArchiveInTest) {
+            console.log(`🧪 测试模式下执行归档操作`);
+            return true;
         }
 
         // 如果有内容被处理了，就归档
