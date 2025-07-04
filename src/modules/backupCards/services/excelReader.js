@@ -8,7 +8,7 @@ class ExcelReader {
         this.workbook = null;
         this.worksheet = null;
         this.data = [];
-        console.log(`Excel读取器初始化，文件路径: ${this.filePath}`);
+        console.log(`Excel读取器初始化完成`);
     }
 
     /**

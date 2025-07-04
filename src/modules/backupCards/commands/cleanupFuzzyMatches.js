@@ -62,7 +62,7 @@ module.exports = {
                     `• 处理数量: ${count || '全部'}\n` +
                     `• 试运行模式: ${dryRun ? '是（不实际删除）' : '否'}\n` +
                     `• 时间限制: ${days ? `${days}天前` : '无限制'}\n` +
-                    `• Excel文件: ${customExcelFile || '默认配置文件'}\n\n` +
+                    `• Excel来源: ${customExcelFile ? '自定义文件' : '默认配置'}\n\n` +
                     `⏳ 正在读取数据...`,
             ephemeral: false
         });

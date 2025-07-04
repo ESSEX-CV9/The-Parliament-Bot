@@ -125,11 +125,11 @@ module.exports = {
                                 `• 未知类型: ${contentTypeStats.unknown} 个\n\n` +
                                 `📁 **文件缓存统计**\n` +
                                 `• 总文件数: ${cacheStats.totalFiles}\n` +
-                                `• 缓存位置: ${Object.keys(cacheStats.locations).join(', ')}\n\n` +
-                                `📋 **配置信息**\n` +
-                                `• Excel文件: ${config.excel.filePath}\n` +
-                                `• 图片目录: ${config.paths.picDir}\n` +
-                                `• 类脑角色卡目录: ${config.paths.brainCardDir}\n\n` +
+                                `• 缓存区域: ${Object.keys(cacheStats.locations).join(', ')}\n\n` +
+                                `📋 **配置状态**\n` +
+                                `• Excel文件: 已加载\n` +
+                                `• 文件目录: 已缓存\n` +
+                                `• 系统状态: 就绪\n\n` +
                                 `🎯 **测试结论**: 所有核心组件正常工作\n` +
                                 `💡 可以使用 \`/processbackupcards\` 命令开始实际处理`;
 
@@ -156,8 +156,8 @@ module.exports = {
                 content: `❌ **测试失败**\n\n` +
                         `**错误**: ${error.message}\n\n` +
                         `请检查:\n` +
-                        `• Excel文件是否存在: \`${config.excel.filePath}\`\n` +
-                        `• 图片目录是否存在: \`${config.paths.picDir}\`\n` +
+                        `• Excel文件是否存在\n` +
+                        `• 图片目录是否可访问\n` +
                         `• 配置文件是否正确\n` +
                         `• 文件权限是否充足`
             });

@@ -37,15 +37,9 @@ class EmbedGenerator {
             const file = fileResult[0]; // 使用第一个匹配的文件
             embed.fields.push({
                 name: '📁 文件信息',
-                value: `**文件名**: ${contentItem.fileName}\n**位置**: ${file.location}\n**匹配类型**: ${this.getMatchTypeText(file.matchType)}`,
+                value: `**文件名**: ${contentItem.fileName}\n**匹配类型**: ${this.getMatchTypeText(file.matchType)}`,
                 inline: true
             });
-
-            // embed.fields.push({
-            //     name: '📂 文件路径',
-            //     value: `\`${file.path}\``,
-            //     inline: false
-            // });
 
             // 如果是模糊匹配，显示相似度
             if (file.matchType === 'fuzzy') {

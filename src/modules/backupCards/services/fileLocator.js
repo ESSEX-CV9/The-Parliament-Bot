@@ -63,7 +63,7 @@ class FileLocator {
                 }
             }
             
-            console.log(`缓存目录 ${dirPath}: ${files.filter(f => f.includes('.')).length} 个文件`);
+            console.log(`缓存目录完成: ${files.filter(f => f.includes('.')).length} 个文件`);
             
         } catch (error) {
             console.error(`缓存目录失败 ${dirPath}:`, error);
@@ -260,7 +260,9 @@ class FileLocator {
             }
         } else {
             // 其他路径前缀在类脑角色卡目录内
-            const brainCardKey = `brainCard:${pathPrefix}:${fileName}`;
+            // 将路径前缀转换为缓存键格式：将 / 替换为 :
+            const pathParts = pathPrefix.split('/');
+            const brainCardKey = `brainCard:${pathParts.join(':')}:${fileName}`;
             if (this.fileCache.has(brainCardKey)) {
                 results.push({
                     path: this.fileCache.get(brainCardKey),
@@ -366,15 +368,18 @@ class FileLocator {
             if (pathPrefix.toLowerCase() === 'characters') {
                 searchDir = this.characterDir;
             } else {
-                searchDir = path.join(this.brainCardDir, pathPrefix);
+                // 将路径前缀转换为系统路径格式（处理多级路径）
+                const pathParts = pathPrefix.split('/');
+                searchDir = path.join(this.brainCardDir, ...pathParts);
             }
 
             if (!(await this.directoryExists(searchDir))) {
+                console.warn(`后备搜索目录不存在: ${searchDir}`);
                 return null;
             }
 
             const files = await fs.readdir(searchDir);
-            const matchedFile = files.find(file => file.toLowerCase() === fileName);
+            const matchedFile = files.find(file => file.toLowerCase() === fileName.toLowerCase());
             
             if (matchedFile) {
                 return {
