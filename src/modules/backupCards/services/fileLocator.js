@@ -167,7 +167,73 @@ class FileLocator {
             });
         }
 
+        // 3. 如果在根目录没找到，递归搜索所有子目录
+        if (results.length === 0) {
+            const subDirResults = await this.searchAllSubDirectories(fileName);
+            results.push(...subDirResults);
+        }
+
         return results;
+    }
+
+    /**
+     * 在所有子目录中搜索文件
+     */
+    async searchAllSubDirectories(fileName) {
+        const results = [];
+        const lowerFileName = fileName.toLowerCase();
+
+        // 遍历缓存中的所有条目
+        for (const [key, filePath] of this.fileCache.entries()) {
+            // 获取缓存文件的文件名
+            const cachedFileName = path.basename(filePath).toLowerCase();
+            
+            // 检查是否精确匹配文件名
+            if (cachedFileName === lowerFileName) {
+                // 解析缓存键来确定位置信息
+                const location = this.parseLocationFromKey(key);
+                
+                results.push({
+                    path: filePath,
+                    location: location,
+                    matchType: 'recursive'
+                });
+                
+                console.log(`🔍 在子目录中找到文件: ${fileName} -> ${location}/${cachedFileName}`);
+            }
+        }
+
+        // 按位置排序，优先显示更简单的路径
+        results.sort((a, b) => {
+            const aDepth = (a.location.match(/\//g) || []).length;
+            const bDepth = (b.location.match(/\//g) || []).length;
+            return aDepth - bDepth;
+        });
+
+        return results;
+    }
+
+    /**
+     * 从缓存键解析位置信息
+     */
+    parseLocationFromKey(key) {
+        const parts = key.split(':');
+        
+        if (parts[0] === 'pic') {
+            return 'pic';
+        } else if (parts[0] === 'characters') {
+            return 'characters';
+        } else if (parts[0] === 'brainCard') {
+            if (parts.length === 2) {
+                // brainCard:filename.png -> 根目录
+                return 'brainCard';
+            } else {
+                // brainCard:subdir:filename.png -> 子目录
+                return `brainCard/${parts[1]}`;
+            }
+        }
+        
+        return 'unknown';
     }
 
     /**

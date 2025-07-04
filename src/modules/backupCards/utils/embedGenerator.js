@@ -41,11 +41,11 @@ class EmbedGenerator {
                 inline: true
             });
 
-            embed.fields.push({
-                name: '📂 文件路径',
-                value: `\`${file.path}\``,
-                inline: false
-            });
+            // embed.fields.push({
+            //     name: '📂 文件路径',
+            //     value: `\`${file.path}\``,
+            //     inline: false
+            // });
 
             // 如果是模糊匹配，显示相似度
             if (file.matchType === 'fuzzy') {
@@ -316,7 +316,8 @@ class EmbedGenerator {
         const types = {
             'exact': '精确匹配',
             'fuzzy': '模糊匹配',
-            'fallback': '后备搜索'
+            'fallback': '后备搜索',
+            'recursive': '子目录搜索'
         };
         return types[matchType] || '未知';
     }
