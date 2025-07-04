@@ -102,19 +102,23 @@ class FileLocator {
     }
 
     /**
-     * 缓存子目录
+     * 缓存子目录（递归处理所有嵌套子目录）
      */
     async cacheSubDirectory(dirPath, prefix) {
         try {
-            const files = await fs.readdir(dirPath);
+            const items = await fs.readdir(dirPath);
             
-            for (const file of files) {
-                const filePath = path.join(dirPath, file);
-                const stat = await fs.stat(filePath);
+            for (const item of items) {
+                const itemPath = path.join(dirPath, item);
+                const stat = await fs.stat(itemPath);
                 
                 if (stat.isFile()) {
-                    const key = `${prefix}:${file.toLowerCase()}`;
-                    this.fileCache.set(key, filePath);
+                    // 文件：直接缓存
+                    const key = `${prefix}:${item.toLowerCase()}`;
+                    this.fileCache.set(key, itemPath);
+                } else if (stat.isDirectory()) {
+                    // 子目录：递归缓存
+                    await this.cacheSubDirectory(itemPath, `${prefix}:${item}`);
                 }
             }
             
@@ -229,7 +233,9 @@ class FileLocator {
                 return 'brainCard';
             } else {
                 // brainCard:subdir:filename.png -> 子目录
-                return `brainCard/${parts[1]}`;
+                // brainCard:subdir:subdir2:filename.png -> 更深层子目录
+                const pathParts = parts.slice(1, -1); // 去掉第一个(brainCard)和最后一个(filename)
+                return `brainCard/${pathParts.join('/')}`;
             }
         }
         
