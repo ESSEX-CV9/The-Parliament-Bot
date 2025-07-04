@@ -136,9 +136,8 @@ class ContentAnalyzer {
         // 分析路径前缀
         let pathPrefix = null;
         if (hasPath) {
-            // 提取第一级目录作为路径前缀
-            const pathParts = dirPath.split(/[/\\]/);
-            pathPrefix = pathParts[0];
+            // 使用完整的目录路径作为路径前缀
+            pathPrefix = dirPath.replace(/\\/g, '/'); // 统一使用正斜杠
         }
 
         return {
