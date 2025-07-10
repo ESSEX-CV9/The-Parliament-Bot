@@ -90,6 +90,10 @@ const rebuildForumCommand = require('../modules/forumRebuilder/commands/rebuildF
 const rebuildThreadsCommand = require('../modules/threadRebuilder/commands/rebuildThreads');
 const deleteRebuiltMessageCommand = require('../modules/threadRebuilder/commands/deleteRebuiltMessage');
 
+// 自助文件上传系统命令
+const uploadCommand = require('../modules/selfFileUpload/commands/uploadFile');
+const whoisCommand = require('../modules/selfFileUpload/commands/queryAnonymousLog');
+
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,
@@ -172,6 +176,10 @@ client.commands.set(rebuildForumCommand.data.name, rebuildForumCommand);
 // 帖子重建系统命令
 client.commands.set(rebuildThreadsCommand.data.name, rebuildThreadsCommand);
 client.commands.set(deleteRebuiltMessageCommand.data.name, deleteRebuiltMessageCommand);
+
+//自助文件上传系统命令
+client.commands.set(uploadCommand.data.name, uploadCommand);
+client.commands.set(whoisCommand.data.name, whoisCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
