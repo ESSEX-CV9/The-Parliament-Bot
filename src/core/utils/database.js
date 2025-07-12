@@ -18,6 +18,7 @@ const COURT_APPLICATIONS_FILE = path.join(DATA_DIR, 'courtApplications.json');
 const COURT_VOTES_FILE = path.join(DATA_DIR, 'courtVotes.json');
 const SELF_MODERATION_SETTINGS_FILE = path.join(DATA_DIR, 'selfModerationSettings.json');
 const SELF_MODERATION_VOTES_FILE = path.join(DATA_DIR, 'selfModerationVotes.json');
+const SELF_FILE_UPLOAD_LOGS_FILE = path.join(DATA_DIR, 'selfFileUploadLogs.json');
 const ARCHIVE_SETTINGS_FILE = path.join(DATA_DIR, 'archiveSettings.json');
 const AUTO_CLEANUP_SETTINGS_FILE = path.join(DATA_DIR, 'autoCleanupSettings.json');
 const AUTO_CLEANUP_TASKS_FILE = path.join(DATA_DIR, 'autoCleanupTasks.json');
@@ -53,6 +54,9 @@ if (!fs.existsSync(SELF_MODERATION_SETTINGS_FILE)) {
 }
 if (!fs.existsSync(SELF_MODERATION_VOTES_FILE)) {
     fs.writeFileSync(SELF_MODERATION_VOTES_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(SELF_FILE_UPLOAD_LOGS_FILE)) {
+    fs.writeFileSync(SELF_FILE_UPLOAD_LOGS_FILE, '[]', 'utf8');
 }
 if (!fs.existsSync(ARCHIVE_SETTINGS_FILE)) {
     fs.writeFileSync(ARCHIVE_SETTINGS_FILE, '{}', 'utf8');
@@ -1113,6 +1117,53 @@ async function isForumThreadExempt(guildId, thread) {
     return await isChannelExempt(guildId, thread.parent.id);
 }
 
+// --- 自助补档模块函数 开始 ---
+
+function readAnonymousUploadLogs() {
+    try {
+        const data = fs.readFileSync(SELF_FILE_UPLOAD_LOGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取自助补档日志文件失败:', err);
+        return [];
+    }
+}
+
+function writeAnonymousUploadLogs(data) {
+    try {
+        fs.writeFileSync(SELF_FILE_UPLOAD_LOGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入自助补档日志文件失败:', err);
+    }
+}
+
+/**
+ * 添加一条新的匿名上传日志
+ * @param {object} logEntry - 日志条目
+ */
+async function addAnonymousUploadLog(logEntry) {
+    const logs = readAnonymousUploadLogs();
+    logs.unshift(logEntry); // 在开头添加新日志，方便查找
+    // 限制日志数量，防止文件无限增大
+    if (logs.length > 10000) {
+        logs.length = 10000;
+    }
+    writeAnonymousUploadLogs(logs);
+}
+
+/**
+ * 根据新消息的ID查找匿名上传日志
+ * @param {string} newMessageId - 机器人创建的消息的ID
+ * @returns {object|null} 找到的日志条目或null
+ */
+async function getAnonymousUploadByMessageId(newMessageId) {
+    const logs = readAnonymousUploadLogs();
+    return logs.find(log => log.newMessageId === newMessageId) || null;
+}
+
+// --- 自助补档模块函数 结束 ---
+
+
 module.exports = {
     saveSettings,
     getSettings,
@@ -1163,6 +1214,10 @@ module.exports = {
     updateSelfModerationVote,
     getAllSelfModerationVotes,
     deleteSelfModerationVote,
+    // 自助补档相关导出
+    addAnonymousUploadLog,
+    getAnonymousUploadByMessageId,
+
     // 冷却时间相关导出
     saveSelfModerationGlobalCooldown,
     getSelfModerationGlobalCooldown,
