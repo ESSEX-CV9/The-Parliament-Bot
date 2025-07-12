@@ -97,11 +97,11 @@ function getTimeRangeDescription() {
 
 // 禁言时长配置（分钟）- 原始配置保持不变
 const BASE_MUTE_DURATIONS = {
-    LEVEL_1: { threshold: 15, duration: 10 },   // 15个⚠️ -> 10分钟
-    LEVEL_2: { threshold: 30, duration: 20 },   // 30个⚠️ -> 20分钟  
-    LEVEL_3: { threshold: 60, duration: 40 },   // 60个⚠️ -> 40分钟
-    LEVEL_4: { threshold: 80, duration: 60 },  // 80个⚠️ -> 1小时
-    LEVEL_5: { threshold: 100, duration: 120 }  // 100个⚠️ -> 2小时
+    LEVEL_1: { threshold: 10, duration: 10 },   // 15个⚠️ -> 10分钟
+    LEVEL_2: { threshold: 20, duration: 20 },   // 30个⚠️ -> 20分钟  
+    LEVEL_3: { threshold: 30, duration: 40 },   // 60个⚠️ -> 40分钟
+    LEVEL_4: { threshold: 40, duration: 60 },  // 80个⚠️ -> 1小时
+    LEVEL_5: { threshold: 60, duration: 120 }  // 100个⚠️ -> 2小时
 };
 
 // 删除消息阈值 - 原始配置

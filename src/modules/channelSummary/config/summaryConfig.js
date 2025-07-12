@@ -11,7 +11,7 @@ module.exports = {
     FILE_RETENTION_HOURS: process.env.SUMMARY_FILE_RETENTION_HOURS || 24,
     
     // Gemini API配置
-    GEMINI_MODEL: 'gemini-2.0-flash',
+    GEMINI_MODEL: 'gemini-2.5-flash',
     
     // 支持的时间格式
     TIME_FORMATS: [
