@@ -121,6 +121,7 @@ const deleteRebuiltMessageCommand = require('../modules/threadRebuilder/commands
 // 自助文件上传系统命令
 const uploadCommand = require('../modules/selfFileUpload/commands/uploadFile');
 const whoisCommand = require('../modules/selfFileUpload/commands/queryAnonymousLog');
+const manageOptOutCommand = require('../modules/selfFileUpload/commands/manageOptOut.js');
 
 // 补卡系统命令
 const processBackupCardsCommand = require('../modules/backupCards/commands/processBackupCards');
@@ -246,6 +247,7 @@ client.commands.set(updateVotingCandidatesCommand.data.name, updateVotingCandida
 // 自助文件上传系统命令
 client.commands.set(uploadCommand.data.name, uploadCommand);
 client.commands.set(whoisCommand.data.name, whoisCommand);
+client.commands.set(manageOptOutCommand.data.name, manageOptOutCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
@@ -276,7 +278,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log('🏆 赛事管理系统已加载');
     console.log('🧹 自动消息清理系统已加载');
     console.log('🗳️ 选举系统已完全加载 (包含16个命令)');
-    console.log('🎴 补卡管理系统已加载 (包含2个命令)');
+    console.log('🎴 补卡管理系统已加载 (包含3个命令)');
 })
 
 client.on(Events.InteractionCreate, interactionCreateHandler)
