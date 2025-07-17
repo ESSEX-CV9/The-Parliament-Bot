@@ -19,6 +19,7 @@ const COURT_VOTES_FILE = path.join(DATA_DIR, 'courtVotes.json');
 const SELF_MODERATION_SETTINGS_FILE = path.join(DATA_DIR, 'selfModerationSettings.json');
 const SELF_MODERATION_VOTES_FILE = path.join(DATA_DIR, 'selfModerationVotes.json');
 const SELF_FILE_UPLOAD_LOGS_FILE = path.join(DATA_DIR, 'selfFileUploadLogs.json');
+const ANONYMOUS_UPLOAD_OPT_OUT_FILE = path.join(__dirname, '../../../data/anonymous_upload_opt_out.json');
 const ARCHIVE_SETTINGS_FILE = path.join(DATA_DIR, 'archiveSettings.json');
 const AUTO_CLEANUP_SETTINGS_FILE = path.join(DATA_DIR, 'autoCleanupSettings.json');
 const AUTO_CLEANUP_TASKS_FILE = path.join(DATA_DIR, 'autoCleanupTasks.json');
@@ -1161,6 +1162,81 @@ async function getAnonymousUploadByMessageId(newMessageId) {
     return logs.find(log => log.newMessageId === newMessageId) || null;
 }
 
+// --- 新增：匿名补档屏蔽列表相关函数 ---
+
+/**
+ * 读取匿名补档屏蔽列表
+ * @returns {string[]} 用户ID列表
+ */
+function readOptOutList() {
+    try {
+        const data = fs.readFileSync(ANONYMOUS_UPLOAD_OPT_OUT_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            return [];
+        }
+        console.error('读取匿名上传屏蔽列表文件失败:', err);
+        return [];
+    }
+}
+
+/**
+ * 写入匿名补档屏蔽列表
+ * @param {string[]} data - 用户ID列表
+ */
+function writeOptOutList(data) {
+    try {
+        fs.writeFileSync(ANONYMOUS_UPLOAD_OPT_OUT_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入匿名上传屏蔽列表文件失败:', err);
+    }
+}
+
+/**
+ * 添加用户到匿名补档屏蔽列表
+ * @param {string} userId - 用户ID
+ * @returns {Promise<boolean>} 是否成功添加
+ */
+async function addUserToOptOutList(userId) {
+    const list = readOptOutList();
+    if (!list.includes(userId)) {
+        list.push(userId);
+        writeOptOutList(list);
+        console.log(`用户 ${userId} 已添加到匿名补档屏蔽列表。`);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * 从匿名补档屏蔽列表移除用户
+ * @param {string} userId - 用户ID
+ * @returns {Promise<boolean>} 是否成功移除
+ */
+async function removeUserFromOptOutList(userId) {
+    const list = readOptOutList();
+    const index = list.indexOf(userId);
+    if (index > -1) {
+        list.splice(index, 1);
+        writeOptOutList(list);
+        console.log(`用户 ${userId} 已从匿名补档屏蔽列表移除。`);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * 检查用户是否在匿名补档屏蔽列表中
+ * @param {string} userId - 用户ID
+ * @returns {Promise<boolean>} 是否在列表中
+ */
+async function isUserOptedOut(userId) {
+    const list = readOptOutList();
+    return list.includes(userId);
+}
+
+
 // --- 自助补档模块函数 结束 ---
 
 
@@ -1217,6 +1293,11 @@ module.exports = {
     // 自助补档相关导出
     addAnonymousUploadLog,
     getAnonymousUploadByMessageId,
+    // 匿名补档屏蔽列表
+    readOptOutList,
+    addUserToOptOutList,
+    removeUserFromOptOutList,
+    isUserOptedOut,
 
     // 冷却时间相关导出
     saveSelfModerationGlobalCooldown,

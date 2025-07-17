@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, ChannelType } = require('discord.js');
 const { ALLOWED_FORUM_IDS } = require('../config/config');
-const { addAnonymousUploadLog } = require('../../../core/utils/database');
+const { addAnonymousUploadLog, isUserOptedOut } = require('../../../core/utils/database');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -37,6 +37,18 @@ module.exports = {
         const fileAttachment = interaction.options.getAttachment('文件');
         const isSigned = interaction.options.getString('署名') === 'yes';
         const description = interaction.options.getString('描述'); // 获取描述内容
+        
+        // 修改：检查帖子作者是否拒绝任何形式的自助补档
+        const threadOwnerId = interaction.channel.ownerId;
+        // 确保能获取到帖子作者ID
+        if (threadOwnerId) {
+            const ownerOptedOut = await isUserOptedOut(threadOwnerId);
+            if (ownerOptedOut) {
+                return interaction.editReply({
+                    content: '❌ 操作失败。该帖子的作者不允许他人在其帖子下使用自助补档功能。',
+                });
+            }
+        }
 
         // 2. 检查文件大小 (Discord 机器人上传限制为 25MB)
         if (fileAttachment.size > 25 * 1024 * 1024) {
