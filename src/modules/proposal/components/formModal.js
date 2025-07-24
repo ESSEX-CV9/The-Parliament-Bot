@@ -39,8 +39,8 @@ function createFormModal() {
         .setRequired(true)
         .setPlaceholder('说明如何落实此动议');
         
-    const voteTimeInput = new TextInputBuilder()
-        .setCustomId('voteTime')
+    const executorInput = new TextInputBuilder()
+        .setCustomId('executor')
         .setLabel('议案执行人')
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
@@ -51,7 +51,7 @@ function createFormModal() {
     const row2 = new ActionRowBuilder().addComponents(reasonInput);
     const row3 = new ActionRowBuilder().addComponents(motionInput);
     const row4 = new ActionRowBuilder().addComponents(implementationInput);
-    const row5 = new ActionRowBuilder().addComponents(voteTimeInput);
+    const row5 = new ActionRowBuilder().addComponents(executorInput);
     
     modal.addComponents(row1, row2, row3, row4, row5);
     

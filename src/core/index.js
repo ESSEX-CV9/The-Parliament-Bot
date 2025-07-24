@@ -29,6 +29,8 @@ const deleteEntryCommand = require('../modules/proposal/commands/deleteEntry');
 const withdrawProposalCommand = require('../modules/proposal/commands/withdrawProposal');
 const setFormPermissionsCommand = require('../modules/proposal/commands/setFormPermissions');
 const setSupportPermissionsCommand = require('../modules/proposal/commands/setSupportPermissions');
+const reviewProposalCommand = require('../modules/proposal/commands/reviewProposal');
+const setProposalReviewersCommand = require('../modules/proposal/commands/setProposalReviewers');
 
 // 审核系统命令
 const setupReviewCommand = require('../modules/creatorReview/commands/setupReview');
@@ -91,7 +93,7 @@ const createVoteCommand = require('../modules/voting/commands/createVote');
 // 添加新的通知身份组命令
 const notificationRolesCommand = require('../modules/voting/commands/notificationRoles');
 
-// 选举系统命令 - 完整的命令列表
+// 选举系统命令
 const setElectionPositionsCommand = require('../modules/election/commands/setElectionPositions');
 const setElectionTimeScheduleCommand = require('../modules/election/commands/setElectionTimeSchedule');
 const setupElectionEntryCommand = require('../modules/election/commands/setupElectionEntry');
@@ -146,6 +148,8 @@ client.commands.set(deleteEntryCommand.data.name, deleteEntryCommand);
 client.commands.set(withdrawProposalCommand.data.name, withdrawProposalCommand);
 client.commands.set(setFormPermissionsCommand.data.name, setFormPermissionsCommand);
 client.commands.set(setSupportPermissionsCommand.data.name, setSupportPermissionsCommand);
+client.commands.set(reviewProposalCommand.data.name, reviewProposalCommand);
+client.commands.set(setProposalReviewersCommand.data.name, setProposalReviewersCommand);
 
 // 审核系统命令
 client.commands.set(setupReviewCommand.data.name, setupReviewCommand);
@@ -221,7 +225,7 @@ client.commands.set(createVoteCommand.data.name, createVoteCommand);
 // 注册新的通知身份组命令
 client.commands.set(notificationRolesCommand.data.name, notificationRolesCommand);
 
-// 选举系统命令 - 完整注册
+// 选举系统命令
 client.commands.set(setElectionPositionsCommand.data.name, setElectionPositionsCommand);
 client.commands.set(setElectionTimeScheduleCommand.data.name, setElectionTimeScheduleCommand);
 client.commands.set(setupElectionEntryCommand.data.name, setupElectionEntryCommand);

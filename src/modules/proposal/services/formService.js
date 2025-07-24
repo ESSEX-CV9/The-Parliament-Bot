@@ -41,7 +41,7 @@ async function processFormSubmission(interaction) {
         const reason = interaction.fields.getTextInputValue('reason');
         const motion = interaction.fields.getTextInputValue('motion');
         const implementation = interaction.fields.getTextInputValue('implementation');
-        const executor = interaction.fields.getTextInputValue('voteTime'); // 现在是议案执行人
+        const executor = interaction.fields.getTextInputValue('executor'); // 议案执行人
         
         // 从数据库获取设置
         const proposalSettings = await getProposalSettings(interaction.guild.id);
