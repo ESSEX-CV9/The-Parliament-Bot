@@ -5,7 +5,8 @@ const { getSettings, saveMessage, getNextId } = require('../../../core/utils/dat
 const { getProposalDeadline } = require('../../../core/config/timeconfig');
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../../core/utils/database');
-
+const { getProposalSettings, saveProposalApplication, getNextProposalId } = require('../utils/proposalDatabase');
+const { ensureProposalStatusTags, updateProposalThreadStatusTag } = require('../utils/forumTagManager');
 
 async function processFormSubmission(interaction) {
     // 立即defer以防止超时
@@ -40,92 +41,70 @@ async function processFormSubmission(interaction) {
         const reason = interaction.fields.getTextInputValue('reason');
         const motion = interaction.fields.getTextInputValue('motion');
         const implementation = interaction.fields.getTextInputValue('implementation');
-        const voteTime = interaction.fields.getTextInputValue('voteTime');
+        const executor = interaction.fields.getTextInputValue('voteTime'); // 现在是议案执行人
         
         // 从数据库获取设置
-        const settings = await getSettings(interaction.guild.id);
-        console.log('处理表单提交，获取设置:', settings);
+        const proposalSettings = await getProposalSettings(interaction.guild.id);
+        console.log('处理表单提交，获取议案设置:', proposalSettings);
         
-        if (!settings) {
+        if (!proposalSettings || !proposalSettings.reviewForumId) {
             return interaction.editReply({ 
-                content: '找不到表单设置。请联系管理员设置表单。'
+                content: '议案系统未配置完整，请联系管理员设置预审核论坛。'
             });
         }
         
-        // 获取目标频道
-        const targetChannel = await interaction.client.channels.fetch(settings.targetChannelId);
+        // 获取预审核论坛
+        const reviewForum = await interaction.client.channels.fetch(proposalSettings.reviewForumId);
         
-        if (!targetChannel) {
+        if (!reviewForum) {
             return interaction.editReply({ 
-                content: '找不到目标频道。请联系管理员修复设置。'
+                content: '找不到预审核论坛。请联系管理员修复设置。'
             });
         }
         
-        // 计算截止日期（24小时后）
-        const deadlineDate = getProposalDeadline();
-        const deadlineTimestamp = Math.floor(deadlineDate.getTime() / 1000);
+        // 生成议案ID
+        const proposalId = getNextProposalId();
         
-        // 获取下一个顺序ID
-        const proposalId = getNextId();
-        
-        // 创建嵌入消息
-        const embed = new EmbedBuilder()
-            .setTitle(title)
-            .setDescription(`提案人：<@${interaction.user.id}>\n议事截止日期：<t:${deadlineTimestamp}:f>\n\n**提案原因**\n${reason}\n\n**议案动议**\n${motion}\n\n**执行方案**\n${implementation}\n\n**议案执行人**\n${voteTime}`)
-            .setColor('#0099ff')
-            .setFooter({ 
-                text: `再次点击支持按钮可以撤掉支持 | 提案ID ${proposalId}`, 
-                iconURL: interaction.user.displayAvatarURL() 
-            })
-            .setTimestamp(); 
-        
-        // 发送消息到目标频道
-        const message = await targetChannel.send({
-            embeds: [embed],
-            components: []
-        });
-
-        // 创建只有支持按钮的组件
-        const buttonRow = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`support_${message.id}`)
-                    .setLabel(`支持 (0/${settings.requiredVotes})`)
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-        // 编辑消息添加按钮
-        await message.edit({
-            embeds: [embed],
-            components: [buttonRow]
+        // 在论坛创建审核帖子
+        await interaction.editReply({
+            content: '⏳ 正在创建议案审核帖子...'
         });
         
-        // 使用Discord消息ID作为键存储到数据库
-        await saveMessage({
-            messageId: message.id,
-            channelId: targetChannel.id,
+        const reviewThread = await createProposalReviewThread(reviewForum, {
+            title,
+            reason,
+            motion,
+            implementation,
+            executor
+        }, interaction.user, proposalId);
+        
+        // 保存议案申请数据
+        const applicationData = {
             proposalId: proposalId,
+            authorId: interaction.user.id,
+            guildId: interaction.guild.id,
+            threadId: reviewThread.id,
+            status: 'pending',
             formData: { 
                 title, 
                 reason, 
                 motion, 
                 implementation, 
-                voteTime 
+                executor 
             },
-            requiredVotes: settings.requiredVotes,
-            currentVotes: 0,
-            voters: [],
-            forumChannelId: settings.forumChannelId,
-            authorId: interaction.user.id,
-            deadline: deadlineDate.toISOString(),
-            status: 'pending'
-        });
+            reviewData: null,
+            publishData: null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
 
-        console.log(`成功创建表单消息 ID: ${message.id}, 提案ID: ${proposalId}, 截止日期: ${deadlineDate.toISOString()}`);
+        await saveProposalApplication(applicationData);
+
+        console.log(`成功创建议案申请 - ID: ${proposalId}, 审核帖子: ${reviewThread.id}`);
         
         // 回复用户
         await interaction.editReply({ 
-            content: '您的议案已成功提交！'
+            content: `✅ **议案提交成功！**\n\n📋 **议案ID：** \`${proposalId}\`\n🔗 **审核帖子：** ${reviewThread.url}\n\n您的议案已提交到审核论坛，请等待管理员审核。您可以在审核帖子中编辑议案内容。`
         });
     } catch (error) {
         console.error('处理表单提交时出错:', error);
@@ -133,6 +112,60 @@ async function processFormSubmission(interaction) {
             content: '处理表单提交时出现错误，请稍后重试。'
         });
     }
+}
+
+async function createProposalReviewThread(reviewForum, formData, author, proposalId) {
+    // 确保论坛有所需的标签
+    const tagMap = await ensureProposalStatusTags(reviewForum);
+    
+    // 创建审核帖子内容
+    const threadContent = `👤 **提案人：** <@${author.id}>
+📅 **提交时间：** <t:${Math.floor(Date.now() / 1000)}:f>
+🆔 **议案ID：** \`${proposalId}\`
+
+---
+
+🏷️ **议案标题**
+${formData.title}
+
+📝 **提案原因**
+${formData.reason}
+
+📋 **议案动议**
+${formData.motion}
+
+🔧 **执行方案**
+${formData.implementation}
+
+👨‍💼 **议案执行人**
+${formData.executor}
+
+---
+
+⏳ **状态：** 等待审核
+
+管理员可使用 \`/审核议案 ${proposalId}\` 进行审核。`;
+    
+    // 创建编辑按钮
+    const editButton = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId(`proposal_edit_${proposalId}`)
+                .setLabel('✏️ 编辑议案')
+                .setStyle(ButtonStyle.Secondary)
+        );
+    
+    // 创建论坛帖子
+    const thread = await reviewForum.threads.create({
+        name: `【待审核】${formData.title}`,
+        message: {
+            content: threadContent,
+            components: [editButton]
+        },
+        appliedTags: [tagMap.PENDING] // 应用待审核标签
+    });
+    
+    return thread;
 }
 
 module.exports = {
