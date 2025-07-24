@@ -41,10 +41,10 @@ function createFormModal() {
         
     const voteTimeInput = new TextInputBuilder()
         .setCustomId('voteTime')
-        .setLabel('投票时间')
+        .setLabel('议案执行人')
         .setStyle(TextInputStyle.Short)
         .setRequired(true)
-        .setPlaceholder('建议的投票持续时间。');
+        .setPlaceholder('指定负责执行此议案的人员或部门');
     
     // 构建表单行
     const row1 = new ActionRowBuilder().addComponents(titleInput);

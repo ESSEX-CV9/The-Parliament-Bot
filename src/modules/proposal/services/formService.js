@@ -71,7 +71,7 @@ async function processFormSubmission(interaction) {
         // 创建嵌入消息
         const embed = new EmbedBuilder()
             .setTitle(title)
-            .setDescription(`提案人：<@${interaction.user.id}>\n议事截止日期：<t:${deadlineTimestamp}:f>\n\n**提案原因**\n${reason}\n\n**议案动议**\n${motion}\n\n**执行方案**\n${implementation}\n\n**投票时间**\n${voteTime}`)
+            .setDescription(`提案人：<@${interaction.user.id}>\n议事截止日期：<t:${deadlineTimestamp}:f>\n\n**提案原因**\n${reason}\n\n**议案动议**\n${motion}\n\n**执行方案**\n${implementation}\n\n**议案执行人**\n${voteTime}`)
             .setColor('#0099ff')
             .setFooter({ 
                 text: `再次点击支持按钮可以撤掉支持 | 提案ID ${proposalId}`, 
