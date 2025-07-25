@@ -1,26 +1,39 @@
-# Dependencies
-/node_modules
-
-# Production
-/build
-
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-
-# Local Data
-/data/
-
-# Environment Variables
+node_modules/
+data/
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+src/commands/debugPermissions.js
+.vscode/settings.json
+必读-项目文件结构.md
+点子.md
+点子.md
 
-# Temporary files
-set
+比赛管理系统 - 完整设计方案.md
+README_Contest_System.md
+TPB机器人——自助管理模块改进方案.md
+我希望你为我写这样的一个脚本.md
+我希望你为我写这样的一个脚本2.md
+未命名.md
+Model.md
+rebuild-progress.json
+env-back-up
+temp/制度改革_总结_2025-6-12 20-19-33.txt
+temp/制度改革_总结_2025-6-12 20-22-37.txt
+temp/summaries/制度改革-messages-2025-06-12T12-19-27-781Z.json
+temp/summaries/制度改革-messages-2025-06-12T12-22-30-143Z.json
+对于复杂的前端卡来说，回复格式应该要设计比较严格，并且要区分好各个区域.md
+src/modules/election/TIE_BREAKING.md
+然后是你可以为我模拟描述一个场景，.md
+新建文件夹/elections.json
+新建文件夹/registrations.json
+新建文件夹/votes.json
+.gitignore
+EMBED_LENGTH_FIX.md
+VOTE_REMOVAL.md
+交互修复说明.md
+管理员候选人编辑功能说明.md
+src/modules/election/README.md
+新建文件夹/新建文件夹/elections.json
+新建文件夹/新建文件夹/registrations.json
+新建文件夹/新建文件夹/votes.json
+新建文件夹/新建文件夹 (2)/votes.json
+src/modules/election/logs/vote_removal_logs.txt
