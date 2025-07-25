@@ -37,15 +37,22 @@ const {
 const { createContestApplicationModal } = require('../../modules/contest/components/applicationModal');
 const { createSubmissionModal } = require('../../modules/contest/components/submissionModal');
 const { createConfirmChannelModal } = require('../../modules/contest/components/confirmChannelModal');
-const { processContestApplication, processEditApplication, processEditApplicationSubmission } = require('../../modules/contest/services/applicationService');
-const { processCancelApplication } = require('../../modules/contest/services/reviewService');
-const { processChannelConfirmation } = require('../../modules/contest/services/channelCreationService');
+const { 
+    processContestApplication,
+    processEditApplication,
+    processEditApplicationSubmission,
+    processChannelConfirmation
+} = require('../../modules/contest/services/applicationService');
 const { processContestSubmission } = require('../../modules/contest/services/submissionService');
+const { processCancelApplication } = require('../../modules/contest/services/reviewService');
 const { displayService } = require('../../modules/contest/services/displayService');
-const { getContestSettings, getContestApplication } = require('../../modules/contest/utils/contestDatabase');
+const { getContestApplication, getContestSettings } = require('../../modules/contest/utils/contestDatabase');
 const { checkContestApplicationPermission, getApplicationPermissionDeniedMessage } = require('../../modules/contest/utils/contestPermissions');
 const { processSubmissionManagement, processSubmissionAction, processDeleteConfirmation, processRejectionModal } = require('../../modules/contest/services/submissionManagementService');
 const { createRejectionModal } = require('../../modules/contest/components/rejectionModal');
+
+// 议案编辑相关处理
+const { processEditProposal, processEditProposalSubmission } = require('../../modules/proposal/services/proposalEditService');
 
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../core/utils/database');
@@ -201,6 +208,9 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('contest_edit_')) {
                 // 编辑申请按钮
                 await processEditApplication(interaction);
+            } else if (interaction.customId.startsWith('proposal_edit_')) {
+                // 编辑议案按钮
+                await processEditProposal(interaction);
             } else if (interaction.customId.startsWith('contest_confirm_')) {
                 // 确认建立频道按钮 - 显示选择界面
                 const applicationId = interaction.customId.replace('contest_confirm_', '');
@@ -446,6 +456,9 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId === 'contest_edit_application') {
                 // 编辑申请表单提交
                 await processEditApplicationSubmission(interaction);
+            } else if (interaction.customId.startsWith('proposal_edit_submission_')) {
+                // 编辑议案表单提交
+                await processEditProposalSubmission(interaction);
             } else if (interaction.customId.startsWith('contest_confirm_channel_')) {
                 // 确认建立频道表单提交
                 await processChannelConfirmation(interaction);
