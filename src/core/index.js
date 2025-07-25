@@ -17,6 +17,7 @@ const { startAttachmentCleanupScheduler } = require('../modules/selfModeration/s
 const { startVoteChecker } = require('../modules/voting/services/voteChecker');
 const { startElectionScheduler } = require('../modules/election/services/electionScheduler');
 const { printTimeConfig } = require('./config/timeconfig');
+const { startActivityTracker } = require('../modules/selfRole/services/activityTracker');
 
 // 导入命令
 const pingCommand = require('../shared/commands/ping');
@@ -129,7 +130,15 @@ const testBackupCardsCommand = require('../modules/backupCards/commands/testBack
 const archiveBackupThreadsCommand = require('../modules/backupCards/commands/archiveBackupThreads');
 const cleanupFuzzyMatchesCommand = require('../modules/backupCards/commands/cleanupFuzzyMatches');
 
-const client = new Client({ 
+// 自助身份组系统命令
+const setupRolePanelCommand = require('../modules/selfRole/commands/setupRolePanel');
+const addRoleCommand = require('../modules/selfRole/commands/addRole');
+const removeRoleCommand = require('../modules/selfRole/commands/removeRole');
+const recalculateActivityCommand = require('../modules/selfRole/commands/recalculateActivity');
+const checkActivityCommand = require('../modules/selfRole/commands/checkActivity');
+const debugRolesCommand = require('../modules/selfRole/commands/debugRoles'); // 调试命令
+
+const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
@@ -249,6 +258,14 @@ client.commands.set(uploadCommand.data.name, uploadCommand);
 client.commands.set(whoisCommand.data.name, whoisCommand);
 client.commands.set(manageOptOutCommand.data.name, manageOptOutCommand);
 
+// 自助身份组系统命令
+client.commands.set(setupRolePanelCommand.data.name, setupRolePanelCommand);
+client.commands.set(addRoleCommand.data.name, addRoleCommand);
+client.commands.set(removeRoleCommand.data.name, removeRoleCommand);
+client.commands.set(recalculateActivityCommand.data.name, recalculateActivityCommand);
+client.commands.set(checkActivityCommand.data.name, checkActivityCommand);
+client.commands.set(debugRolesCommand.data.name, debugRolesCommand); // 调试命令
+
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
     printTimeConfig();
@@ -273,6 +290,8 @@ client.once(Events.ClientReady, async (readyClient) => {
     
     // 初始化自动清理系统
     console.log('✅ 自动清理系统已启动');
+
+    startActivityTracker();
     
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');

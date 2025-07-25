@@ -23,6 +23,8 @@ const ANONYMOUS_UPLOAD_OPT_OUT_FILE = path.join(__dirname, '../../../data/anonym
 const ARCHIVE_SETTINGS_FILE = path.join(DATA_DIR, 'archiveSettings.json');
 const AUTO_CLEANUP_SETTINGS_FILE = path.join(DATA_DIR, 'autoCleanupSettings.json');
 const AUTO_CLEANUP_TASKS_FILE = path.join(DATA_DIR, 'autoCleanupTasks.json');
+const SELF_ROLE_SETTINGS_FILE = path.join(DATA_DIR, 'selfRoleSettings.json');
+const USER_ACTIVITY_FILE = path.join(DATA_DIR, 'userActivity.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -68,6 +70,74 @@ if (!fs.existsSync(AUTO_CLEANUP_SETTINGS_FILE)) {
 if (!fs.existsSync(AUTO_CLEANUP_TASKS_FILE)) {
     fs.writeFileSync(AUTO_CLEANUP_TASKS_FILE, '{}', 'utf8');
 }
+if (!fs.existsSync(SELF_ROLE_SETTINGS_FILE)) {
+    fs.writeFileSync(SELF_ROLE_SETTINGS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(USER_ACTIVITY_FILE)) {
+    fs.writeFileSync(USER_ACTIVITY_FILE, '{}', 'utf8');
+}
+
+// --- Self Role ---
+function readSelfRoleSettings() {
+    try {
+        const data = fs.readFileSync(SELF_ROLE_SETTINGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取自助身份组设置文件失败:', err);
+        return {};
+    }
+}
+
+function writeSelfRoleSettings(data) {
+    try {
+        fs.writeFileSync(SELF_ROLE_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入自助身份组设置文件失败:', err);
+    }
+}
+
+function readUserActivity() {
+    try {
+        const data = fs.readFileSync(USER_ACTIVITY_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取用户活跃度文件失败:', err);
+        return {};
+    }
+}
+
+function writeUserActivity(data) {
+    try {
+        fs.writeFileSync(USER_ACTIVITY_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入用户活跃度文件失败:', err);
+    }
+}
+
+async function getSelfRoleSettings(guildId) {
+    const settings = readSelfRoleSettings();
+    return settings[guildId] || null;
+}
+
+async function saveSelfRoleSettings(guildId, data) {
+    const settings = readSelfRoleSettings();
+    settings[guildId] = data;
+    writeSelfRoleSettings(settings);
+    return settings[guildId];
+}
+
+async function getUserActivity(guildId) {
+    const activity = readUserActivity();
+    return activity[guildId] || {};
+}
+
+async function saveUserActivity(guildId, data) {
+    const activity = readUserActivity();
+    activity[guildId] = data;
+    writeUserActivity(activity);
+    return activity[guildId];
+}
+
 
 // 读取设置数据
 function readSettings() {
@@ -1334,4 +1404,10 @@ module.exports = {
     getExemptChannels,
     isChannelExempt,
     isForumThreadExempt,
+
+    // Self Role
+    getSelfRoleSettings,
+    saveSelfRoleSettings,
+    getUserActivity,
+    saveUserActivity,
 };

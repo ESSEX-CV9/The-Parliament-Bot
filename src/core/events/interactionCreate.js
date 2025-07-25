@@ -10,6 +10,7 @@ const { processCourtSupport } = require('../../modules/court/services/courtVoteT
 const { processCourtVote } = require('../../modules/court/services/courtVotingSystem');
 // 自助管理相关处理
 const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
+const { handleSelfRoleButton, handleSelfRoleSelect } = require('../../modules/selfRole/services/selfRoleService');
 
 // 投票系统相关处理
 const { createVoteSetupModal, handleVoteSetupSubmit } = require('../../modules/voting/components/voteSetupModal');
@@ -61,6 +62,19 @@ const {
 
 async function interactionCreateHandler(interaction) {
     try {
+        // 处理自动补全
+        if (interaction.isAutocomplete()) {
+            const command = interaction.client.commands.get(interaction.commandName);
+            if (!command) return;
+
+            try {
+                await command.autocomplete(interaction);
+            } catch (error) {
+                console.error('自动补全时出错:', error);
+            }
+            return;
+        }
+
         // 处理命令
         if (interaction.isChatInputCommand()) {
             const command = interaction.client.commands.get(interaction.commandName);
@@ -402,6 +416,8 @@ async function interactionCreateHandler(interaction) {
                 // 取消最终确认按钮
                 const contestChannelId = interaction.customId.replace('final_confirm_cancel_', '');
                 await displayService.handleFinalConfirmCancel(interaction, contestChannelId);
+            } else if (interaction.customId === 'self_role_apply_button') {
+                await handleSelfRoleButton(interaction);
             }
             
             return;
@@ -509,6 +525,8 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('manage_select_submission_')) {
                 // 投稿选择下拉菜单（在展示界面中的管理功能）
                 await displayService.handleSubmissionSelect(interaction);
+            } else if (interaction.customId === 'self_role_select_menu') {
+                await handleSelfRoleSelect(interaction);
             }
             return;
         }
