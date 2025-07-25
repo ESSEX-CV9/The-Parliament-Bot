@@ -38,16 +38,50 @@ module.exports = {
         const isSigned = interaction.options.getString('署名') === 'yes';
         const description = interaction.options.getString('描述'); // 获取描述内容
         
-        // 修改：检查帖子作者是否拒绝任何形式的自助补档
-        const threadOwnerId = interaction.channel.ownerId;
-        // 确保能获取到帖子作者ID
-        if (threadOwnerId) {
-            const ownerOptedOut = await isUserOptedOut(threadOwnerId);
-            if (ownerOptedOut) {
-                return interaction.editReply({
-                    content: '❌ 操作失败。该帖子的作者不允许他人在其帖子下使用自助补档功能。',
-                });
+        // 检查帖子原作者是否拒绝任何形式的自助补档
+        try {
+            const starterMessage = await interaction.channel.fetchStarterMessage();
+            if (starterMessage) {
+                const mentionedUserIds = new Set();
+                const mentionRegex = /<@!?(\d+)>/g;
+
+                // 1. 从消息内容中提取ID
+                let contentMatch;
+                while ((contentMatch = mentionRegex.exec(starterMessage.content)) !== null) {
+                    mentionedUserIds.add(contentMatch[1]);
+                }
+
+                // 2. 从Embed的描述中提取ID
+                if (starterMessage.embeds && starterMessage.embeds.length > 0) {
+                    starterMessage.embeds.forEach(embed => {
+                        if (embed.description) {
+                            let embedMatch;
+                            // 需要重置正则表达式的 lastIndex
+                            mentionRegex.lastIndex = 0;
+                            while ((embedMatch = mentionRegex.exec(embed.description)) !== null) {
+                                mentionedUserIds.add(embedMatch[1]);
+                            }
+                        }
+                    });
+                }
+                
+                // 3. 检查所有提取到的作者ID
+                if (mentionedUserIds.size > 0) {
+                    for (const userId of mentionedUserIds) {
+                        const ownerOptedOut = await isUserOptedOut(userId);
+                        if (ownerOptedOut) {
+                            return interaction.editReply({
+                                content: `❌ 操作失败。该帖子的作者 (<@${userId}>) 不允许他人在其帖子下使用自助补档功能。`,
+                            });
+                        }
+                    }
+                }
             }
+        } catch (error) {
+            console.error('获取帖子初始消息或检查作者状态时出错:', error);
+            return interaction.editReply({
+                content: '❌ 无法验证帖子作者状态，操作已取消。',
+            });
         }
 
         // 2. 检查文件大小 (Discord 机器人上传限制为 25MB)
