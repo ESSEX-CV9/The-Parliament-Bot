@@ -8,6 +8,10 @@ const { getFormPermissionSettings } = require('../../../core/utils/database');
 const { getProposalSettings, saveProposalApplication, getNextProposalId } = require('../utils/proposalDatabase');
 const { ensureProposalStatusTags, updateProposalThreadStatusTag } = require('../utils/forumTagManager');
 
+/**
+ * 处理用户提交的议案。
+ * @param {import('discord.js').ModalSubmitInteraction} interaction - 提交交互对象。
+ */
 async function processFormSubmission(interaction) {
     // 立即defer以防止超时
     await interaction.deferReply({ ephemeral: true });
@@ -114,6 +118,14 @@ async function processFormSubmission(interaction) {
     }
 }
 
+/**
+ * 在指定的审核论坛中为新议案创建一个审核贴子。
+ * @param {import('discord.js').ForumChannel} reviewForum - 用于创建审核帖子的论坛频道对象。
+ * @param {object} formData - 从表单中获取的议案数据。
+ * @param {import('discord.js').User} author - 议案提交者。
+ * @param {string} proposalId - 新生成的议案ID。
+ * @returns {Promise<import('discord.js').ThreadChannel>} 创建的审核帖子对象。
+ */
 async function createProposalReviewThread(reviewForum, formData, author, proposalId) {
     // 确保论坛有所需的标签
     const tagMap = await ensureProposalStatusTags(reviewForum);

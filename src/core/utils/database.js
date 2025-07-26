@@ -118,11 +118,22 @@ function writeUserActivity(data) {
     }
 }
 
+/**
+ * 获取指定服务器的自助身份组设置。
+ * @param {string} guildId - 服务器ID。
+ * @returns {Promise<object|null>} 服务器的设置对象，不存在则返回 null。
+ */
 async function getSelfRoleSettings(guildId) {
     const settings = readSelfRoleSettings();
     return settings[guildId] || null;
 }
 
+/**
+ * 保存指定服务器的自助身份组设置。
+ * @param {string} guildId - 服务器ID。
+ * @param {object} data - 要保存的设置对象。
+ * @returns {Promise<object>} 已保存的设置对象。
+ */
 async function saveSelfRoleSettings(guildId, data) {
     const settings = readSelfRoleSettings();
     settings[guildId] = data;
@@ -130,11 +141,22 @@ async function saveSelfRoleSettings(guildId, data) {
     return settings[guildId];
 }
 
+/**
+ * 获取指定服务器的所有用户活跃度数据。
+ * @param {string} guildId - 服务器ID。
+ * @returns {Promise<object>} 包含所有频道和用户活跃度数据的对象。
+ */
 async function getUserActivity(guildId) {
     const activity = readUserActivity();
     return activity[guildId] || {};
 }
 
+/**
+ * 保存指定服务器的用户活跃度数据。
+ * @param {string} guildId - 服务器ID。
+ * @param {object} data - 要保存的活跃度数据对象。
+ * @returns {Promise<object>} 已保存的活跃度数据对象。
+ */
 async function saveUserActivity(guildId, data) {
     const activity = readUserActivity();
     activity[guildId] = data;
@@ -160,11 +182,22 @@ function writeSelfRoleApplications(data) {
     }
 }
 
+/**
+ * 根据消息ID获取一个自助身份组的投票申请。
+ * @param {string} messageId - 投票面板的消息ID。
+ * @returns {Promise<object|null>} 申请对象，如果不存在返回 null。
+ */
 async function getSelfRoleApplication(messageId) {
     const applications = readSelfRoleApplications();
     return applications[messageId] || null;
 }
 
+/**
+ * 创建或更新自助身份组的投票申请。
+ * @param {string} messageId - 投票面板的消息ID，标识用。
+ * @param {object} data - 要保存的申请数据。
+ * @returns {Promise<object>} 已保存的申请对象。
+ */
 async function saveSelfRoleApplication(messageId, data) {
     const applications = readSelfRoleApplications();
     applications[messageId] = data;
@@ -172,6 +205,11 @@ async function saveSelfRoleApplication(messageId, data) {
     return applications[messageId];
 }
 
+/**
+ * 根据消息ID删除一个已结束的自助身份组投票申请。
+ * @param {string} messageId - 投票面板的消息ID。
+ * @returns {Promise<void>}
+ */
 async function deleteSelfRoleApplication(messageId) {
     const applications = readSelfRoleApplications();
     delete applications[messageId];
