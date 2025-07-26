@@ -30,6 +30,8 @@ const deleteEntryCommand = require('../modules/proposal/commands/deleteEntry');
 const withdrawProposalCommand = require('../modules/proposal/commands/withdrawProposal');
 const setFormPermissionsCommand = require('../modules/proposal/commands/setFormPermissions');
 const setSupportPermissionsCommand = require('../modules/proposal/commands/setSupportPermissions');
+const reviewProposalCommand = require('../modules/proposal/commands/reviewProposal');
+const setProposalReviewersCommand = require('../modules/proposal/commands/setProposalReviewers');
 
 // 审核系统命令
 const setupReviewCommand = require('../modules/creatorReview/commands/setupReview');
@@ -160,6 +162,8 @@ client.commands.set(deleteEntryCommand.data.name, deleteEntryCommand);
 client.commands.set(withdrawProposalCommand.data.name, withdrawProposalCommand);
 client.commands.set(setFormPermissionsCommand.data.name, setFormPermissionsCommand);
 client.commands.set(setSupportPermissionsCommand.data.name, setSupportPermissionsCommand);
+client.commands.set(reviewProposalCommand.data.name, reviewProposalCommand);
+client.commands.set(setProposalReviewersCommand.data.name, setProposalReviewersCommand);
 
 // 审核系统命令
 client.commands.set(setupReviewCommand.data.name, setupReviewCommand);

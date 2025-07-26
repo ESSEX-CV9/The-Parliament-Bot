@@ -30,8 +30,8 @@ ${messageData.formData.motion}
 > ## 执行方案
 ${messageData.formData.implementation}
 
-> ## 投票时间
-${messageData.formData.voteTime}
+> ## 议案执行人
+${messageData.formData.executor}
 
 *讨论帖创建时间: <t:${currentTimestamp}:f>*`;
         
