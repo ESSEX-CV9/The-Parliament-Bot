@@ -1,7 +1,7 @@
 // src/modules/selfRole/services/selfRoleService.js
 
-const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder } = require('discord.js');
-const { getSelfRoleSettings, getUserActivity } = require('../../../core/utils/database');
+const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { getSelfRoleSettings, getUserActivity, saveSelfRoleApplication } = require('../../../core/utils/database');
 
 /**
  * 处理自助身份组申请按钮的点击event
@@ -65,6 +65,7 @@ async function handleSelfRoleSelect(interaction) {
         const { conditions } = roleConfig;
         let canApply = true;
         let reason = '';
+        let requiresApproval = false;
 
         // 1. 检查前置身份组
         if (conditions.prerequisiteRoleId && !member.roles.cache.has(conditions.prerequisiteRoleId)) {
@@ -85,8 +86,18 @@ async function handleSelfRoleSelect(interaction) {
             }
         }
 
-        // 授予身份组
-        if (canApply) {
+        // 如果资格预审通过，检查是否需要审核
+        if (canApply && conditions.approval) {
+            requiresApproval = true;
+            try {
+                await createApprovalPanel(interaction, roleConfig);
+                results.push(`⏳ **${roleConfig.label}**: 资格审查通过，已提交社区审核。`);
+            } catch (error) {
+                results.push(`❌ **${roleConfig.label}**: 提交审核失败，请联系管理员。`);
+            }
+        }
+        // 如果资格预审通过且无需审核，则直接授予
+        else if (canApply) {
             try {
                 await member.roles.add(roleId);
                 results.push(`✅ **${roleConfig.label}**: 成功获取！`);
@@ -94,7 +105,9 @@ async function handleSelfRoleSelect(interaction) {
                 console.error(`[SelfRole] ❌ 授予身份组 ${roleConfig.label} 时出错:`, error);
                 results.push(`❌ **${roleConfig.label}**: 授予失败，可能是机器人权限不足。`);
             }
-        } else {
+        }
+        // 如果资格预审不通过
+        else {
             results.push(`❌ **${roleConfig.label}**: 申请失败，原因：${reason}`);
         }
     }
@@ -108,3 +121,57 @@ module.exports = {
     handleSelfRoleButton,
     handleSelfRoleSelect,
 };
+
+/**
+ * 创建一个审核面板
+ * @param {import('discord.js').StringSelectMenuInteraction} interaction
+ * @param {object} roleConfig - The configuration for the role being applied for.
+ */
+async function createApprovalPanel(interaction, roleConfig) {
+    const { approval } = roleConfig.conditions;
+    const applicant = interaction.user;
+    const role = await interaction.guild.roles.fetch(roleConfig.roleId);
+
+    const approvalChannel = await interaction.client.channels.fetch(approval.channelId);
+    if (!approvalChannel) {
+        throw new Error(`找不到配置的审核频道: ${approval.channelId}`);
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle(`📜 身份组申请审核: ${roleConfig.label}`)
+        .setDescription(`用户 **${applicant.tag}** (${applicant.id}) 申请获取 **${role.name}** 身份组，已通过资格预审，现进入社区投票审核阶段。`)
+        .addFields(
+            { name: '申请人', value: `<@${applicant.id}>`, inline: true },
+            { name: '申请身份组', value: `<@&${role.id}>`, inline: true },
+            { name: '状态', value: '🗳️ 投票中...', inline: true },
+            { name: '支持票数', value: `0 / ${approval.requiredApprovals}`, inline: true },
+            { name: '反对票数', value: `0 / ${approval.requiredRejections}`, inline: true }
+        )
+        .setColor(0xFEE75C) // Yellow
+        .setTimestamp();
+
+    const approveButton = new ButtonBuilder()
+        .setCustomId(`self_role_approve_${roleConfig.roleId}_${applicant.id}`)
+        .setLabel('✅ 支持')
+        .setStyle(ButtonStyle.Success);
+
+    const rejectButton = new ButtonBuilder()
+        .setCustomId(`self_role_reject_${roleConfig.roleId}_${applicant.id}`)
+        .setLabel('❌ 反对')
+        .setStyle(ButtonStyle.Danger);
+
+    const row = new ActionRowBuilder().addComponents(approveButton, rejectButton);
+
+    const approvalMessage = await approvalChannel.send({ embeds: [embed], components: [row] });
+
+    // 在数据库中创建申请记录
+    await saveSelfRoleApplication(approvalMessage.id, {
+        applicantId: applicant.id,
+        roleId: roleConfig.roleId,
+        status: 'pending',
+        approvers: [],
+        rejecters: [],
+    });
+
+    console.log(`[SelfRole] ✅ 为 ${applicant.tag} 的 ${roleConfig.label} 申请创建了审核面板: ${approvalMessage.id}`);
+}

@@ -7,10 +7,9 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('回溯统计活跃度')
         .setDescription('扫描指定频道的历史消息以统计用户活跃度')
-        .addChannelOption(option =>
-            option.setName('频道')
-                .setDescription('要进行统计的频道')
-                .addChannelTypes(ChannelType.GuildText)
+        .addStringOption(option =>
+            option.setName('频道id')
+                .setDescription('要进行统计的频道的ID')
                 .setRequired(true)
         )
         .addIntegerOption(option =>
@@ -19,16 +18,27 @@ module.exports = {
                 .setMinValue(1)
                 .setRequired(false)
         )
+        .addBooleanOption(option =>
+            option.setName('重置数据')
+                .setDescription('在扫描前是否清空该频道的现有统计数据（默认为否）')
+                .setRequired(false)
+        )
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
-        const channel = interaction.options.getChannel('频道');
+        const channelId = interaction.options.getString('频道id');
         const days = interaction.options.getInteger('扫描天数');
+        const resetData = interaction.options.getBoolean('重置数据') || false;
         const guildId = interaction.guild.id;
 
         try {
+            const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
+            if (!channel || channel.type !== ChannelType.GuildText) {
+                return interaction.editReply({ content: '❌ 无效的频道ID或频道类型不是文字频道。' });
+            }
+
             console.log(`[SelfRole] 🔍 开始回溯统计频道 ${channel.name} 的历史消息...`);
             const startEmbed = new EmbedBuilder()
                 .setTitle('🔍 开始回溯统计...')
@@ -41,7 +51,10 @@ module.exports = {
             let lastMessageId = null;
             let hasMoreMessages = true;
             const activityData = await getUserActivity(guildId) || {};
-            if (!activityData[channel.id]) {
+            
+            if (resetData) {
+                activityData[channel.id] = {};
+            } else if (!activityData[channel.id]) {
                 activityData[channel.id] = {};
             }
 

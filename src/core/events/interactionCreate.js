@@ -11,6 +11,16 @@ const { processCourtVote } = require('../../modules/court/services/courtVotingSy
 // 自助管理相关处理
 const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
 const { handleSelfRoleButton, handleSelfRoleSelect } = require('../../modules/selfRole/services/selfRoleService');
+const { processApprovalVote } = require('../../modules/selfRole/services/approvalService');
+const {
+    handleAddRoleButton,
+    handleRemoveRoleButton,
+    handleListRolesButton,
+    handleRoleSelectForAdd,
+    handleModalSubmit,
+    handleRoleSelectForRemove,
+    handleRoleListPageChange
+} = require('../../modules/selfRole/services/adminPanelService');
 
 // 投票系统相关处理
 const { createVoteSetupModal, handleVoteSetupSubmit } = require('../../modules/voting/components/voteSetupModal');
@@ -428,6 +438,16 @@ async function interactionCreateHandler(interaction) {
                 await displayService.handleFinalConfirmCancel(interaction, contestChannelId);
             } else if (interaction.customId === 'self_role_apply_button') {
                 await handleSelfRoleButton(interaction);
+            } else if (interaction.customId.startsWith('self_role_approve_') || interaction.customId.startsWith('self_role_reject_')) {
+                await processApprovalVote(interaction);
+            } else if (interaction.customId === 'admin_add_role_button') {
+                await handleAddRoleButton(interaction);
+            } else if (interaction.customId === 'admin_remove_role_button') {
+                await handleRemoveRoleButton(interaction);
+            } else if (interaction.customId === 'admin_list_roles_button') {
+                await handleListRolesButton(interaction);
+            } else if (interaction.customId.startsWith('admin_roles_page_')) {
+                await handleRoleListPageChange(interaction);
             }
             
             return;
@@ -491,6 +511,8 @@ async function interactionCreateHandler(interaction) {
             // 新增：获奖作品设置模态框
             if (interaction.customId.startsWith('award_modal_')) {
                 await displayService.handleAwardModalSubmission(interaction);
+            } else if (interaction.customId.startsWith('admin_add_role_modal_')) {
+                await handleModalSubmit(interaction);
             }
             return;
         }
@@ -540,6 +562,10 @@ async function interactionCreateHandler(interaction) {
                 await displayService.handleSubmissionSelect(interaction);
             } else if (interaction.customId === 'self_role_select_menu') {
                 await handleSelfRoleSelect(interaction);
+            } else if (interaction.customId === 'admin_add_role_select') {
+                await handleRoleSelectForAdd(interaction);
+            } else if (interaction.customId === 'admin_remove_role_select') {
+                await handleRoleSelectForRemove(interaction);
             }
             return;
         }

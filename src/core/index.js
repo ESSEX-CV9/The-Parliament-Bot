@@ -134,8 +134,7 @@ const cleanupFuzzyMatchesCommand = require('../modules/backupCards/commands/clea
 
 // 自助身份组系统命令
 const setupRolePanelCommand = require('../modules/selfRole/commands/setupRolePanel');
-const addRoleCommand = require('../modules/selfRole/commands/addRole');
-const removeRoleCommand = require('../modules/selfRole/commands/removeRole');
+const setupAdminPanelCommand = require('../modules/selfRole/commands/setupAdminPanel');
 const recalculateActivityCommand = require('../modules/selfRole/commands/recalculateActivity');
 const checkActivityCommand = require('../modules/selfRole/commands/checkActivity');
 const debugRolesCommand = require('../modules/selfRole/commands/debugRoles'); // 调试命令
@@ -264,8 +263,7 @@ client.commands.set(manageOptOutCommand.data.name, manageOptOutCommand);
 
 // 自助身份组系统命令
 client.commands.set(setupRolePanelCommand.data.name, setupRolePanelCommand);
-client.commands.set(addRoleCommand.data.name, addRoleCommand);
-client.commands.set(removeRoleCommand.data.name, removeRoleCommand);
+client.commands.set(setupAdminPanelCommand.data.name, setupAdminPanelCommand);
 client.commands.set(recalculateActivityCommand.data.name, recalculateActivityCommand);
 client.commands.set(checkActivityCommand.data.name, checkActivityCommand);
 client.commands.set(debugRolesCommand.data.name, debugRolesCommand); // 调试命令
