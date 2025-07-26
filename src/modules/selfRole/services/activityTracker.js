@@ -3,8 +3,41 @@
 const { getUserActivity, saveUserActivity, getSelfRoleSettings } = require('../../../core/utils/database');
 
 /**
- * 内存缓存，用于暂存用户活跃度数据
- * 结构: { guildId: { channelId: { userId: { messageCount: 1, mentionedCount: 0 } } } }
+ * 单个用户在某频道内的活跃度数据。
+ * @typedef {Object} UserActivity
+ * @property {number} messageCount 用户在该频道发送的消息条数
+ * @property {number} mentionedCount 该用户在该频道被 @ 提及的次数
+ */
+
+/**
+ * 频道层级: key 为 channelId, value 为该频道内所有用户的活跃度。
+ * @typedef {Record<string, UserActivity>} ChannelActivity
+ */
+
+/**
+ * 服务器层级: key 为 guildId, value 为该服务器内所有频道的活跃度。
+ * @typedef {Record<string, ChannelActivity>} GuildActivity
+ */
+
+/**
+ * 整体缓存结构: key 为 guildId, value 为对应服务器的活跃度数据。
+ * @typedef {Record<string, GuildActivity>} ActivityCache
+ */
+
+/**
+ * 内存缓存，用于暂存用户活跃度数据。
+ * 结构示例:
+ * {
+ *   "guildA": {
+ *     "channelX": {
+ *       "user123": { messageCount: 1, mentionedCount: 0 },
+ *       "user456": { messageCount: 4, mentionedCount: 2 }
+ *     },
+ *     "channelY": { ... }
+ *   },
+ *   "guildB": { ... }
+ * }
+ * @type {ActivityCache}
  */
 let activityCache = {};
 
