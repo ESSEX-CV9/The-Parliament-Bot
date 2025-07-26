@@ -23,6 +23,9 @@ const ANONYMOUS_UPLOAD_OPT_OUT_FILE = path.join(__dirname, '../../../data/anonym
 const ARCHIVE_SETTINGS_FILE = path.join(DATA_DIR, 'archiveSettings.json');
 const AUTO_CLEANUP_SETTINGS_FILE = path.join(DATA_DIR, 'autoCleanupSettings.json');
 const AUTO_CLEANUP_TASKS_FILE = path.join(DATA_DIR, 'autoCleanupTasks.json');
+const SELF_ROLE_SETTINGS_FILE = path.join(DATA_DIR, 'selfRoleSettings.json');
+const USER_ACTIVITY_FILE = path.join(DATA_DIR, 'userActivity.json');
+const SELF_ROLE_APPLICATIONS_FILE = path.join(DATA_DIR, 'selfRoleApplications.json');
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -68,6 +71,151 @@ if (!fs.existsSync(AUTO_CLEANUP_SETTINGS_FILE)) {
 if (!fs.existsSync(AUTO_CLEANUP_TASKS_FILE)) {
     fs.writeFileSync(AUTO_CLEANUP_TASKS_FILE, '{}', 'utf8');
 }
+if (!fs.existsSync(SELF_ROLE_SETTINGS_FILE)) {
+    fs.writeFileSync(SELF_ROLE_SETTINGS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(USER_ACTIVITY_FILE)) {
+    fs.writeFileSync(USER_ACTIVITY_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(SELF_ROLE_APPLICATIONS_FILE)) {
+    fs.writeFileSync(SELF_ROLE_APPLICATIONS_FILE, '{}', 'utf8');
+}
+
+// --- Self Role ---
+function readSelfRoleSettings() {
+    try {
+        const data = fs.readFileSync(SELF_ROLE_SETTINGS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取自助身份组设置文件失败:', err);
+        return {};
+    }
+}
+
+function writeSelfRoleSettings(data) {
+    try {
+        fs.writeFileSync(SELF_ROLE_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入自助身份组设置文件失败:', err);
+    }
+}
+
+function readUserActivity() {
+    try {
+        const data = fs.readFileSync(USER_ACTIVITY_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取用户活跃度文件失败:', err);
+        return {};
+    }
+}
+
+function writeUserActivity(data) {
+    try {
+        fs.writeFileSync(USER_ACTIVITY_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入用户活跃度文件失败:', err);
+    }
+}
+
+/**
+ * 获取指定服务器的自助身份组设置。
+ * @param {string} guildId - 服务器ID。
+ * @returns {Promise<object|null>} 服务器的设置对象，不存在则返回 null。
+ */
+async function getSelfRoleSettings(guildId) {
+    const settings = readSelfRoleSettings();
+    return settings[guildId] || null;
+}
+
+/**
+ * 保存指定服务器的自助身份组设置。
+ * @param {string} guildId - 服务器ID。
+ * @param {object} data - 要保存的设置对象。
+ * @returns {Promise<object>} 已保存的设置对象。
+ */
+async function saveSelfRoleSettings(guildId, data) {
+    const settings = readSelfRoleSettings();
+    settings[guildId] = data;
+    writeSelfRoleSettings(settings);
+    return settings[guildId];
+}
+
+/**
+ * 获取指定服务器的所有用户活跃度数据。
+ * @param {string} guildId - 服务器ID。
+ * @returns {Promise<object>} 包含所有频道和用户活跃度数据的对象。
+ */
+async function getUserActivity(guildId) {
+    const activity = readUserActivity();
+    return activity[guildId] || {};
+}
+
+/**
+ * 保存指定服务器的用户活跃度数据。
+ * @param {string} guildId - 服务器ID。
+ * @param {object} data - 要保存的活跃度数据对象。
+ * @returns {Promise<object>} 已保存的活跃度数据对象。
+ */
+async function saveUserActivity(guildId, data) {
+    const activity = readUserActivity();
+    activity[guildId] = data;
+    writeUserActivity(activity);
+    return activity[guildId];
+}
+
+function readSelfRoleApplications() {
+    try {
+        const data = fs.readFileSync(SELF_ROLE_APPLICATIONS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取自助身份组申请文件失败:', err);
+        return {};
+    }
+}
+
+function writeSelfRoleApplications(data) {
+    try {
+        fs.writeFileSync(SELF_ROLE_APPLICATIONS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入自助身份组申请文件失败:', err);
+    }
+}
+
+/**
+ * 根据消息ID获取一个自助身份组的投票申请。
+ * @param {string} messageId - 投票面板的消息ID。
+ * @returns {Promise<object|null>} 申请对象，如果不存在返回 null。
+ */
+async function getSelfRoleApplication(messageId) {
+    const applications = readSelfRoleApplications();
+    return applications[messageId] || null;
+}
+
+/**
+ * 创建或更新自助身份组的投票申请。
+ * @param {string} messageId - 投票面板的消息ID，标识用。
+ * @param {object} data - 要保存的申请数据。
+ * @returns {Promise<object>} 已保存的申请对象。
+ */
+async function saveSelfRoleApplication(messageId, data) {
+    const applications = readSelfRoleApplications();
+    applications[messageId] = data;
+    writeSelfRoleApplications(applications);
+    return applications[messageId];
+}
+
+/**
+ * 根据消息ID删除一个已结束的自助身份组投票申请。
+ * @param {string} messageId - 投票面板的消息ID。
+ * @returns {Promise<void>}
+ */
+async function deleteSelfRoleApplication(messageId) {
+    const applications = readSelfRoleApplications();
+    delete applications[messageId];
+    writeSelfRoleApplications(applications);
+}
+
 
 // 读取设置数据
 function readSettings() {
@@ -1334,4 +1482,13 @@ module.exports = {
     getExemptChannels,
     isChannelExempt,
     isForumThreadExempt,
+
+    // Self Role
+    getSelfRoleSettings,
+    saveSelfRoleSettings,
+    getUserActivity,
+    saveUserActivity,
+    getSelfRoleApplication,
+    saveSelfRoleApplication,
+    deleteSelfRoleApplication,
 };

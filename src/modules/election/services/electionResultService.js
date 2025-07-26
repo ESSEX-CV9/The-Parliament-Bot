@@ -8,9 +8,9 @@ const {
 } = require('../utils/tieBreakingUtils');
 
 /**
- * 计算募选结果
- * @param {string} electionId - 募选ID
- * @returns {object} 募选结果
+ * 计算并处理一个完整募选的最终结果，包括所有职位的计票、第二志愿逻辑、职位依赖和并列分析。
+ * @param {string} electionId - 要计算结果的募选ID。
+ * @returns {Promise<object>} 一个包含所有职位最终结果的复杂对象。
  */
 async function calculateElectionResults(electionId) {
     try {
@@ -60,9 +60,9 @@ async function calculateElectionResults(electionId) {
  * 计算单个职位的结果
  * @param {string} positionId - 职位ID
  * @param {object} position - 职位信息
- * @param {Array} votes - 投票数据
- * @param {Array} registrations - 报名数据
- * @returns {object} 职位结果
+ * @param {Array<object>} votes - 本次募选的所有投票数据。
+ * @param {Array<object>} registrations - 本次募选的所有报名数据。
+ * @returns {Promise<object>} 包含该职位候选人列表、总票数等信息的初步结果对象。
  */
 async function calculatePositionResults(positionId, position, votes, registrations) {
     // 获取该职位的所有候选人（包括第一志愿和第二志愿）

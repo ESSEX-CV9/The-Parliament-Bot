@@ -31,6 +31,15 @@ class DisplayService {
         this.userSelections = new Map();
     }
 
+    /**
+     * 更新比赛频道中“最近投稿作品”的展示消息。
+     * @param {import('discord.js').Message} displayMessage - 需要更新的展示消息对象。
+     * @param {Array<object>} submissions - 所有有效的投稿数据。
+     * @param {number} currentPage - 当前页码（但好像在此函数中未使用？不懂，应该是保持接口一致性而保留）。
+     * @param {number} itemsPerPage - 每页项目数（同上？在此函数中未使用）。
+     * @param {string} contestChannelId - 比赛频道的ID。
+     * @returns {Promise<void>}
+     */
     async updateDisplayMessage(displayMessage, submissions, currentPage, itemsPerPage, contestChannelId) {
         try {
             // 对于公开展示，只显示最近的5个作品
@@ -223,6 +232,16 @@ class DisplayService {
     }
     
     // 构建完整作品列表的组件，根据用户权限显示不同界面
+    /**
+     * 构建“所有参赛作品”视图的交互组件（按钮和选择菜单）。
+     * @param {number} currentPage - 当前页码。
+     * @param {number} totalPages - 总页数。
+     * @param {string} contestChannelId - 比赛频道的ID。
+     * @param {number} [itemsPerPage=5] - 每页显示的项目数。
+     * @param {boolean} [isOrganizer=false] - 交互发起者是否为比赛主办人。
+     * @param {Array<object>} [currentPageSubmissions=[]] - 当前页面的投稿数据，用于生成下拉菜单。
+     * @returns {Array<import('discord.js').ActionRowBuilder>}
+     */
     buildFullDisplayComponents(currentPage, totalPages, contestChannelId, itemsPerPage = 5, isOrganizer = false, currentPageSubmissions = []) {
         const components = [];
         
@@ -570,6 +589,10 @@ class DisplayService {
     }
 
     // 处理查看所有作品按钮
+    /**
+     * 处理用户点击“查看所有投稿作品”按钮的交互，回复一个带分页的完整作品列表。
+     * @param {import('discord.js').ButtonInteraction} interaction - 按钮点击交互对象。
+     */
     async handleViewAllSubmissions(interaction) {
         try {
             await interaction.deferReply({ ephemeral: true });

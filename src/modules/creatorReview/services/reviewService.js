@@ -210,6 +210,10 @@ async function getThreadAuthor(channel) {
     }
 }
 
+/**
+ * 处理用户提交的创作者审核。
+ * @param {import('discord.js').ModalSubmitInteraction} interaction - 提交交互对象。
+ */
 async function processReviewSubmission(interaction) {
     try {
         // 立即defer回复以避免超时

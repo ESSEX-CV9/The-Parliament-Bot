@@ -2,6 +2,10 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getCourtVote, updateCourtVote } = require('../../../core/utils/database');
 
+/**
+ * 处理用户对提案的投票（支持/反对/撤销）。
+ * @param {import('discord.js').ButtonInteraction} interaction - 按钮点击交互对象。
+ */
 async function processCourtVote(interaction) {
     try {
         // 立即回复延迟消息，防止交互超时
@@ -234,6 +238,11 @@ async function checkVoteStatus(client) {
 }
 
 // 处理投票结束的函数
+/**
+ * 结算一个已结束投票。
+ * @param {import('discord.js').Client} client - Discord 客户端实例。
+ * @param {object} voteData - 从db中获取的完整投票数据。
+ */
 async function finalizeVote(client, voteData) {
     try {
         console.log(`开始结算投票: 法庭ID ${voteData.courtId}`);

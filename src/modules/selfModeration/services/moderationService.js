@@ -9,8 +9,8 @@ const { getShitReactionCount } = require('./reactionTracker');
 const { getSelfModerationVoteEndTime, DELETE_THRESHOLD, MUTE_DURATIONS, getCurrentTimeMode } = require('../../../core/config/timeconfig');
 
 /**
- * 处理自助管理交互（按钮点击和模态窗口提交）
- * @param {Interaction} interaction - Discord交互对象
+ * 处理所有来自自助管理模块的交互（按钮点击和嵌入窗口的提交）。
+ * @param {import('discord.js').Interaction} interaction - Discord交互对象。
  */
 async function processSelfModerationInteraction(interaction) {
     try {
@@ -92,10 +92,10 @@ async function showMessageInputModal(interaction, type) {
 }
 
 /**
- * 处理消息链接提交
- * @param {ModalSubmitInteraction} interaction - 模态窗口交互
- * @param {string} type - 操作类型
- * @param {string} messageUrl - 消息链接
+ * 处理用户在窗口中提交的消息链接，并启动一个自助管理投票流程。
+ * @param {import('discord.js').ModalSubmitInteraction} interaction - 窗口提交的交互对象。
+ * @param {string} type - 操作类型 ('delete' 或 'mute')。
+ * @param {string} messageUrl - 用户提交的消息链接。
  */
 async function processMessageUrlSubmission(interaction, type, messageUrl) {
     try {
