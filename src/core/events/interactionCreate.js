@@ -53,9 +53,11 @@ const { createConfirmChannelModal } = require('../../modules/contest/components/
 const { 
     processContestApplication,
     processEditApplication,
-    processEditApplicationSubmission,
-    processChannelConfirmation
+    processEditApplicationSubmission
 } = require('../../modules/contest/services/applicationService');
+
+// 频道创建最终确认处理函数
+const { processChannelConfirmation } = require('../../modules/contest/services/channelCreationService');
 const { processContestSubmission } = require('../../modules/contest/services/submissionService');
 const { processCancelApplication } = require('../../modules/contest/services/reviewService');
 const { displayService } = require('../../modules/contest/services/displayService');
