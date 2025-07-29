@@ -4,8 +4,8 @@ const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder, ButtonBuilder, 
 const { getSelfRoleSettings, getUserActivity, saveSelfRoleApplication } = require('../../../core/utils/database');
 
 /**
- * 处理自助身份组申请按钮的点击event
- * @param {import('discord.js').ButtonInteraction} interaction
+ * 处理用户点击“自助身份组申请”按钮的事件。
+ * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleSelfRoleButton(interaction) {
     const guildId = interaction.guild.id;
@@ -40,11 +40,16 @@ async function handleSelfRoleButton(interaction) {
         components: [row],
         ephemeral: true,
     });
+
+    // 60秒后自动删除此消息
+    setTimeout(() => {
+        interaction.deleteReply().catch(() => {});
+    }, 60000);
 }
 
 /**
- * 处理用户在下拉菜单中选择身份组后的提交event
- * @param {import('discord.js').StringSelectMenuInteraction} interaction
+ * 处理用户在下拉菜单中选择身份组后的提交事件。
+ * @param {import('discord.js').StringSelectMenuInteraction} interaction - 字符串选择菜单交互对象。
  */
 async function handleSelfRoleSelect(interaction) {
     await interaction.deferReply({ ephemeral: true });
@@ -63,58 +68,68 @@ async function handleSelfRoleSelect(interaction) {
         if (!roleConfig) continue;
 
         const { conditions } = roleConfig;
-        let canApply = true;
-        let reason = '';
-        let requiresApproval = false;
+        const failureReasons = [];
 
         // 1. 检查前置身份组
         if (conditions.prerequisiteRoleId && !member.roles.cache.has(conditions.prerequisiteRoleId)) {
-            canApply = false;
             const requiredRole = await interaction.guild.roles.fetch(conditions.prerequisiteRoleId);
-            reason = `需要拥有 **${requiredRole.name}** 身份组。`;
+            failureReasons.push(`需要拥有 **${requiredRole.name}** 身份组`);
         }
 
         // 2. 检查活跃度
-        if (canApply && conditions.activity) {
-            const { channelId, requiredMessages, requiredMentions } = conditions.activity;
-            const activity = userActivity[channelId]?.[member.id] || { messageCount: 0, mentionedCount: 0 };
-            
-            if (activity.messageCount < requiredMessages && activity.mentionedCount < requiredMentions) {
-                canApply = false;
-                const channel = await interaction.guild.channels.fetch(channelId);
-                reason = `在 <#${channel.id}> 频道中，需要 **${requiredMessages}** 发言数 (您有 ${activity.messageCount}) 或 **${requiredMentions}** 被提及数 (您有 ${activity.mentionedCount})。`;
+        if (conditions.activity) {
+            const { channelId, requiredMessages, requiredMentions, requiredMentioning } = conditions.activity;
+            const activity = userActivity[channelId]?.[member.id] || { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
+            const channel = await interaction.guild.channels.fetch(channelId).catch(() => ({ id: channelId }));
+
+            if (activity.messageCount < requiredMessages) {
+                failureReasons.push(`在 <#${channel.id}> 发言数需达到 **${requiredMessages}** (当前: ${activity.messageCount})`);
+            }
+            if (activity.mentionedCount < requiredMentions) {
+                failureReasons.push(`在 <#${channel.id}> 被提及数需达到 **${requiredMentions}** (当前: ${activity.mentionedCount})`);
+            }
+            if (activity.mentioningCount < requiredMentioning) {
+                failureReasons.push(`在 <#${channel.id}> 主动提及数需达到 **${requiredMentioning}** (当前: ${activity.mentioningCount})`);
             }
         }
 
-        // 如果资格预审通过，检查是否需要审核
-        if (canApply && conditions.approval) {
-            requiresApproval = true;
-            try {
-                await createApprovalPanel(interaction, roleConfig);
-                results.push(`⏳ **${roleConfig.label}**: 资格审查通过，已提交社区审核。`);
-            } catch (error) {
-                results.push(`❌ **${roleConfig.label}**: 提交审核失败，请联系管理员。`);
+        const canApply = failureReasons.length === 0;
+
+        if (canApply) {
+            // 如果资格预审通过，检查是否需要审核
+            if (conditions.approval) {
+                try {
+                    await createApprovalPanel(interaction, roleConfig);
+                    results.push(`⏳ **${roleConfig.label}**: 资格审查通过，已提交社区审核。`);
+                } catch (error) {
+                    console.error(`[SelfRole] ❌ 创建审核面板时出错 for ${roleConfig.label}:`, error);
+                    results.push(`❌ **${roleConfig.label}**: 提交审核失败，请联系管理员。`);
+                }
             }
-        }
-        // 如果资格预审通过且无需审核，则直接授予
-        else if (canApply) {
-            try {
-                await member.roles.add(roleId);
-                results.push(`✅ **${roleConfig.label}**: 成功获取！`);
-            } catch (error) {
-                console.error(`[SelfRole] ❌ 授予身份组 ${roleConfig.label} 时出错:`, error);
-                results.push(`❌ **${roleConfig.label}**: 授予失败，可能是机器人权限不足。`);
+            // 如果资格预审通过且无需审核，则直接授予
+            else {
+                try {
+                    await member.roles.add(roleId);
+                    results.push(`✅ **${roleConfig.label}**: 成功获取！`);
+                } catch (error) {
+                    console.error(`[SelfRole] ❌ 授予身份组 ${roleConfig.label} 时出错:`, error);
+                    results.push(`❌ **${roleConfig.label}**: 授予失败，可能是机器人权限不足。`);
+                }
             }
-        }
-        // 如果资格预审不通过
-        else {
-            results.push(`❌ **${roleConfig.label}**: 申请失败，原因：${reason}`);
+        } else {
+            // 如果资格预审不通过
+            results.push(`❌ **${roleConfig.label}**: 申请失败，原因：${failureReasons.join('； ')}`);
         }
     }
 
     await interaction.editReply({
         content: `**身份组申请结果:**\n\n${results.join('\n')}`,
     });
+
+    // 60秒后自动删除此消息
+    setTimeout(() => {
+        interaction.deleteReply().catch(() => {});
+    }, 60000);
 }
 
 module.exports = {
@@ -123,9 +138,9 @@ module.exports = {
 };
 
 /**
- * 创建一个审核面板
- * @param {import('discord.js').StringSelectMenuInteraction} interaction
- * @param {object} roleConfig - The configuration for the role being applied for.
+ * 为需要审核的身份组申请创建一个投票面板。
+ * @param {import('discord.js').StringSelectMenuInteraction} interaction - 原始的菜单交互对象。
+ * @param {object} roleConfig - 所申请身份组的具体配置。
  */
 async function createApprovalPanel(interaction, roleConfig) {
     const { approval } = roleConfig.conditions;

@@ -1,6 +1,7 @@
 // src\core\utils\database.js
 const fs = require('fs');
 const path = require('path');
+const Database = require('better-sqlite3');
 
 // 确保数据目录存在
 const DATA_DIR = path.join(__dirname, '../../../data');
@@ -23,9 +24,51 @@ const ANONYMOUS_UPLOAD_OPT_OUT_FILE = path.join(__dirname, '../../../data/anonym
 const ARCHIVE_SETTINGS_FILE = path.join(DATA_DIR, 'archiveSettings.json');
 const AUTO_CLEANUP_SETTINGS_FILE = path.join(DATA_DIR, 'autoCleanupSettings.json');
 const AUTO_CLEANUP_TASKS_FILE = path.join(DATA_DIR, 'autoCleanupTasks.json');
-const SELF_ROLE_SETTINGS_FILE = path.join(DATA_DIR, 'selfRoleSettings.json');
-const USER_ACTIVITY_FILE = path.join(DATA_DIR, 'userActivity.json');
-const SELF_ROLE_APPLICATIONS_FILE = path.join(DATA_DIR, 'selfRoleApplications.json');
+const SELF_ROLE_DB_FILE = path.join(DATA_DIR, 'selfRole.sqlite');
+
+// --- Self Role SQLite Database Initialization ---
+const selfRoleDb = new Database(SELF_ROLE_DB_FILE);
+
+function initializeSelfRoleDatabase() {
+    // role_settings 表
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS role_settings (
+            guild_id TEXT PRIMARY KEY,
+            roles TEXT NOT NULL,
+            last_successful_save TEXT
+        )
+    `);
+
+    // user_activity 表
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS user_activity (
+            guild_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            message_count INTEGER DEFAULT 0,
+            mentioned_count INTEGER DEFAULT 0,
+            mentioning_count INTEGER DEFAULT 0,
+            PRIMARY KEY (guild_id, channel_id, user_id)
+        )
+    `);
+
+    // role_applications 表
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS role_applications (
+            message_id TEXT PRIMARY KEY,
+            applicant_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            approvers TEXT,
+            rejecters TEXT
+        )
+    `);
+    console.log('[SelfRole] ✅ SQLite 数据库和表结构初始化完成。');
+}
+
+// 在模块加载时立即初始化数据库
+initializeSelfRoleDatabase();
+
 
 // 初始化文件
 if (!fs.existsSync(SETTINGS_FILE)) {
@@ -71,52 +114,8 @@ if (!fs.existsSync(AUTO_CLEANUP_SETTINGS_FILE)) {
 if (!fs.existsSync(AUTO_CLEANUP_TASKS_FILE)) {
     fs.writeFileSync(AUTO_CLEANUP_TASKS_FILE, '{}', 'utf8');
 }
-if (!fs.existsSync(SELF_ROLE_SETTINGS_FILE)) {
-    fs.writeFileSync(SELF_ROLE_SETTINGS_FILE, '{}', 'utf8');
-}
-if (!fs.existsSync(USER_ACTIVITY_FILE)) {
-    fs.writeFileSync(USER_ACTIVITY_FILE, '{}', 'utf8');
-}
-if (!fs.existsSync(SELF_ROLE_APPLICATIONS_FILE)) {
-    fs.writeFileSync(SELF_ROLE_APPLICATIONS_FILE, '{}', 'utf8');
-}
 
-// --- Self Role ---
-function readSelfRoleSettings() {
-    try {
-        const data = fs.readFileSync(SELF_ROLE_SETTINGS_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        console.error('读取自助身份组设置文件失败:', err);
-        return {};
-    }
-}
-
-function writeSelfRoleSettings(data) {
-    try {
-        fs.writeFileSync(SELF_ROLE_SETTINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
-    } catch (err) {
-        console.error('写入自助身份组设置文件失败:', err);
-    }
-}
-
-function readUserActivity() {
-    try {
-        const data = fs.readFileSync(USER_ACTIVITY_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        console.error('读取用户活跃度文件失败:', err);
-        return {};
-    }
-}
-
-function writeUserActivity(data) {
-    try {
-        fs.writeFileSync(USER_ACTIVITY_FILE, JSON.stringify(data, null, 2), 'utf8');
-    } catch (err) {
-        console.error('写入用户活跃度文件失败:', err);
-    }
-}
+// --- 自助身份组模块 (SQLite) ---
 
 /**
  * 获取指定服务器的自助身份组设置。
@@ -124,8 +123,13 @@ function writeUserActivity(data) {
  * @returns {Promise<object|null>} 服务器的设置对象，不存在则返回 null。
  */
 async function getSelfRoleSettings(guildId) {
-    const settings = readSelfRoleSettings();
-    return settings[guildId] || null;
+    const stmt = selfRoleDb.prepare('SELECT roles, last_successful_save FROM role_settings WHERE guild_id = ?');
+    const row = stmt.get(guildId);
+    if (!row) return null;
+    return {
+        roles: JSON.parse(row.roles),
+        lastSuccessfulSave: row.last_successful_save,
+    };
 }
 
 /**
@@ -135,10 +139,32 @@ async function getSelfRoleSettings(guildId) {
  * @returns {Promise<object>} 已保存的设置对象。
  */
 async function saveSelfRoleSettings(guildId, data) {
-    const settings = readSelfRoleSettings();
-    settings[guildId] = data;
-    writeSelfRoleSettings(settings);
-    return settings[guildId];
+    const stmt = selfRoleDb.prepare(`
+        INSERT INTO role_settings (guild_id, roles, last_successful_save)
+        VALUES (?, ?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET
+            roles = excluded.roles,
+            last_successful_save = excluded.last_successful_save
+    `);
+    stmt.run(guildId, JSON.stringify(data.roles || []), data.lastSuccessfulSave || null);
+    return data;
+}
+
+/**
+ * 获取所有服务器的自助身份组设置。
+ * @returns {Promise<object>} 包含所有服务器设置的对象。
+ */
+async function getAllSelfRoleSettings() {
+    const stmt = selfRoleDb.prepare('SELECT guild_id, roles, last_successful_save FROM role_settings');
+    const rows = stmt.all();
+    const settings = {};
+    for (const row of rows) {
+        settings[row.guild_id] = {
+            roles: JSON.parse(row.roles),
+            lastSuccessfulSave: row.last_successful_save,
+        };
+    }
+    return settings;
 }
 
 /**
@@ -147,40 +173,68 @@ async function saveSelfRoleSettings(guildId, data) {
  * @returns {Promise<object>} 包含所有频道和用户活跃度数据的对象。
  */
 async function getUserActivity(guildId) {
-    const activity = readUserActivity();
-    return activity[guildId] || {};
+    const stmt = selfRoleDb.prepare('SELECT channel_id, user_id, message_count, mentioned_count, mentioning_count FROM user_activity WHERE guild_id = ?');
+    const rows = stmt.all(guildId);
+    const activity = {};
+    for (const row of rows) {
+        if (!activity[row.channel_id]) {
+            activity[row.channel_id] = {};
+        }
+        activity[row.channel_id][row.user_id] = {
+            messageCount: row.message_count,
+            mentionedCount: row.mentioned_count,
+            mentioningCount: row.mentioning_count,
+        };
+    }
+    return activity;
 }
 
 /**
- * 保存指定服务器的用户活跃度数据。
- * @param {string} guildId - 服务器ID。
- * @param {object} data - 要保存的活跃度数据对象。
+ * 批量保存多个服务器的用户活跃度数据。
+ * 此函数使用单个事务来高效处理来自内存缓存的所有数据。
+ * @param {object} batchData - 包含所有待更新服务器活跃度数据的缓存对象。
  * @returns {Promise<object>} 已保存的活跃度数据对象。
  */
-async function saveUserActivity(guildId, data) {
-    const activity = readUserActivity();
-    activity[guildId] = data;
-    writeUserActivity(activity);
-    return activity[guildId];
+async function saveUserActivityBatch(batchData) {
+    const stmt = selfRoleDb.prepare(`
+        INSERT INTO user_activity (guild_id, channel_id, user_id, message_count, mentioned_count, mentioning_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, channel_id, user_id) DO UPDATE SET
+            message_count = user_activity.message_count + excluded.message_count,
+            mentioned_count = user_activity.mentioned_count + excluded.mentioned_count,
+            mentioning_count = user_activity.mentioning_count + excluded.mentioning_count
+    `);
+
+    const transaction = selfRoleDb.transaction((guilds) => {
+        for (const guildId in guilds) {
+            const channels = guilds[guildId];
+            for (const channelId in channels) {
+                const users = channels[channelId];
+                for (const userId in users) {
+                    const activity = users[userId];
+                    stmt.run(
+                        guildId,
+                        channelId,
+                        userId,
+                        activity.messageCount || 0,
+                        activity.mentionedCount || 0,
+                        activity.mentioningCount || 0
+                    );
+                }
+            }
+        }
+    });
+
+    try {
+        transaction(batchData);
+    } catch (err) {
+        console.error('[SelfRole] ❌ 批量保存用户活跃度数据到 SQLite 时出错:', err);
+        throw err; // 向上抛出异常，以便调用者可以处理
+    }
+    
+    return batchData;
 }
 
-function readSelfRoleApplications() {
-    try {
-        const data = fs.readFileSync(SELF_ROLE_APPLICATIONS_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        console.error('读取自助身份组申请文件失败:', err);
-        return {};
-    }
-}
-
-function writeSelfRoleApplications(data) {
-    try {
-        fs.writeFileSync(SELF_ROLE_APPLICATIONS_FILE, JSON.stringify(data, null, 2), 'utf8');
-    } catch (err) {
-        console.error('写入自助身份组申请文件失败:', err);
-    }
-}
 
 /**
  * 根据消息ID获取一个自助身份组的投票申请。
@@ -188,8 +242,17 @@ function writeSelfRoleApplications(data) {
  * @returns {Promise<object|null>} 申请对象，如果不存在返回 null。
  */
 async function getSelfRoleApplication(messageId) {
-    const applications = readSelfRoleApplications();
-    return applications[messageId] || null;
+    const stmt = selfRoleDb.prepare('SELECT * FROM role_applications WHERE message_id = ?');
+    const row = stmt.get(messageId);
+    if (!row) return null;
+    return {
+        messageId: row.message_id,
+        applicantId: row.applicant_id,
+        roleId: row.role_id,
+        status: row.status,
+        approvers: JSON.parse(row.approvers || '[]'),
+        rejecters: JSON.parse(row.rejecters || '[]'),
+    };
 }
 
 /**
@@ -199,10 +262,25 @@ async function getSelfRoleApplication(messageId) {
  * @returns {Promise<object>} 已保存的申请对象。
  */
 async function saveSelfRoleApplication(messageId, data) {
-    const applications = readSelfRoleApplications();
-    applications[messageId] = data;
-    writeSelfRoleApplications(applications);
-    return applications[messageId];
+    const stmt = selfRoleDb.prepare(`
+        INSERT INTO role_applications (message_id, applicant_id, role_id, status, approvers, rejecters)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(message_id) DO UPDATE SET
+            applicant_id = excluded.applicant_id,
+            role_id = excluded.role_id,
+            status = excluded.status,
+            approvers = excluded.approvers,
+            rejecters = excluded.rejecters
+    `);
+    stmt.run(
+        messageId,
+        data.applicantId,
+        data.roleId,
+        data.status,
+        JSON.stringify(data.approvers || []),
+        JSON.stringify(data.rejecters || [])
+    );
+    return data;
 }
 
 /**
@@ -211,11 +289,12 @@ async function saveSelfRoleApplication(messageId, data) {
  * @returns {Promise<void>}
  */
 async function deleteSelfRoleApplication(messageId) {
-    const applications = readSelfRoleApplications();
-    delete applications[messageId];
-    writeSelfRoleApplications(applications);
+    const stmt = selfRoleDb.prepare('DELETE FROM role_applications WHERE message_id = ?');
+    stmt.run(messageId);
 }
 
+
+// --- 其他模块 (JSON) ---
 
 // 读取设置数据
 function readSettings() {
@@ -1485,9 +1564,10 @@ module.exports = {
 
     // Self Role
     getSelfRoleSettings,
+    getAllSelfRoleSettings,
     saveSelfRoleSettings,
     getUserActivity,
-    saveUserActivity,
+    saveUserActivityBatch,
     getSelfRoleApplication,
     saveSelfRoleApplication,
     deleteSelfRoleApplication,

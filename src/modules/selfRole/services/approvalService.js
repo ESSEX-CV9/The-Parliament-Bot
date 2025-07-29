@@ -18,14 +18,18 @@ async function processApprovalVote(interaction) {
     const settings = await getSelfRoleSettings(guildId);
     const roleConfig = settings.roles.find(r => r.roleId === roleId);
     if (!roleConfig || !roleConfig.conditions.approval) {
-        return interaction.editReply({ content: '❌ 找不到该申请的配置信息。' });
+        interaction.editReply({ content: '❌ 找不到该申请的配置信息。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
     }
 
     const { allowedVoterRoles, requiredApprovals, requiredRejections } = roleConfig.conditions.approval;
 
     // 1. 权限检查
     if (!member.roles.cache.some(role => allowedVoterRoles.includes(role.id))) {
-        return interaction.editReply({ content: '❌ 您没有权限参与此投票。' });
+        interaction.editReply({ content: '❌ 您没有权限参与此投票。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
     }
 
     const application = await getSelfRoleApplication(messageId);
@@ -36,12 +40,16 @@ async function processApprovalVote(interaction) {
             ButtonBuilder.from(interaction.message.components[0].components[1]).setDisabled(true)
         );
         await interaction.message.edit({ components: [disabledRow] }).catch(() => {});
-        return interaction.editReply({ content: '❌ 此申请已处理完毕或已失效。' });
+        interaction.editReply({ content: '❌ 此申请已处理完毕或已失效。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
     }
     
     // 竞态条件修复：如果申请状态不是pending，则说明已经被其他进程处理
     if (application.status !== 'pending') {
-        return interaction.editReply({ content: '❌ 投票正在处理中或已结束，您的操作未被记录。' });
+        interaction.editReply({ content: '❌ 投票正在处理中或已结束，您的操作未被记录。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
     }
 
     // 2. 更新投票数据
@@ -75,6 +83,7 @@ async function processApprovalVote(interaction) {
     } else {
         await updateApprovalPanel(interaction, application, roleConfig);
         await interaction.editReply({ content: '✅ 您的投票已记录！' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
     }
 }
 
@@ -179,6 +188,7 @@ async function finalizeApplication(interaction, application, finalStatus, roleCo
     await interaction.message.edit({ embeds: [finalEmbed], components: [disabledRow] });
     
     await interaction.editReply({ content: `✅ 投票已结束，申请已处理。` });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
     console.log(`[SelfRole] 🗳️ 申请 ${interaction.message.id} 已终结，状态: ${finalStatus}`);
 
     // 在所有交互完成后再删除数据库记录

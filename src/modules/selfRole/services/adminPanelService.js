@@ -2,12 +2,13 @@
 
 const { ActionRowBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getSelfRoleSettings, saveSelfRoleSettings } = require('../../../core/utils/database');
+const { updateMonitoredChannels } = require('./activityTracker');
 
 const ROLES_PER_PAGE = 25;
 
 /**
- * 处理“添加身份组”按钮的点击事件
- * @param {import('discord.js').ButtonInteraction} interaction
+ * 处理管理员点击“添加身份组”按钮的事件。
+ * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleAddRoleButton(interaction) {
     await interaction.deferReply({ ephemeral: true });
@@ -22,21 +23,24 @@ async function handleAddRoleButton(interaction) {
     const availableRoles = sortedRoles.filter(role => role.name !== '@everyone' && !configuredRoleIds.includes(role.id));
 
     if (availableRoles.size === 0) {
-        return interaction.editReply({ content: '❌ 所有可用的身份组都已被配置。' });
+        interaction.editReply({ content: '❌ 所有可用的身份组都已被配置。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
     }
 
     const totalPages = Math.ceil(availableRoles.size / ROLES_PER_PAGE);
     const components = createPagedRoleSelectMenu(availableRoles, 1, totalPages, 'add');
 
-    await interaction.editReply({
+    const reply = await interaction.editReply({
         content: '请选择一个要添加为可申请的身份组：',
         components: components,
     });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
 }
 
 /**
- * 处理管理员选择要添加的身份组后的事件
- * @param {import('discord.js').StringSelectMenuInteraction} interaction
+ * 处理管理员在下拉菜单中选择要添加的身份组后的事件。
+ * @param {import('discord.js').StringSelectMenuInteraction} interaction - 字符串选择菜单交互对象。
  */
 async function handleRoleSelectForAdd(interaction) {
     const roleId = interaction.values[0];
@@ -67,8 +71,8 @@ async function handleRoleSelectForAdd(interaction) {
 
     const activityInput = new TextInputBuilder()
         .setCustomId('activity')
-        .setLabel('活跃度: 频道ID,发言数,提及数')
-        .setPlaceholder('示例: 123456789012345678,10,5\n(表示在该频道发言10次且被提及5次)')
+        .setLabel('活跃度: 频道ID,发言数,被提及数,主动提及数')
+        .setPlaceholder('频道ID,发言数,被提及数,主动提及数\n示例: 12345,100,,20 (不需要的项请填0或留空)')
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
         
@@ -91,13 +95,14 @@ async function handleRoleSelectForAdd(interaction) {
 }
 
 /**
- * 处理管理员提交配置模态窗口的事件
- * @param {import('discord.js').ModalSubmitInteraction} interaction
+ * 处理管理员提交身份组配置模态框的事件（用于添加或修改）。
+ * @param {import('discord.js').ModalSubmitInteraction} interaction - 模态框提交交互对象。
  */
 async function handleModalSubmit(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
-    const roleId = interaction.customId.replace('admin_add_role_modal_', '');
+    const isEdit = interaction.customId.startsWith('admin_edit_role_modal_');
+    const roleId = interaction.customId.replace(isEdit ? 'admin_edit_role_modal_' : 'admin_add_role_modal_', '');
     const guildId = interaction.guild.id;
 
     try {
@@ -108,8 +113,12 @@ async function handleModalSubmit(interaction) {
         const approvalString = interaction.fields.getTextInputValue('approval');
 
         let settings = await getSelfRoleSettings(guildId) || { roles: [] };
-        if (settings.roles.some(r => r.roleId === roleId)) {
-            return interaction.editReply({ content: `❌ 该身份组已被其他管理员配置。` });
+
+        // 如果是添加操作，检查身份组是否已存在
+        if (!isEdit && settings.roles.some(r => r.roleId === roleId)) {
+            interaction.editReply({ content: `❌ 该身份组已被其他管理员配置。` });
+            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+            return;
         }
 
         const newRoleConfig = {
@@ -122,30 +131,55 @@ async function handleModalSubmit(interaction) {
         // 解析并验证条件
         if (prerequisiteRoleId) {
             const role = await interaction.guild.roles.fetch(prerequisiteRoleId).catch(() => null);
-            if (!role) return interaction.editReply({ content: `❌ 无效的前置身份组ID: ${prerequisiteRoleId}` });
+            if (!role) {
+                interaction.editReply({ content: `❌ 无效的前置身份组ID: ${prerequisiteRoleId}` });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
             newRoleConfig.conditions.prerequisiteRoleId = prerequisiteRoleId;
         }
 
         if (activityString) {
-            const [channelId, messages, mentions] = activityString.split(',').map(s => s.trim());
+            const [channelId, messages, mentions, mentioning] = activityString.split(',').map(s => s.trim());
             const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
-            if (!channel || !channel.isTextBased()) return interaction.editReply({ content: `❌ 无效的活跃度频道ID: ${channelId}` });
-            if (isNaN(parseInt(messages)) || isNaN(parseInt(mentions))) return interaction.editReply({ content: `❌ 发言数和提及数必须是数字。` });
+            if (!channel || !channel.isTextBased()) {
+                interaction.editReply({ content: `❌ 无效的活跃度频道ID: ${channelId}` });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
+            
+            const requiredMessages = parseInt(messages) || 0;
+            const requiredMentions = parseInt(mentions) || 0;
+            const requiredMentioning = parseInt(mentioning) || 0;
+
             newRoleConfig.conditions.activity = {
                 channelId,
-                requiredMessages: parseInt(messages),
-                requiredMentions: parseInt(mentions),
+                requiredMessages,
+                requiredMentions,
+                requiredMentioning,
             };
         }
 
         if (approvalString) {
             const [channelId, approvals, rejections, ...voterRoleIds] = approvalString.split(',').map(s => s.trim());
             const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
-            if (!channel || !channel.isTextBased()) return interaction.editReply({ content: `❌ 无效的审核频道ID: ${channelId}` });
-            if (isNaN(parseInt(approvals)) || isNaN(parseInt(rejections))) return interaction.editReply({ content: `❌ 支持和反对票数必须是数字。` });
+            if (!channel || !channel.isTextBased()) {
+                interaction.editReply({ content: `❌ 无效的审核频道ID: ${channelId}` });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
+            if (isNaN(parseInt(approvals)) || isNaN(parseInt(rejections))) {
+                interaction.editReply({ content: `❌ 支持和反对票数必须是数字。` });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
             for (const rId of voterRoleIds) {
                 const role = await interaction.guild.roles.fetch(rId).catch(() => null);
-                if (!role) return interaction.editReply({ content: `❌ 无效的投票人身份组ID: ${rId}` });
+                if (!role) {
+                    interaction.editReply({ content: `❌ 无效的投票人身份组ID: ${rId}` });
+                    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                    return;
+                }
             }
             newRoleConfig.conditions.approval = {
                 channelId,
@@ -155,20 +189,36 @@ async function handleModalSubmit(interaction) {
             };
         }
 
-        settings.roles.push(newRoleConfig);
-        await saveSelfRoleSettings(guildId, settings);
+        if (isEdit) {
+            const roleIndex = settings.roles.findIndex(r => r.roleId === roleId);
+            if (roleIndex > -1) {
+                settings.roles[roleIndex] = newRoleConfig;
+            } else {
+                interaction.editReply({ content: '❌ 找不到要修改的身份组配置，可能已被移除。' });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
+        } else {
+            settings.roles.push(newRoleConfig);
+        }
 
-        await interaction.editReply({ content: `✅ 成功配置了身份组 **${label}**！` });
+        await saveSelfRoleSettings(guildId, settings);
+        await updateMonitoredChannels(guildId); // 通知追踪器更新缓存
+
+        const actionText = isEdit ? '修改' : '配置';
+        await interaction.editReply({ content: `✅ 成功${actionText}了身份组 **${label}**！` });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
 
     } catch (error) {
         console.error('[SelfRole] ❌ 处理模态窗口提交时出错:', error);
         await interaction.editReply({ content: '❌ 处理配置时发生错误。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
     }
 }
 
 /**
- * 处理“移除身份组”按钮的点击事件
- * @param {import('discord.js').ButtonInteraction} interaction
+ * 处理管理员点击“移除身份组”按钮的事件。
+ * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleRemoveRoleButton(interaction) {
     await interaction.deferReply({ ephemeral: true });
@@ -177,7 +227,9 @@ async function handleRemoveRoleButton(interaction) {
     const configuredRoles = settings ? settings.roles : [];
 
     if (configuredRoles.length === 0) {
-        return interaction.editReply({ content: '❌ 当前没有配置任何可申请的身份组。' });
+        interaction.editReply({ content: '❌ 当前没有配置任何可申请的身份组。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
     }
 
     const totalPages = Math.ceil(configuredRoles.length / ROLES_PER_PAGE);
@@ -187,11 +239,12 @@ async function handleRemoveRoleButton(interaction) {
         content: '请选择一个要移除的身份组：',
         components: components,
     });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
 }
 
 /**
- * 处理管理员选择要移除的身份组后的事件
- * @param {import('discord.js').StringSelectMenuInteraction} interaction
+ * 处理管理员在下拉菜单中选择要移除的身份组后的事件。
+ * @param {import('discord.js').StringSelectMenuInteraction} interaction - 字符串选择菜单交互对象。
  */
 async function handleRoleSelectForRemove(interaction) {
     await interaction.deferReply({ ephemeral: true });
@@ -203,24 +256,29 @@ async function handleRoleSelectForRemove(interaction) {
         const roleIndex = settings.roles.findIndex(r => r.roleId === roleIdToRemove);
 
         if (roleIndex === -1) {
-            return interaction.editReply({ content: '❌ 找不到要移除的身份组，可能已被其他管理员移除。' });
+            interaction.editReply({ content: '❌ 找不到要移除的身份组，可能已被其他管理员移除。' });
+            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+            return;
         }
         
         const removedRoleLabel = settings.roles[roleIndex].label;
         settings.roles.splice(roleIndex, 1);
         await saveSelfRoleSettings(guildId, settings);
+        await updateMonitoredChannels(guildId); // 通知追踪器更新缓存
 
         await interaction.editReply({ content: `✅ 成功移除了身份组 **${removedRoleLabel}**。` });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
 
     } catch (error) {
         console.error('[SelfRole] ❌ 处理移除身份组时出错:', error);
         await interaction.editReply({ content: '❌ 处理移除时发生错误。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
     }
 }
 
 /**
- * 处理“列出身份组”按钮的点击事件
- * @param {import('discord.js').ButtonInteraction} interaction
+ * 处理管理员点击“列出身份组”按钮的事件。
+ * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleListRolesButton(interaction) {
     await interaction.deferReply({ ephemeral: true });
@@ -229,7 +287,9 @@ async function handleListRolesButton(interaction) {
     const configuredRoles = settings ? settings.roles : [];
 
     if (configuredRoles.length === 0) {
-        return interaction.editReply({ content: 'ℹ️ 当前没有配置任何可申请的身份组。' });
+        interaction.editReply({ content: 'ℹ️ 当前没有配置任何可申请的身份组。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
     }
 
     const embed = new EmbedBuilder()
@@ -253,7 +313,14 @@ async function handleListRolesButton(interaction) {
         }
         if (roleConfig.conditions.activity) {
             const activity = roleConfig.conditions.activity;
-            conditions.push(`- **活跃度:** 在 <#${activity.channelId}> 中发言 **${activity.requiredMessages}** 次, 被提及 **${activity.requiredMentions}** 次`);
+            let activityConds = [];
+            if (activity.requiredMessages > 0) activityConds.push(`发言 **${activity.requiredMessages}** 次`);
+            if (activity.requiredMentions > 0) activityConds.push(`被提及 **${activity.requiredMentions}** 次`);
+            if (activity.requiredMentioning > 0) activityConds.push(`主动提及 **${activity.requiredMentioning}** 次`);
+            
+            if (activityConds.length > 0) {
+                conditions.push(`- **活跃度:** 在 <#${activity.channelId}> 中${activityConds.join(', ')}`);
+            }
         }
         if (roleConfig.conditions.approval) {
             const approval = roleConfig.conditions.approval;
@@ -271,16 +338,17 @@ async function handleListRolesButton(interaction) {
     embed.setDescription(description);
 
     await interaction.editReply({ embeds: [embed] });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
 }
 
 
 /**
- * 创建一个带分页的身份组选择菜单
- * @param {Collection<import('discord.js').Role> | Array<object>} roles - A collection of roles or role configs
- * @param {number} page - The current page number
- * @param {number} totalPages - The total number of pages
- * @param {string} type - 'add' or 'remove'
- * @returns {Array<ActionRowBuilder>}
+ * 创建一个带有分页功能的身份组选择菜单。
+ * @param {Collection<string, import('discord.js').Role> | Array<object>} roles - Discord 身份组集合或身份组配置数组。
+ * @param {number} page - 当前页码。
+ * @param {number} totalPages - 总页数。
+ * @param {string} type - 菜单类型，'add'、'remove' 或 'edit'。
+ * @returns {Array<ActionRowBuilder>} - 包含选择菜单和分页按钮的组件数组。
  */
 function createPagedRoleSelectMenu(roles, page, totalPages, type) {
     const roleArray = Array.from(roles.values());
@@ -323,8 +391,8 @@ function createPagedRoleSelectMenu(roles, page, totalPages, type) {
 }
 
 /**
- * 处理身份组选择菜单的分页
- * @param {import('discord.js').ButtonInteraction} interaction
+ * 处理身份组选择菜单的分页按钮点击事件。
+ * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleRoleListPageChange(interaction) {
     await interaction.deferUpdate();
@@ -338,7 +406,7 @@ async function handleRoleListPageChange(interaction) {
         const settings = await getSelfRoleSettings(interaction.guild.id);
         const configuredRoleIds = settings ? settings.roles.map(r => r.roleId) : [];
         roles = sortedRoles.filter(role => role.name !== '@everyone' && !configuredRoleIds.includes(role.id));
-    } else { // remove
+    } else { // 'remove' or 'edit'
         const settings = await getSelfRoleSettings(interaction.guild.id);
         roles = settings ? settings.roles : [];
     }
@@ -352,11 +420,91 @@ async function handleRoleListPageChange(interaction) {
 }
 
 
+/**
+ * 处理管理员点击“修改配置”按钮的事件。
+ * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
+ */
+async function handleEditRoleButton(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
+    const settings = await getSelfRoleSettings(interaction.guild.id);
+    const configuredRoles = settings ? settings.roles : [];
+
+    if (configuredRoles.length === 0) {
+        interaction.editReply({ content: '❌ 当前没有配置任何可申请的身份组。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
+    }
+
+    const totalPages = Math.ceil(configuredRoles.length / ROLES_PER_PAGE);
+    const components = createPagedRoleSelectMenu(configuredRoles, 1, totalPages, 'edit');
+
+    await interaction.editReply({
+        content: '请选择一个要修改配置的身份组：',
+        components: components,
+    });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+}
+
+/**
+ * 处理管理员在下拉菜单中选择要修改的身份组后的事件。
+ * @param {import('discord.js').StringSelectMenuInteraction} interaction - 字符串选择菜单交互对象。
+ */
+async function handleRoleSelectForEdit(interaction) {
+    const roleId = interaction.values[0];
+    const settings = await getSelfRoleSettings(interaction.guild.id);
+    const roleConfig = settings.roles.find(r => r.roleId === roleId);
+
+    if (!roleConfig) {
+        interaction.reply({ content: '❌ 找不到该身份组的配置。', ephemeral: true });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
+    }
+
+    const role = await interaction.guild.roles.fetch(roleId);
+
+    const modal = new ModalBuilder()
+        .setCustomId(`admin_edit_role_modal_${roleId}`)
+        .setTitle(`修改配置: ${role.name}`);
+
+    // 使用现有配置预填充字段
+    const labelInput = new TextInputBuilder().setCustomId('label').setLabel('显示名称 (必填)').setStyle(TextInputStyle.Short).setValue(roleConfig.label).setRequired(true);
+    const descriptionInput = new TextInputBuilder().setCustomId('description').setLabel('描述 (可选)').setStyle(TextInputStyle.Paragraph).setValue(roleConfig.description || '').setRequired(false);
+    const prerequisiteInput = new TextInputBuilder().setCustomId('prerequisiteRoleId').setLabel('前置身份组ID (可选)').setStyle(TextInputStyle.Short).setValue(roleConfig.conditions.prerequisiteRoleId || '').setRequired(false);
+    
+    let activityValue = '';
+    if (roleConfig.conditions.activity) {
+        const a = roleConfig.conditions.activity;
+        activityValue = `${a.channelId},${a.requiredMessages},${a.requiredMentions},${a.requiredMentioning}`;
+    }
+    const activityInput = new TextInputBuilder().setCustomId('activity').setLabel('活跃度: 频道ID,发言,被提及,主动提及').setPlaceholder('频道ID,发言数,被提及数,主动提及数\n示例: 12345,100,,20 (不需要的项请填0或留空)').setStyle(TextInputStyle.Short).setValue(activityValue).setRequired(false);
+
+    let approvalValue = '';
+    if (roleConfig.conditions.approval) {
+        const ap = roleConfig.conditions.approval;
+        approvalValue = `${ap.channelId},${ap.requiredApprovals},${ap.requiredRejections},${ap.allowedVoterRoles.join(',')}`;
+    }
+    const approvalInput = new TextInputBuilder().setCustomId('approval').setLabel('社区审核: 频道ID,支持票,反对票,投票组ID...').setPlaceholder('示例: 987654321,10,5,111,222').setStyle(TextInputStyle.Paragraph).setValue(approvalValue).setRequired(false);
+
+    modal.addComponents(
+        new ActionRowBuilder().addComponents(labelInput),
+        new ActionRowBuilder().addComponents(descriptionInput),
+        new ActionRowBuilder().addComponents(prerequisiteInput),
+        new ActionRowBuilder().addComponents(activityInput),
+        new ActionRowBuilder().addComponents(approvalInput)
+    );
+
+    await interaction.showModal(modal);
+}
+
+
 module.exports = {
     handleAddRoleButton,
     handleRemoveRoleButton,
+    handleEditRoleButton,
     handleListRolesButton,
     handleRoleSelectForAdd,
+    handleRoleSelectForEdit,
     handleModalSubmit,
     handleRoleSelectForRemove,
     handleRoleListPageChange,
