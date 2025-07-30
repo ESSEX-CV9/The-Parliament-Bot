@@ -1,9 +1,9 @@
 // src/core/events/interactionCreate.js
 const { PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { createFormModal } = require('../../modules/proposal/components/formModal');
-const { createReviewModal } = require('../../modules/creatorReview/components/reviewModal'); 
+const { createReviewModal } = require('../../modules/creatorReview/components/reviewModal');
 const { processFormSubmission } = require('../../modules/proposal/services/formService');
-const { processReviewSubmission } = require('../../modules/creatorReview/services/reviewService'); 
+const { processReviewSubmission } = require('../../modules/creatorReview/services/reviewService');
 const { processVote } = require('../../modules/proposal/services/voteTracker');
 // 法庭相关处理
 const { processCourtSupport } = require('../../modules/court/services/courtVoteTracker');
@@ -28,7 +28,7 @@ const { handleVoteButton } = require('../../modules/voting/components/voteButton
 const { handleNotificationButton } = require('../../modules/voting/components/notificationButtons');
 
 // 选举系统相关处理
-const { 
+const {
     handleRegistrationButton,
     handleFirstChoiceSelection,
     handleSecondChoiceSelection,
@@ -48,7 +48,7 @@ const {
 const { createContestApplicationModal } = require('../../modules/contest/components/applicationModal');
 const { createSubmissionModal } = require('../../modules/contest/components/submissionModal');
 const { createConfirmChannelModal } = require('../../modules/contest/components/confirmChannelModal');
-const { 
+const {
     processContestApplication,
     processEditApplication,
     processEditApplicationSubmission
@@ -70,7 +70,7 @@ const { processEditProposal, processEditProposalSubmission } = require('../../mo
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../core/utils/database');
 
-const { 
+const {
     handleAnonymousVoteStart,
     handleAnonymousVoteSelect,
     handleAnonymousVoteConfirm,
@@ -134,7 +134,7 @@ async function interactionCreateHandler(interaction) {
                 // 打开表单模态窗口
                 const modal = createFormModal();
                 await interaction.showModal(modal);
-            } else if (interaction.customId === 'open_review_form') { 
+            } else if (interaction.customId === 'open_review_form') {
                 // 打开审核表单模态窗口
                 const modal = createReviewModal();
                 await interaction.showModal(modal);
@@ -144,7 +144,7 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('court_support_')) {
                 // 处理法庭申请支持按钮
                 await processCourtSupport(interaction);
-            } else if (interaction.customId.startsWith('court_vote_support_') || 
+            } else if (interaction.customId.startsWith('court_vote_support_') ||
                        interaction.customId.startsWith('court_vote_oppose_')) {
                 // 处理法庭投票按钮
                 await processCourtVote(interaction);
@@ -188,7 +188,7 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('election_anonymous_vote_cancel_')) {
                 // 取消匿名投票按钮
                 await handleAnonymousVoteCancel(interaction);
-            } else if (interaction.customId.startsWith('election_vote_prev_') || 
+            } else if (interaction.customId.startsWith('election_vote_prev_') ||
                        interaction.customId.startsWith('election_vote_next_')) {
                 // 投票分页按钮
                 await handleVotingPagination(interaction);
@@ -312,7 +312,7 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('contest_manage_')) {
                 // 稿件管理按钮
                 await processSubmissionManagement(interaction);
-            } else if (interaction.customId.startsWith('manage_prev_') || 
+            } else if (interaction.customId.startsWith('manage_prev_') ||
                        interaction.customId.startsWith('manage_next_')) {
                 // 稿件管理翻页按钮
                 const parts = interaction.customId.split('_');
@@ -352,15 +352,15 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('c_all_')) {
                 // 查看所有投稿作品按钮（新的短ID格式）
                 await displayService.handleViewAllSubmissions(interaction);
-            } else if (interaction.customId.startsWith('c_ipp5_') || 
-                       interaction.customId.startsWith('c_ipp10_') || 
+            } else if (interaction.customId.startsWith('c_ipp5_') ||
+                       interaction.customId.startsWith('c_ipp10_') ||
                        interaction.customId.startsWith('c_ipp20_')) {
                 // 每页显示数量设置按钮（新的短ID格式）
                 await displayService.handleItemsPerPageChange(interaction);
-            } else if (interaction.customId.startsWith('c_ff_') || 
-                       interaction.customId.startsWith('c_fp_') || 
-                       interaction.customId.startsWith('c_fn_') || 
-                       interaction.customId.startsWith('c_fl_') || 
+            } else if (interaction.customId.startsWith('c_ff_') ||
+                       interaction.customId.startsWith('c_fp_') ||
+                       interaction.customId.startsWith('c_fn_') ||
+                       interaction.customId.startsWith('c_fl_') ||
                        interaction.customId.startsWith('c_fref_')) {
                 // 完整作品列表翻页按钮（新的短ID格式）
                 await displayService.handleFullPageNavigation(interaction);
@@ -376,18 +376,18 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('contest_items_per_page_')) {
                 // 每页显示数量设置按钮（旧格式）
                 await displayService.handleItemsPerPageChange(interaction);
-            } else if (interaction.customId.startsWith('contest_full_first_') || 
-                       interaction.customId.startsWith('contest_full_prev_') || 
-                       interaction.customId.startsWith('contest_full_next_') || 
-                       interaction.customId.startsWith('contest_full_last_') || 
+            } else if (interaction.customId.startsWith('contest_full_first_') ||
+                       interaction.customId.startsWith('contest_full_prev_') ||
+                       interaction.customId.startsWith('contest_full_next_') ||
+                       interaction.customId.startsWith('contest_full_last_') ||
                        interaction.customId.startsWith('contest_full_refresh_')) {
                 // 完整作品列表翻页按钮（旧格式）
                 await displayService.handleFullPageNavigation(interaction);
             } else if (interaction.customId.startsWith('contest_full_page_jump_')) {
                 // 页面跳转按钮（旧格式）
                 await displayService.handlePageJumpButton(interaction);
-            } else if (interaction.customId.startsWith('contest_prev_') || 
-                       interaction.customId.startsWith('contest_next_') || 
+            } else if (interaction.customId.startsWith('contest_prev_') ||
+                       interaction.customId.startsWith('contest_next_') ||
                        interaction.customId.startsWith('contest_refresh_')) {
                 // 作品展示翻页按钮（旧格式）
                 await displayService.handlePageNavigation(interaction);
@@ -417,6 +417,10 @@ async function interactionCreateHandler(interaction) {
                 // 导出参赛作品链接
                 const contestChannelId = interaction.customId.replace('c_td_', '');
                 await displayService.handleDumpFullSubmissionsList(interaction, contestChannelId);
+            } else if (interaction.customId.startsWith('c_cp_')) {
+                // 复制内容
+                const contestChannelId = interaction.customId.replace('c_cp_', '');
+                await displayService.handleCopyContent(interaction, contestChannelId);
             } else if (interaction.customId.startsWith('finish_contest_close_')) {
                 // 关闭完赛清单按钮
                 await interaction.update({
@@ -460,7 +464,7 @@ async function interactionCreateHandler(interaction) {
             if (interaction.customId === 'form_submission') {
                 // 表单提交处理
                 await processFormSubmission(interaction);
-            } else if (interaction.customId === 'review_submission') { 
+            } else if (interaction.customId === 'review_submission') {
                 // 审核提交处理
                 await processReviewSubmission(interaction);
             } else if (interaction.customId.startsWith('selfmod_modal_')) {
@@ -575,8 +579,8 @@ async function interactionCreateHandler(interaction) {
         console.error('交互处理错误:', error);
         try {
             if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({ 
-                    content: '处理您的请求时出现错误。', 
+                await interaction.reply({
+                    content: '处理您的请求时出现错误。',
                     flags: MessageFlags.Ephemeral
                 });
             } else if (interaction.deferred) {
