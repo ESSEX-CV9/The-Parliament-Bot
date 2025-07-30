@@ -1233,7 +1233,7 @@ class DisplayService {
             };
 
             //将所有投稿，按消息长度的限制进行输出
-            const messageCharBudget = 5500;
+            const messageCharBudget = 3800; // Max: 4096
             for (let i = 0; i < processedSubmissions.length; i++) {
                 const submission = processedSubmissions[i];
                 const submissionNumber = i + 1;
