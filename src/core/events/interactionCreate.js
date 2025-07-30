@@ -16,7 +16,9 @@ const {
     handleAddRoleButton,
     handleRemoveRoleButton,
     handleListRolesButton,
+    handleEditRoleButton,
     handleRoleSelectForAdd,
+    handleRoleSelectForEdit,
     handleModalSubmit,
     handleRoleSelectForRemove,
     handleRoleListPageChange
@@ -450,6 +452,8 @@ async function interactionCreateHandler(interaction) {
                 await handleAddRoleButton(interaction);
             } else if (interaction.customId === 'admin_remove_role_button') {
                 await handleRemoveRoleButton(interaction);
+            } else if (interaction.customId === 'admin_edit_role_button') {
+                await handleEditRoleButton(interaction);
             } else if (interaction.customId === 'admin_list_roles_button') {
                 await handleListRolesButton(interaction);
             } else if (interaction.customId.startsWith('admin_roles_page_')) {
@@ -517,7 +521,7 @@ async function interactionCreateHandler(interaction) {
             // 新增：获奖作品设置模态框
             if (interaction.customId.startsWith('award_modal_')) {
                 await displayService.handleAwardModalSubmission(interaction);
-            } else if (interaction.customId.startsWith('admin_add_role_modal_')) {
+            } else if (interaction.customId.startsWith('admin_add_role_modal_') || interaction.customId.startsWith('admin_edit_role_modal_')) {
                 await handleModalSubmit(interaction);
             }
             return;
@@ -572,6 +576,8 @@ async function interactionCreateHandler(interaction) {
                 await handleRoleSelectForAdd(interaction);
             } else if (interaction.customId === 'admin_remove_role_select') {
                 await handleRoleSelectForRemove(interaction);
+            } else if (interaction.customId === 'admin_edit_role_select') {
+                await handleRoleSelectForEdit(interaction);
             }
             return;
         }

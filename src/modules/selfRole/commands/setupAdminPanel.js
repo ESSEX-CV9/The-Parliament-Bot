@@ -31,13 +31,18 @@ module.exports = {
                 .setCustomId('admin_remove_role_button')
                 .setLabel('➖ 移除身份组')
                 .setStyle(ButtonStyle.Danger);
+
+            const editRoleButton = new ButtonBuilder()
+                .setCustomId('admin_edit_role_button')
+                .setLabel('✏️ 修改配置')
+                .setStyle(ButtonStyle.Primary);
                 
             const listRolesButton = new ButtonBuilder()
                 .setCustomId('admin_list_roles_button')
                 .setLabel('📋 查看已配置')
                 .setStyle(ButtonStyle.Secondary);
 
-            const row = new ActionRowBuilder().addComponents(addRoleButton, removeRoleButton, listRolesButton);
+            const row = new ActionRowBuilder().addComponents(addRoleButton, removeRoleButton, editRoleButton, listRolesButton);
 
             await interaction.channel.send({ embeds: [embed], components: [row] });
 

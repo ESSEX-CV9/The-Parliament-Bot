@@ -18,6 +18,7 @@ const { startVoteChecker } = require('../modules/voting/services/voteChecker');
 const { startElectionScheduler } = require('../modules/election/services/electionScheduler');
 const { printTimeConfig } = require('./config/timeconfig');
 const { startActivityTracker } = require('../modules/selfRole/services/activityTracker');
+const { syncMissedActivity } = require('../modules/selfRole/services/autoSyncService');
 
 // 导入命令
 const pingCommand = require('../shared/commands/ping');
@@ -295,6 +296,9 @@ client.once(Events.ClientReady, async (readyClient) => {
 
     startActivityTracker();
     
+    // 在机器人完全启动前，执行离线数据同步
+    await syncMissedActivity(readyClient);
+
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
     console.log('🧹 自动消息清理系统已加载');

@@ -77,15 +77,21 @@ module.exports = {
 
                     const authorId = message.author.id;
                     if (!activityData[channel.id][authorId]) {
-                        activityData[channel.id][authorId] = { messageCount: 0, mentionedCount: 0 };
+                        activityData[channel.id][authorId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                     }
                     activityData[channel.id][authorId].messageCount++;
+
+                    // 检查是否为主动提及 (回复或@)
+                    const isMentioning = message.reference !== null || message.mentions.users.size > 0 || message.mentions.roles.size > 0;
+                    if (isMentioning) {
+                        activityData[channel.id][authorId].mentioningCount++;
+                    }
 
                     message.mentions.users.forEach(user => {
                         if (user.bot || user.id === authorId) return;
                         const mentionedId = user.id;
                         if (!activityData[channel.id][mentionedId]) {
-                            activityData[channel.id][mentionedId] = { messageCount: 0, mentionedCount: 0 };
+                            activityData[channel.id][mentionedId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                         }
                         activityData[channel.id][mentionedId].mentionedCount++;
                     });
@@ -104,7 +110,8 @@ module.exports = {
                 .setDescription(`成功扫描了频道 <#${channel.id}> 的 **${scannedCount}** 条历史消息，并更新了用户活跃度数据。`)
                 .setColor(0x57F287)
                 .setTimestamp();
-            await interaction.editReply({ embeds: [successEmbed] });
+            // 使用 channel.send 替代 editReply，避免长时间任务导致 token 过期
+            await interaction.channel.send({ embeds: [successEmbed] });
 
         } catch (error) {
             console.error('[SelfRole] ❌ 回溯统计活跃度时出错:', error);
@@ -112,7 +119,12 @@ module.exports = {
                 .setTitle('❌ 操作失败')
                 .setDescription('在回溯统计过程中发生错误，请检查机器人在该频道是否具有“读取消息历史”的权限。')
                 .setColor(0xED4245);
-            await interaction.editReply({ embeds: [errorEmbed] });
+            // 同样使用 channel.send 发送错误信息
+            try {
+                await interaction.channel.send({ embeds: [errorEmbed] });
+            } catch (sendError) {
+                console.error('[SelfRole] ❌ 发送错误通知失败:', sendError);
+            }
         }
     },
 };
