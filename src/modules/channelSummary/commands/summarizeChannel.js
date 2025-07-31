@@ -19,7 +19,11 @@ const data = new SlashCommandBuilder()
         option.setName('结束时间')
             .setDescription('结束时间 (格式: YYYY-MM-DD HH:mm 或 YYYY-MM-DD)')
             .setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages);
+    .addStringOption(option =>
+        option.setName('模型')
+            .setDescription('指定用于总结的AI模型，不填则使用默认模型')
+            .setRequired(false))
+    // .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages); // 注释了权限要求，需要使用时候取消注释
 
 async function execute(interaction) {
     try {
@@ -79,6 +83,7 @@ async function execute(interaction) {
         // 解析时间参数
         const startTimeStr = interaction.options.getString('开始时间');
         const endTimeStr = interaction.options.getString('结束时间');
+        const model = interaction.options.getString('模型'); // 获取模型参数
         
         const startTime = parseTimeInput(startTimeStr);
         const endTime = parseTimeInput(endTimeStr);
@@ -114,7 +119,7 @@ async function execute(interaction) {
         };
         
         // 生成AI总结
-        const aiSummary = await generateSummary(messages, channelInfo);
+        const aiSummary = await generateSummary(messages, channelInfo, model);
         
         await interaction.editReply('📝 正在生成文件和总结...');
         
