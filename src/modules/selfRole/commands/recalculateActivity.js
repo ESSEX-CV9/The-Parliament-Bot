@@ -1,7 +1,7 @@
 // src/modules/selfRole/commands/recalculateActivity.js
 
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ChannelType } = require('discord.js');
-const { getUserActivity, saveUserActivity } = require('../../../core/utils/database');
+const { saveUserActivityBatch, clearChannelActivity } = require('../../../core/utils/database');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -50,12 +50,11 @@ module.exports = {
             let scannedCount = 0;
             let lastMessageId = null;
             let hasMoreMessages = true;
-            const activityData = await getUserActivity(guildId) || {};
-            
+            const channelActivity = {}; // 只计算当前频道的增量
+
             if (resetData) {
-                activityData[channel.id] = {};
-            } else if (!activityData[channel.id]) {
-                activityData[channel.id] = {};
+                console.log(`[SelfRole] 🗑️ 重置频道 ${channel.name} 的活跃度数据...`);
+                await clearChannelActivity(guildId, channel.id);
             }
 
             const cutoffTimestamp = days ? Date.now() - (days * 24 * 60 * 60 * 1000) : 0;
@@ -76,24 +75,24 @@ module.exports = {
                     if (message.author.bot) continue;
 
                     const authorId = message.author.id;
-                    if (!activityData[channel.id][authorId]) {
-                        activityData[channel.id][authorId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
+                    if (!channelActivity[authorId]) {
+                        channelActivity[authorId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                     }
-                    activityData[channel.id][authorId].messageCount++;
+                    channelActivity[authorId].messageCount++;
 
                     // 检查是否为主动提及 (回复或@)
                     const isMentioning = message.reference !== null || message.mentions.users.size > 0 || message.mentions.roles.size > 0;
                     if (isMentioning) {
-                        activityData[channel.id][authorId].mentioningCount++;
+                        channelActivity[authorId].mentioningCount++;
                     }
 
                     message.mentions.users.forEach(user => {
                         if (user.bot || user.id === authorId) return;
                         const mentionedId = user.id;
-                        if (!activityData[channel.id][mentionedId]) {
-                            activityData[channel.id][mentionedId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
+                        if (!channelActivity[mentionedId]) {
+                            channelActivity[mentionedId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                         }
-                        activityData[channel.id][mentionedId].mentionedCount++;
+                        channelActivity[mentionedId].mentionedCount++;
                     });
                 }
 
@@ -102,7 +101,14 @@ module.exports = {
                 console.log(`[SelfRole] 📜 已扫描 ${scannedCount} 条消息...`);
             }
 
-            await saveUserActivity(guildId, activityData);
+            // 构建用于批量保存的 batchData 对象
+            const batchData = {
+                [guildId]: {
+                    [channel.id]: channelActivity
+                }
+            };
+
+            await saveUserActivityBatch(batchData);
 
             console.log(`[SelfRole] ✅ 频道 ${channel.name} 的历史消息回溯统计完成。`);
             const successEmbed = new EmbedBuilder()
