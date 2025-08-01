@@ -293,6 +293,17 @@ async function deleteSelfRoleApplication(messageId) {
     stmt.run(messageId);
 }
 
+/**
+ * 清空指定服务器和频道的所有用户活跃度数据。
+ * @param {string} guildId - 服务器ID。
+ * @param {string} channelId - 频道ID。
+ * @returns {Promise<void>}
+ */
+async function clearChannelActivity(guildId, channelId) {
+    const stmt = selfRoleDb.prepare('DELETE FROM user_activity WHERE guild_id = ? AND channel_id = ?');
+    stmt.run(guildId, channelId);
+}
+
 
 // --- 其他模块 (JSON) ---
 
@@ -1571,4 +1582,5 @@ module.exports = {
     getSelfRoleApplication,
     saveSelfRoleApplication,
     deleteSelfRoleApplication,
+    clearChannelActivity,
 };
