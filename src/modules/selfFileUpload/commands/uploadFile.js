@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, ChannelType } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ChannelType, MessageFlags } = require('discord.js');
 const { ALLOWED_FORUM_IDS } = require('../config/config');
 const { addAnonymousUploadLog, isUserOptedOut } = require('../../../core/utils/database');
 
@@ -24,7 +24,7 @@ module.exports = {
                 )),
 
     async execute(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
         // 1. 检查是否在允许的论坛频道的帖子内
         const isAllowed = interaction.channel.isThread() && ALLOWED_FORUM_IDS.includes(interaction.channel.parentId);
@@ -36,7 +36,7 @@ module.exports = {
 
         const fileAttachment = interaction.options.getAttachment('文件');
         const isSigned = interaction.options.getString('署名') === 'yes';
-        const description = interaction.options.getString('描述'); // 获取描述内容
+        const description = interaction.options.getString('描述');
         
         // 检查帖子原作者是否拒绝任何形式的自助补档
         try {
@@ -145,7 +145,7 @@ module.exports = {
         } catch (error) {
             console.error('文件上传失败:', error);
             await interaction.editReply({
-                content: '❌ 文件上传失败，可能是机器人权限不足或发生未知错误。',
+                content: `❌ 文件上传失败。\n\n**错误详情:**\n\`\`\`${error.name}: ${error.message}\`\`\``,
             });
         }
     },

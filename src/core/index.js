@@ -146,7 +146,10 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions, // 需要这个intent来监控reaction
         GatewayIntentBits.MessageContent,
-    ]
+    ],
+    rest: {
+        requestTimeout: 60000, // 将超时时间设置为 60 秒
+    },
 });
 
 client.commands = new Collection();
