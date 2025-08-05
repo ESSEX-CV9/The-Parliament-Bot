@@ -2,6 +2,7 @@ const { SlashCommandBuilder, ChannelType } = require('discord.js');
 const { readState, writeState } = require('../services/scanStateService');
 const { withRetry } = require('../utils/retryHelper');
 const ProgressManager = require('../services/progressManager');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 // --- 轻量级并发控制器 ---
 async function runWithConcurrency(tasks, concurrency) {
@@ -210,6 +211,14 @@ module.exports = {
                 .setRequired(false)),
 
     async execute(interaction) {
+        if (!checkAdminPermission(interaction.member)) {
+            await interaction.reply({
+                content: getPermissionDeniedMessage(),
+                ephemeral: true,
+            });
+            return;
+        }
+
         // 进度条必须是公开消息才能被持续编辑，因此移除 ephemeral: true
         await interaction.deferReply();
 
