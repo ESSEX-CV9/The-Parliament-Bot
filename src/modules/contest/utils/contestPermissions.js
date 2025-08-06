@@ -124,11 +124,22 @@ function getManagePermissionDeniedMessage() {
     return `❌ **权限不足**\n\n您没有权限管理此赛事频道。只有赛事申请人和管理员可以管理赛事。`;
 }
 
+/**
+ * 检查身份组是否为纯装饰性（无任何权限）
+ * @param {import('discord.js').Role} role - 要检查的身份组对象
+ * @returns {boolean}
+ */
+function isRoleDecorative(role) {
+    // BigInt 0n 代表没有任何权限位被设置
+    return role.permissions.bitfield === 0n;
+}
+
 module.exports = {
     checkContestApplicationPermission,
     checkContestReviewPermission,
     checkContestManagePermission,
     getApplicationPermissionDeniedMessage,
     getReviewPermissionDeniedMessage,
-    getManagePermissionDeniedMessage
+    getManagePermissionDeniedMessage,
+    isRoleDecorative,
 };

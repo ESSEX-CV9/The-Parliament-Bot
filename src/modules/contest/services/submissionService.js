@@ -9,6 +9,7 @@ const {
 } = require('../utils/contestDatabase');
 const { validateSubmissionLink, checkDuplicateSubmission } = require('./linkParser');
 const { displayService } = require('./displayService');
+const {grantRoleOnSubmission} = require("./participantRoleService");
 
 async function processContestSubmission(interaction) {
     try {
@@ -116,6 +117,11 @@ async function processContestSubmission(interaction) {
             submissions: updatedSubmissions,
             totalSubmissions: updatedSubmissions.length
         });
+
+        // 自动发放身份组
+        if (interaction.member) {
+            await grantRoleOnSubmission(interaction.member, contestChannelId);
+        }
         
         // 更新作品展示
         await updateSubmissionDisplay(interaction.client, contestChannelData);

@@ -81,6 +81,15 @@ const {
     handleVoteComplete
 } = require('../../modules/election/components/anonymousVotingComponents');
 
+const {
+    toggleAutoGrant,
+    showUserList,
+    handleUserListPageNavigation,
+    confirmManualAction,
+    grantToAll,
+    listAllParticipants
+} = require('../../modules/contest/services/participantRoleService');
+
 async function interactionCreateHandler(interaction) {
     try {
         // 处理自动补全
@@ -458,6 +467,31 @@ async function interactionCreateHandler(interaction) {
                 await handleListRolesButton(interaction);
             } else if (interaction.customId.startsWith('admin_roles_page_')) {
                 await handleRoleListPageChange(interaction);
+            }
+
+            // 参赛者身份组管理按钮
+            if (interaction.customId.startsWith('role_manage_')) {
+                if (interaction.customId.includes('_toggle_auto_')) {
+                    await toggleAutoGrant(interaction);
+                } else if (interaction.customId.includes('_grant_list_')) {
+                    await showUserList(interaction, 'grant');
+                } else if (interaction.customId.includes('_revoke_list_')) {
+                    await showUserList(interaction, 'revoke');
+                } else if (interaction.customId.includes('_grant_all_')) {
+                    await grantToAll(interaction);
+                } else if (interaction.customId.includes('_list_all_')) {
+                    await listAllParticipants(interaction);
+                }
+            } else if (interaction.customId.startsWith('role_page_')) {
+                const mode = interaction.customId.includes('_grant_') ? 'grant' : 'revoke';
+                await handleUserListPageNavigation(interaction, mode);
+            } else if (interaction.customId.startsWith('role_confirm_')) {
+                // 确认按钮需要等待用户从SelectMenu选择，所以这里的处理方式不同
+                // 注意：confirmManualAction 的逻辑已调整为在 service 中处理 awaitMessageComponent
+                const mode = interaction.customId.includes('_grant_') ? 'grant' : 'revoke';
+                await confirmManualAction(interaction, mode);
+            } else if (interaction.customId === 'role_cancel_op') {
+                await interaction.update({ content: '✅ 操作已取消。', embeds: [], components: [] });
             }
             
             return;
