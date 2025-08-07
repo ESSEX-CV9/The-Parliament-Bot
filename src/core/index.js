@@ -126,6 +126,7 @@ const deleteRebuiltMessageCommand = require('../modules/threadRebuilder/commands
 const uploadCommand = require('../modules/selfFileUpload/commands/uploadFile');
 const whoisCommand = require('../modules/selfFileUpload/commands/queryAnonymousLog');
 const manageOptOutCommand = require('../modules/selfFileUpload/commands/manageOptOut.js');
+const collectBackupsCommand = require('../modules/selfFileUpload/commands/collectBackups.js');
 
 // 补卡系统命令
 const processBackupCardsCommand = require('../modules/backupCards/commands/processBackupCards');
@@ -146,7 +147,10 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions, // 需要这个intent来监控reaction
         GatewayIntentBits.MessageContent,
-    ]
+    ],
+    rest: {
+        requestTimeout: 60000, // 将超时时间设置为 60 秒
+    },
 });
 
 client.commands = new Collection();
@@ -261,6 +265,7 @@ client.commands.set(updateVotingCandidatesCommand.data.name, updateVotingCandida
 client.commands.set(uploadCommand.data.name, uploadCommand);
 client.commands.set(whoisCommand.data.name, whoisCommand);
 client.commands.set(manageOptOutCommand.data.name, manageOptOutCommand);
+client.commands.set(collectBackupsCommand.data.name, collectBackupsCommand);
 
 // 自助身份组系统命令
 client.commands.set(setupRolePanelCommand.data.name, setupRolePanelCommand);
