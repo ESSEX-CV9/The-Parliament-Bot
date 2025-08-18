@@ -69,19 +69,38 @@ async function sendInChunks(thread, text, chunkSize = 1980) {
 
 // --- 主处理函数 ---
 async function processThread(thread) {
-    // ... (这部分逻辑不变)
     console.log(`[开始处理帖子] ${thread.name} (${thread.id})`);
-    
-    const backupMessages = await scanMessagesInThread(thread);
-    if (backupMessages.length === 0) {
-        console.log(`[处理完成] 帖子 ${thread.id} 中无补档内容。`);
-        return { success: true, found: 0 };
-    }
+    let wasArchived = false;
 
-    await updateStarterMessage(thread, backupMessages);
-    console.log(`[处理完成] 帖子 ${thread.id} 首楼已更新，包含 ${backupMessages.length} 个条目。`);
-    
-    return { success: true, found: backupMessages.length };
+    try {
+        // 在处理前确保帖子是活跃状态
+        if (thread.archived) {
+            wasArchived = true;
+            console.log(`   > 帖子 ${thread.id} 已归档，正在临时取消归档...`);
+            await thread.setArchived(false);
+        }
+        
+        const backupMessages = await scanMessagesInThread(thread);
+        if (backupMessages.length === 0) {
+            console.log(`[处理完成] 帖子 ${thread.id} 中无补档内容。`);
+            return { success: true, found: 0 };
+        }
+
+        await updateStarterMessage(thread, backupMessages);
+        console.log(`[处理完成] 帖子 ${thread.id} 首楼已更新，包含 ${backupMessages.length} 个条目。`);
+        
+        return { success: true, found: backupMessages.length };
+    } finally {
+        // 确保处理完成后，如果帖子之前是归档的，就把它重新归档
+        if (wasArchived) {
+            try {
+                console.log(`   > 正在重新归档帖子 ${thread.id}...`);
+                await thread.setArchived(true, '汇总补档后自动归档');
+            } catch (error) {
+                console.warn(`[重新归档] 操作帖子 ${thread.id} 失败:`, error.message);
+            }
+        }
+    }
 }
 
 // --- 消息扫描模块 ---
@@ -254,9 +273,14 @@ module.exports = {
 
             // 2. 获取所有帖子
             await progressManager.update('⏳ 正在获取所有帖子，这可能需要一些时间...');
+            console.log(`[CollectBackups] 开始从频道 #${forumChannel.name} 获取所有帖子...`);
+            
+            console.log('[CollectBackups] (1/2) 获取活跃帖子...');
             const activeThreads = await fetchAllThreads(forumChannel, 'fetchActive');
+            console.log(`[CollectBackups] (2/2) 获取归档帖子...`);
             const archivedThreads = await fetchAllThreads(forumChannel, 'fetchArchived');
-
+            
+            console.log('[CollectBackups] 帖子获取完成，正在合并和去重...');
             const allThreads = new Map();
             activeThreads.forEach(t => allThreads.set(t.id, t));
             archivedThreads.forEach(t => allThreads.set(t.id, t));
@@ -270,12 +294,14 @@ module.exports = {
 
             // 筛选出需要处理的帖子
             const pendingThreads = sortedThreads.filter(thread => !state.lastProcessedThreadId || thread.id > state.lastProcessedThreadId);
+            console.log(`[CollectBackups] 排序和筛选完成。总共 ${totalFetched} 个帖子，其中 ${pendingThreads.length} 个需要处理。`);
             
             if (pendingThreads.length === 0 && !resetProgress) {
                 return progressManager.finish('✅ 所有帖子都已是最新状态，无需处理。');
             }
             
             await progressManager.update(`🔍 共发现 ${totalFetched} 个帖子，其中 ${pendingThreads.length} 个待处理。\n⚡ 并发数: ${concurrency}`);
+            console.log(`[CollectBackups] 准备开始处理 ${pendingThreads.length} 个帖子，并发数: ${concurrency}`);
 
             // 3. 创建并执行任务
             let successCount = 0;
@@ -295,8 +321,8 @@ module.exports = {
                     state.failedThreads.push({ id: thread.id, name: thread.name, error: error.message });
                     return null; // 失败，不归档
                 } finally {
+                    // 进度更新移至批处理循环中，不再单个更新
                     state.lastProcessedThreadId = thread.id > (state.lastProcessedThreadId || 0) ? thread.id : state.lastProcessedThreadId;
-                    await writeState(state);
                 }
             };
 
@@ -315,17 +341,8 @@ module.exports = {
                     `处理中: ${processedCount}/${pendingThreads.length} | 成功: ${successCount} | 失败: ${failCount}`
                 );
 
-                const successfullyProcessed = processedThreadsInBatch.filter(t => t !== null);
-                if (successfullyProcessed.length > 0 && archiveDelay >= 0) {
-                    if (archiveDelay > 0) await sleep(archiveDelay);
-                    for (const thread of successfullyProcessed) {
-                        try {
-                            await thread.setArchived(true, '汇总补档后自动归档');
-                        } catch (error) {
-                            console.warn(`[强制归档] 操作帖子 ${thread.id} 失败:`, error.message);
-                        }
-                    }
-                }
+                // 在每批处理完成后，批量写入一次状态，大大降低I/O压力和文件损坏风险
+                await writeState(state);
             }
 
             // 4. 最终报告
@@ -374,8 +391,10 @@ async function fetchAllThreads(channel, fetchType) {
                 fetched.threads.forEach(thread => {
                     allThreads.set(thread.id, thread);
                 });
-                // 获取最后一个帖子的ID用于下一次分页
                 lastId = fetched.threads.lastKey();
+                // 添加详细的进度日志
+                const typeName = fetchType === 'fetchActive' ? '活跃' : '归档';
+                console.log(`   [获取帖子] 正在获取${typeName}帖子... 已找到 ${allThreads.size} 个。`);
             }
             
             hasMore = fetched.hasMore;
