@@ -1,7 +1,7 @@
 // src/modules/selfRole/services/selfRoleService.js
 
 const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { getSelfRoleSettings, getUserActivity, saveSelfRoleApplication } = require('../../../core/utils/database');
+const { getSelfRoleSettings, getUserActivity, getUserActiveDaysCount, saveSelfRoleApplication } = require('../../../core/utils/database');
 
 /**
  * 处理用户点击“自助身份组申请”按钮的事件。
@@ -78,7 +78,7 @@ async function handleSelfRoleSelect(interaction) {
 
         // 2. 检查活跃度
         if (conditions.activity) {
-            const { channelId, requiredMessages, requiredMentions, requiredMentioning } = conditions.activity;
+            const { channelId, requiredMessages, requiredMentions, requiredMentioning, activeDaysThreshold } = conditions.activity;
             const activity = userActivity[channelId]?.[member.id] || { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
             const channel = await interaction.guild.channels.fetch(channelId).catch(() => ({ id: channelId }));
 
@@ -90,6 +90,16 @@ async function handleSelfRoleSelect(interaction) {
             }
             if (activity.mentioningCount < requiredMentioning) {
                 failureReasons.push(`在 <#${channel.id}> 主动提及数需达到 **${requiredMentioning}** (当前: ${activity.mentioningCount})`);
+            }
+
+            // 3. 检查活跃天数阈值（新功能）
+            if (activeDaysThreshold) {
+                const { dailyMessageThreshold, requiredActiveDays } = activeDaysThreshold;
+                const actualActiveDays = await getUserActiveDaysCount(guildId, channelId, member.id, dailyMessageThreshold);
+
+                if (actualActiveDays < requiredActiveDays) {
+                    failureReasons.push(`在 <#${channel.id}> 每日发言超过 **${dailyMessageThreshold}** 条的天数需达到 **${requiredActiveDays}** 天 (当前: ${actualActiveDays} 天)`);
+                }
             }
         }
 

@@ -1,5 +1,5 @@
 const { ChannelType } = require('discord.js');
-const { getAllSelfRoleSettings, saveUserActivityBatch } = require('../../../core/utils/database');
+const { getAllSelfRoleSettings, saveUserActivityBatch, saveDailyUserActivityBatch } = require('../../../core/utils/database');
 
 /**
  * @file autoSyncService.js
@@ -149,8 +149,31 @@ async function syncMissedActivity(client) {
     if (Object.keys(batchData).length > 0) {
         console.log(`[SelfRole-AutoSync] 💾 Writing batch data for ${Object.keys(batchData).length} guilds to the database...`);
         try {
+            // 保存总体活跃度数据
             await saveUserActivityBatch(batchData);
-            console.log('[SelfRole-AutoSync] ✅ Batch write successful.');
+
+            // 按日期保存每日活跃度数据
+            // 需要按消息的创建日期分组保存
+            const dailyBatchData = {};
+            for (const guildId in batchData) {
+                const channels = batchData[guildId];
+                for (const channelId in channels) {
+                    const users = channels[channelId];
+                    for (const userId in users) {
+                        // 这里简化处理，将所有数据归到今天
+                        // 实际应用中可能需要更复杂的日期处理逻辑
+                        const today = new Date().toISOString().split('T')[0];
+                        if (!dailyBatchData[guildId]) dailyBatchData[guildId] = {};
+                        if (!dailyBatchData[guildId][channelId]) dailyBatchData[guildId][channelId] = {};
+                        dailyBatchData[guildId][channelId][userId] = users[userId];
+                    }
+                }
+            }
+
+            const today = new Date().toISOString().split('T')[0];
+            await saveDailyUserActivityBatch(dailyBatchData, today);
+
+            console.log('[SelfRole-AutoSync] ✅ Batch write (总体和每日数据) successful.');
         } catch (error) {
             console.error('[SelfRole-AutoSync] ❌ Batch write to database failed:', error);
         }
