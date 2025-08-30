@@ -52,6 +52,20 @@ function initializeSelfRoleDatabase() {
         )
     `);
 
+    // daily_user_activity 表 - 新增：按日期统计的用户活跃度
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS daily_user_activity (
+            guild_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            date TEXT NOT NULL,
+            message_count INTEGER DEFAULT 0,
+            mentioned_count INTEGER DEFAULT 0,
+            mentioning_count INTEGER DEFAULT 0,
+            PRIMARY KEY (guild_id, channel_id, user_id, date)
+        )
+    `);
+
     // role_applications 表
     selfRoleDb.exec(`
         CREATE TABLE IF NOT EXISTS role_applications (
@@ -235,6 +249,104 @@ async function saveUserActivityBatch(batchData) {
     return batchData;
 }
 
+
+/**
+ * 批量保存每日用户活跃度数据。
+ * @param {object} batchData - 批量数据，格式: { guildId: { channelId: { userId: { messageCount, mentionedCount, mentioningCount } } } }
+ * @param {string} date - 日期字符串，格式: YYYY-MM-DD
+ * @returns {Promise<object>} 已保存的批量数据。
+ */
+async function saveDailyUserActivityBatch(batchData, date) {
+    const stmt = selfRoleDb.prepare(`
+        INSERT INTO daily_user_activity (guild_id, channel_id, user_id, date, message_count, mentioned_count, mentioning_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, channel_id, user_id, date) DO UPDATE SET
+            message_count = message_count + excluded.message_count,
+            mentioned_count = mentioned_count + excluded.mentioned_count,
+            mentioning_count = mentioning_count + excluded.mentioning_count
+    `);
+
+    const transaction = selfRoleDb.transaction((guilds, targetDate) => {
+        for (const guildId in guilds) {
+            const channels = guilds[guildId];
+            for (const channelId in channels) {
+                const users = channels[channelId];
+                for (const userId in users) {
+                    const activity = users[userId];
+                    stmt.run(
+                        guildId,
+                        channelId,
+                        userId,
+                        targetDate,
+                        activity.messageCount || 0,
+                        activity.mentionedCount || 0,
+                        activity.mentioningCount || 0
+                    );
+                }
+            }
+        }
+    });
+
+    try {
+        transaction(batchData, date);
+    } catch (err) {
+        console.error('[SelfRole] ❌ 批量保存每日用户活跃度数据到 SQLite 时出错:', err);
+        throw err;
+    }
+
+    return batchData;
+}
+
+/**
+ * 获取用户在指定频道的每日活跃度数据。
+ * @param {string} guildId - 服务器ID。
+ * @param {string} channelId - 频道ID。
+ * @param {string} userId - 用户ID。
+ * @param {number} days - 查询最近多少天的数据（可选，默认30天）。
+ * @returns {Promise<Array>} 每日活跃度数据数组。
+ */
+async function getUserDailyActivity(guildId, channelId, userId, days = 30) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT date, message_count, mentioned_count, mentioning_count
+        FROM daily_user_activity
+        WHERE guild_id = ? AND channel_id = ? AND user_id = ?
+        ORDER BY date DESC
+        LIMIT ?
+    `);
+    const rows = stmt.all(guildId, channelId, userId, days);
+    return rows.map(row => ({
+        date: row.date,
+        messageCount: row.message_count,
+        mentionedCount: row.mentioned_count,
+        mentioningCount: row.mentioning_count,
+    }));
+}
+
+/**
+ * 计算用户在指定频道中满足每日发言阈值的天数。
+ * @param {string} guildId - 服务器ID。
+ * @param {string} channelId - 频道ID。
+ * @param {string} userId - 用户ID。
+ * @param {number} dailyThreshold - 每日发言数阈值。
+ * @param {number} days - 查询最近多少天的数据（可选，默认90天）。
+ * @returns {Promise<number>} 满足阈值的天数。
+ */
+async function getUserActiveDaysCount(guildId, channelId, userId, dailyThreshold, days = 90) {
+    // 使用 UTC 时间计算起始日期，确保与数据存储时的日期计算一致
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
+
+    const stmt = selfRoleDb.prepare(`
+        SELECT COUNT(*) as active_days
+        FROM daily_user_activity
+        WHERE guild_id = ? AND channel_id = ? AND user_id = ?
+        AND message_count >= ?
+        AND date >= ?
+    `);
+    const row = stmt.get(guildId, channelId, userId, dailyThreshold, startDateStr);
+    return row ? row.active_days : 0;
+}
 
 /**
  * 根据消息ID获取一个自助身份组的投票申请。
@@ -1579,6 +1691,9 @@ module.exports = {
     saveSelfRoleSettings,
     getUserActivity,
     saveUserActivityBatch,
+    saveDailyUserActivityBatch,
+    getUserDailyActivity,
+    getUserActiveDaysCount,
     getSelfRoleApplication,
     saveSelfRoleApplication,
     deleteSelfRoleApplication,

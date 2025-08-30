@@ -71,11 +71,11 @@ async function handleRoleSelectForAdd(interaction) {
 
     const activityInput = new TextInputBuilder()
         .setCustomId('activity')
-        .setLabel('活跃度: 频道ID,发言数,被提及数,主动提及数')
-        .setPlaceholder('频道ID,发言数,被提及数,主动提及数\n示例: 12345,100,,20 (不需要的项请填0或留空)')
-        .setStyle(TextInputStyle.Short)
+        .setLabel('活跃度: 频道ID,发言数,被提及数,主动提及数,每日阈值,天数')
+        .setPlaceholder('12345,100,,20,50,10 (频道,发言,被提及,主动提及,每日阈值,天数)')
+        .setStyle(TextInputStyle.Paragraph)
         .setRequired(false);
-        
+
     const approvalInput = new TextInputBuilder()
         .setCustomId('approval')
         .setLabel('社区审核: 频道ID,支持票,反对票,投票组ID...')
@@ -140,14 +140,16 @@ async function handleModalSubmit(interaction) {
         }
 
         if (activityString) {
-            const [channelId, messages, mentions, mentioning] = activityString.split(',').map(s => s.trim());
+            const parts = activityString.split(',').map(s => s.trim());
+            const [channelId, messages, mentions, mentioning, dailyThreshold, requiredDays] = parts;
+
             const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
             if (!channel || !channel.isTextBased()) {
                 interaction.editReply({ content: `❌ 无效的活跃度频道ID: ${channelId}` });
                 setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
                 return;
             }
-            
+
             const requiredMessages = parseInt(messages) || 0;
             const requiredMentions = parseInt(mentions) || 0;
             const requiredMentioning = parseInt(mentioning) || 0;
@@ -158,6 +160,23 @@ async function handleModalSubmit(interaction) {
                 requiredMentions,
                 requiredMentioning,
             };
+
+            // 处理活跃天数阈值配置 
+            if (dailyThreshold && requiredDays) {
+                const dailyMessageThreshold = parseInt(dailyThreshold);
+                const requiredActiveDays = parseInt(requiredDays);
+
+                if (isNaN(dailyMessageThreshold) || isNaN(requiredActiveDays) || dailyMessageThreshold <= 0 || requiredActiveDays <= 0) {
+                    interaction.editReply({ content: `❌ 活跃天数配置格式错误，每日发言阈值和需要天数必须是正整数。` });
+                    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                    return;
+                }
+
+                newRoleConfig.conditions.activity.activeDaysThreshold = {
+                    dailyMessageThreshold,
+                    requiredActiveDays,
+                };
+            }
         }
 
         if (approvalString) {
@@ -317,9 +336,15 @@ async function handleListRolesButton(interaction) {
             if (activity.requiredMessages > 0) activityConds.push(`发言 **${activity.requiredMessages}** 次`);
             if (activity.requiredMentions > 0) activityConds.push(`被提及 **${activity.requiredMentions}** 次`);
             if (activity.requiredMentioning > 0) activityConds.push(`主动提及 **${activity.requiredMentioning}** 次`);
-            
+
             if (activityConds.length > 0) {
                 conditions.push(`- **活跃度:** 在 <#${activity.channelId}> 中${activityConds.join(', ')}`);
+            }
+
+            // 显示活跃天数阈值条件 
+            if (activity.activeDaysThreshold) {
+                const { dailyMessageThreshold, requiredActiveDays } = activity.activeDaysThreshold;
+                conditions.push(`- **活跃天数:** 在 <#${activity.channelId}> 中每日发言超过 **${dailyMessageThreshold}** 条的天数需达到 **${requiredActiveDays}** 天`);
             }
         }
         if (roleConfig.conditions.approval) {
@@ -476,8 +501,13 @@ async function handleRoleSelectForEdit(interaction) {
     if (roleConfig.conditions.activity) {
         const a = roleConfig.conditions.activity;
         activityValue = `${a.channelId},${a.requiredMessages},${a.requiredMentions},${a.requiredMentioning}`;
+
+        // 如果有活跃天数阈值配置，也加入到值中
+        if (a.activeDaysThreshold) {
+            activityValue += `,${a.activeDaysThreshold.dailyMessageThreshold},${a.activeDaysThreshold.requiredActiveDays}`;
+        }
     }
-    const activityInput = new TextInputBuilder().setCustomId('activity').setLabel('活跃度: 频道ID,发言,被提及,主动提及').setPlaceholder('频道ID,发言数,被提及数,主动提及数\n示例: 12345,100,,20 (不需要的项请填0或留空)').setStyle(TextInputStyle.Short).setValue(activityValue).setRequired(false);
+    const activityInput = new TextInputBuilder().setCustomId('activity').setLabel('活跃度: 频道ID,发言数,被提及数,主动提及数,每日阈值,天数').setPlaceholder('12345,100,,20,50,10 (频道,发言,被提及,主动提及,每日阈值,天数)').setStyle(TextInputStyle.Paragraph).setValue(activityValue).setRequired(false);
 
     let approvalValue = '';
     if (roleConfig.conditions.approval) {
