@@ -6,6 +6,8 @@ const { executeDeleteMessage, executeMuteUser, checkAndDeleteUserMessage } = req
 const { EmbedBuilder } = require('discord.js');
 const { formatMessageLink } = require('../utils/messageParser'); 
 const { deleteMessageAfterVoteEnd } = require('./punishmentExecutor');
+const { calculateLinearMuteDuration, isDayTime, LINEAR_MUTE_CONFIG } = require('../../../core/config/timeconfig');
+const { formatDuration } = require('../utils/timeCalculator');
 
 /**
  * 检查所有活跃的自助管理投票
@@ -32,6 +34,21 @@ async function checkActiveModerationVotes(client) {
         
         // 处理每个投票
         for (const vote of updatedVotes) {
+            // 检查是否需要更新通知（票数有变化的禁言投票）
+            const originalVote = activeVotes.find(v => 
+                v.guildId === vote.guildId && 
+                v.targetMessageId === vote.targetMessageId && 
+                v.type === vote.type
+            );
+            
+            const shouldUpdateNotification = originalVote && 
+                originalVote.currentReactionCount !== vote.currentReactionCount &&
+                (vote.type === 'mute' || vote.type === 'serious_mute');
+            
+            if (shouldUpdateNotification) {
+                await updateMuteNotification(client, vote);
+            }
+            
             await processIndividualVote(client, vote);
         }
         
@@ -39,6 +56,92 @@ async function checkActiveModerationVotes(client) {
         
     } catch (error) {
         console.error('检查自助管理投票时出错:', error);
+    }
+}
+
+/**
+ * 更新禁言投票的实时通知
+ * @param {Client} client - Discord客户端
+ * @param {object} voteData - 投票数据
+ */
+async function updateMuteNotification(client, voteData) {
+    try {
+        const { 
+            voteAnnouncementMessageId, 
+            voteAnnouncementChannelId, 
+            currentReactionCount,
+            type,
+            targetUserId,
+            initiatorId,
+            targetMessageUrl,
+            endTime,
+            executed
+        } = voteData;
+        
+        // 只更新禁言相关的投票（不包括严肃禁言，它有自己的显示逻辑）
+        if (type !== 'mute' || !voteAnnouncementMessageId || !voteAnnouncementChannelId) {
+            return;
+        }
+        
+        const channel = await client.channels.fetch(voteAnnouncementChannelId);
+        if (!channel) return;
+        
+        const message = await channel.messages.fetch(voteAnnouncementMessageId);
+        if (!message || !message.embeds[0]) return;
+        
+        // 计算当前应有的总禁言时长
+        const isNight = isDayTime() === false;
+        const muteInfo = calculateLinearMuteDuration(currentReactionCount, isNight);
+        const endTimestamp = Math.floor(new Date(endTime).getTime() / 1000);
+        
+        // 构建更新的执行条件文本
+        const baseThreshold = muteInfo.threshold;
+        const executionCondition = `${baseThreshold}个🚫开始禁言(${LINEAR_MUTE_CONFIG.BASE_DURATION}分钟)，${baseThreshold}个🚫后每票+${LINEAR_MUTE_CONFIG.ADDITIONAL_MINUTES_PER_VOTE}分钟`;
+        
+        // 构建描述文本
+        let description = `有用户发起了禁言搬屎用户投票，请大家前往目标消息添加🚫反应来表达支持，**或者直接对本消息添加🚫反应**。\n\n`;
+        description += `**目标消息：** ${formatMessageLink(targetMessageUrl)}\n`;
+        description += `**消息作者：** <@${targetUserId}>\n`;
+        description += `**发起人：** <@${initiatorId}>\n`;
+        description += `**投票结束时间：** <t:${endTimestamp}:f>\n`;
+        description += `**当前🚫数量：** ${currentReactionCount}\n`;
+        description += `**执行条件：** ${executionCondition}`;
+        
+        // 如果已经开始禁言，显示当前总禁言时长
+        if (muteInfo.shouldMute) {
+            description += `\n\n**当前总禁言时长：** ${formatDuration(muteInfo.duration)}`;
+            // 只有在已执行禁言时才显示解禁时间和执行状态
+            if (executed) {
+                // 如果已执行，从投票数据中获取最后执行时间，如果没有则用当前时间
+                let muteStartTime = Date.now();
+                if (voteData.lastExecuted) {
+                    muteStartTime = new Date(voteData.lastExecuted).getTime();
+                } else if (voteData.executedActions && voteData.executedActions.length > 0) {
+                    // 找到最近的禁言执行动作
+                    const lastMuteAction = voteData.executedActions
+                        .filter(action => action.type === 'mute')
+                        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+                    if (lastMuteAction) {
+                        muteStartTime = new Date(lastMuteAction.timestamp).getTime();
+                    }
+                }
+                
+                // 计算解禁时间：禁言开始时间 + 总禁言时长
+                const muteEndTime = new Date(muteStartTime + muteInfo.duration * 60 * 1000);
+                const muteEndTimestamp = Math.floor(muteEndTime.getTime() / 1000);
+                description += `\n**解禁时间：** <t:${muteEndTimestamp}:f> ✅ (已执行禁言)`;
+            }
+        }
+        
+        // 更新嵌入消息
+        const updatedEmbed = EmbedBuilder.from(message.embeds[0])
+            .setDescription(description);
+        
+        await message.edit({ embeds: [updatedEmbed] });
+        console.log(`已更新禁言投票通知 ${voteAnnouncementMessageId}，当前票数: ${currentReactionCount}`);
+        
+    } catch (error) {
+        console.error('更新禁言通知时出错:', error);
     }
 }
 
@@ -219,14 +322,25 @@ async function handleExpiredVote(client, vote) {
         
         let deleteResult = null;
         
-        // 如果是禁言投票（含严肃禁言），投票结束后删除消息并归档
+        // 如果是禁言投票（含严肃禁言），检查消息是否已在禁言开始时被删除
         if (type === 'mute' || type === 'serious_mute') {
             // 检查是否达到禁言阈值
             const thresholdCheck = checkReactionThreshold(currentReactionCount, type);
             
             if (thresholdCheck.reached) {
-                console.log(`禁言投票结束且达到阈值 (${currentReactionCount} >= ${thresholdCheck.threshold})，开始删除消息: ${targetMessageId}`);
-                deleteResult = await deleteMessageAfterVoteEnd(client, vote);
+                // 检查是否已经在禁言开始时删除了消息
+                if (vote.messageDeletedOnMuteStart) {
+                    console.log(`禁言投票结束，消息已在禁言开始时被删除: ${targetMessageId}`);
+                    deleteResult = { 
+                        success: true, 
+                        alreadyDeleted: true, 
+                        archived: vote.messageArchived || false,
+                        deletedOnMuteStart: true
+                    };
+                } else {
+                    console.log(`禁言投票结束且达到阈值，但消息未在禁言开始时删除，现在删除: ${targetMessageId}`);
+                    deleteResult = await deleteMessageAfterVoteEnd(client, vote);
+                }
             } else {
                 console.log(`禁言投票结束但未达到阈值 (${currentReactionCount} < ${thresholdCheck.threshold})，不删除消息: ${targetMessageId}`);
             }
@@ -357,16 +471,34 @@ async function sendPunishmentNotification(client, vote, result) {
                 .setColor('#FF0000')
                 .setTimestamp();
         } else if ((type === 'mute' || type === 'serious_mute') && result.success) {
-            let description;
+             let description;
             if (result.alreadyMuted) {
-                description = `<@${result.userId}> 已经被禁言，当前禁言时长：**${result.currentDuration}**\n\n⚠️反应数量：${currentReactionCount}（去重后）`;
+                description = `<@${result.userId}> 已经被禁言，当前总禁言时长：**${result.currentDuration}**\n\n🚫反应数量：${currentReactionCount}（去重后）`;
             } else {
                 const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
-                description = `由于⚠️反应数量达到 **${currentReactionCount}** 个（去重后），<@${result.userId}> 已在此频道被禁言：\n\n**禁言时长：** ${result.additionalDuration}\n**总禁言时长：** ${result.totalDuration}\n**解禁时间：** <t:${endTimestamp}:f>\n**目标消息：** ${targetMessageUrl}`;
+                description = `由于🚫反应数量达到 **${currentReactionCount}** 个（去重后），<@${result.userId}> 已在此频道被禁言：\n\n**总禁言时长：** ${result.totalDuration}\n**解禁时间：** <t:${endTimestamp}:f>\n**目标消息：** ${targetMessageUrl}`;
+                
+                // 显示消息删除状态
+                if (result.isFirstTimeMute) {
+                    description += `\n\n**消息处理：** `;
+                    if (result.messageDeleted) {
+                        description += `✅ 已删除`;
+                        if (result.messageArchived) {
+                            description += ` | ✅ 已归档`;
+                        } else {
+                            description += ` | ❌ 归档失败`;
+                        }
+                    } else {
+                        description += `❌ 删除失败`;
+                        if (result.messageDeleteError) {
+                            description += ` (${result.messageDeleteError})`;
+                        }
+                    }
+                }
             }
             
             if (voteAnnouncementMessageId) {
-                description += `\n\n💡 反应统计包含目标消息和投票公告的所有⚠️反应（同一用户只计算一次）`;
+                description += `\n\n💡 反应统计包含目标消息和投票公告的所有🚫反应（同一用户只计算一次）`;
             }
             
             embed = new EmbedBuilder()

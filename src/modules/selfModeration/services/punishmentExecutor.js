@@ -358,6 +358,31 @@ async function executeMuteUser(client, voteData) {
         
         console.log(`成功禁言用户 ${targetUserId} ${muteInfo.additionalDuration}分钟`);
         
+        // 新增：检查是否为首次禁言，如果是则立即删除并归档消息
+        let messageDeleteResult = null;
+        const isFirstTimeMute = getCurrentMuteDuration(executedActions) === 0; // 之前没有执行过禁言
+        
+        if (isFirstTimeMute && targetMessageExists !== false) {
+            console.log(`首次禁言开始，立即删除并归档消息: ${targetMessageId}`);
+            try {
+                // 删除并归档消息
+                messageDeleteResult = await deleteAndArchiveMessage(client, voteData);
+                
+                // 更新投票状态，记录消息删除
+                await updateSelfModerationVote(guildId, targetMessageId, recordType, {
+                    messageDeletedOnMuteStart: true,
+                    messageDeletedAt: new Date().toISOString(),
+                    messageArchived: messageDeleteResult.archived,
+                    messageDeleteResult: messageDeleteResult.success
+                });
+                
+                console.log(`首次禁言时删除消息结果: 成功=${messageDeleteResult.success}, 归档=${messageDeleteResult.archived}`);
+            } catch (deleteError) {
+                console.error('首次禁言时删除消息失败:', deleteError);
+                messageDeleteResult = { success: false, error: deleteError.message, archived: false };
+            }
+        }
+        
         // 设置定时器，到时间后解除禁言
         setTimeout(async () => {
             try {
@@ -378,7 +403,12 @@ async function executeMuteUser(client, voteData) {
             reactionCount: effectiveReactionCount,
             endTime: muteEndTime,
             targetMessageExists,
-            permissionChannelId: permissionChannel.id
+            permissionChannelId: permissionChannel.id,
+            // 新增：首次禁言时的消息删除信息
+            isFirstTimeMute: isFirstTimeMute,
+            messageDeleted: messageDeleteResult ? messageDeleteResult.success : false,
+            messageArchived: messageDeleteResult ? messageDeleteResult.archived : false,
+            messageDeleteError: messageDeleteResult ? messageDeleteResult.error : null
         };
         
     } catch (error) {

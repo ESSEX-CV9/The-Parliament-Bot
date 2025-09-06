@@ -1,6 +1,6 @@
 // src\modules\selfModeration\services\reactionTracker.js
 const { updateSelfModerationVote } = require('../../../core/utils/database');
-const { DELETE_THRESHOLD, MUTE_DURATIONS } = require('../../../core/config/timeconfig');
+const { DELETE_THRESHOLD, MUTE_DURATIONS, calculateLinearMuteDuration, isDayTime } = require('../../../core/config/timeconfig');
 
 /**
  * 检查消息是否存在
@@ -267,11 +267,13 @@ function checkReactionThreshold(reactionCount, type) {
             action: '删除消息'
         };
     } else if (type === 'mute') {
-        // 使用禁言的最低阈值
-        const MUTE_BASE_THRESHOLD = MUTE_DURATIONS.LEVEL_1.threshold;
+        // 🔥 使用新的线性禁言阈值计算
+        const isNight = isDayTime() === false;
+        const muteInfo = calculateLinearMuteDuration(reactionCount, isNight);
+        
         return {
-            reached: reactionCount >= MUTE_BASE_THRESHOLD,
-            threshold: MUTE_BASE_THRESHOLD,
+            reached: muteInfo.shouldMute,
+            threshold: muteInfo.threshold,
             action: '禁言用户'
         };
     } else if (type === 'serious_mute') {

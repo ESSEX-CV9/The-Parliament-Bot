@@ -301,15 +301,21 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         
         // 🔥 动态获取阈值配置
         const deleteThreshold = DELETE_THRESHOLD;
-        const muteThreshold = MUTE_DURATIONS.LEVEL_1.threshold; // 最低禁言阈值
+        const { calculateLinearMuteDuration, LINEAR_MUTE_CONFIG } = require('../../../core/config/timeconfig');
         
         // 🔥 获取当前时段模式
         const currentTimeMode = getCurrentTimeMode();
+        const isNight = require('../../../core/config/timeconfig').isDayTime() === false;
         
-        // 🔥 构建执行条件文本
-        const executionCondition = type === 'delete' 
-            ? `${deleteThreshold}个⚠️删除消息 (${currentTimeMode})` 
-            : `${muteThreshold}个🚫开始禁言 (${currentTimeMode})`;
+        // 🔥 构建执行条件文本 - 显示线性禁言规则
+        let executionCondition;
+        if (type === 'delete') {
+            executionCondition = `${deleteThreshold}个⚠️删除消息 (${currentTimeMode})`;
+        } else {
+            const muteCalc = calculateLinearMuteDuration(10, isNight); // 使用基础阈值计算
+            const baseThreshold = muteCalc.threshold;
+            executionCondition = `${baseThreshold}个🚫开始禁言(${LINEAR_MUTE_CONFIG.BASE_DURATION}分钟)，每票+${LINEAR_MUTE_CONFIG.ADDITIONAL_MINUTES_PER_VOTE}分钟 (${currentTimeMode})`;
+        }
         
         let embed;
 

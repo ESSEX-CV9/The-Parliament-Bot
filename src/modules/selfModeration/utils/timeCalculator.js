@@ -1,5 +1,5 @@
 // src\modules\selfModeration\utils\timeCalculator.js
-const { MUTE_DURATIONS } = require('../../../core/config/timeconfig');
+const { MUTE_DURATIONS, calculateLinearMuteDuration, isDayTime } = require('../../../core/config/timeconfig');
 
 /**
  * 根据⚠️数量计算禁言时长
@@ -30,12 +30,44 @@ function calculateMuteDuration(reactionCount) {
 }
 
 /**
- * 计算需要增加的禁言时间（考虑已经执行的禁言）
- * @param {number} newReactionCount - 新的⚠️反应数量
+ * 计算需要增加的禁言时间（考虑已经执行的禁言）- 使用新的线性计算逻辑
+ * @param {number} newReactionCount - 新的🚫反应数量
  * @param {number} currentMuteDuration - 当前已执行的禁言时长（分钟）
  * @returns {object} {additionalDuration: number, totalDuration: number, newLevel: string}
  */
 function calculateAdditionalMuteDuration(newReactionCount, currentMuteDuration) {
+    // 使用新的线性计算逻辑
+    const isNight = isDayTime() === false;
+    const muteInfo = calculateLinearMuteDuration(newReactionCount, isNight);
+    
+    if (!muteInfo.shouldMute) {
+        return {
+            additionalDuration: 0,
+            totalDuration: currentMuteDuration,
+            newLevel: null,
+            threshold: muteInfo.threshold
+        };
+    }
+    
+    const totalShouldBe = muteInfo.duration;
+    const additionalDuration = Math.max(0, totalShouldBe - currentMuteDuration);
+    
+    return {
+        additionalDuration,
+        totalDuration: totalShouldBe,
+        newLevel: `LINEAR_${newReactionCount}`,
+        threshold: muteInfo.threshold,
+        additionalVotes: muteInfo.additionalVotes
+    };
+}
+
+/**
+ * 计算需要增加的禁言时间（考虑已经执行的禁言）- 旧版本函数，保持兼容性
+ * @param {number} newReactionCount - 新的⚠️反应数量
+ * @param {number} currentMuteDuration - 当前已执行的禁言时长（分钟）
+ * @returns {object} {additionalDuration: number, totalDuration: number, newLevel: string}
+ */
+function calculateAdditionalMuteDurationLegacy(newReactionCount, currentMuteDuration) {
     const newMuteInfo = calculateMuteDuration(newReactionCount);
     
     if (!newMuteInfo.level) {
@@ -97,6 +129,7 @@ function getMuteLevelsDescription() {
 module.exports = {
     calculateMuteDuration,
     calculateAdditionalMuteDuration,
+    calculateAdditionalMuteDurationLegacy, // 保持向后兼容
     formatDuration,
     getMuteLevelsDescription
 };

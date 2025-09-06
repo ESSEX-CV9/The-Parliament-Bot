@@ -95,17 +95,62 @@ function getTimeRangeDescription() {
     }
 }
 
-// 禁言时长配置（分钟）- 原始配置保持不变
+// 线性禁言配置（新的线性增长模式）
+const LINEAR_MUTE_CONFIG = {
+    BASE_THRESHOLD: 10,        // 开始禁言的票数
+    BASE_DURATION: 10,         // 基础禁言时长（分钟）
+    ADDITIONAL_MINUTES_PER_VOTE: 3  // 每票增加的分钟数
+};
+
+// 禁言时长配置（分钟）- 保留用于兼容性，但已改为使用线性计算
 const BASE_MUTE_DURATIONS = {
-    LEVEL_1: { threshold: 10, duration: 10 },   // 15个⚠️ -> 10分钟
-    LEVEL_2: { threshold: 20, duration: 20 },   // 30个⚠️ -> 20分钟  
-    LEVEL_3: { threshold: 30, duration: 40 },   // 60个⚠️ -> 40分钟
-    LEVEL_4: { threshold: 40, duration: 60 },  // 80个⚠️ -> 1小时
-    LEVEL_5: { threshold: 60, duration: 120 }  // 100个⚠️ -> 2小时
+    LEVEL_1: { threshold: 10, duration: 10 },   // 保留第一级作为基准线
+    LEVEL_2: { threshold: 20, duration: 20 },   // 兼容性保留
+    LEVEL_3: { threshold: 30, duration: 40 },   // 兼容性保留
+    LEVEL_4: { threshold: 40, duration: 60 },   // 兼容性保留
+    LEVEL_5: { threshold: 60, duration: 120 }   // 兼容性保留
 };
 
 // 删除消息阈值 - 原始配置
 const BASE_DELETE_THRESHOLD = 10; // 10个⚠️删除消息
+
+/**
+ * 计算线性禁言时长
+ * @param {number} voteCount - 投票数量
+ * @param {boolean} isNight - 是否为夜晚时段
+ * @returns {object} {duration: number, threshold: number, shouldMute: boolean}
+ */
+function calculateLinearMuteDuration(voteCount, isNight = false) {
+    // 获取基础阈值
+    let threshold = LINEAR_MUTE_CONFIG.BASE_THRESHOLD;
+    
+    // 如果是夜晚时段，应用夜晚倍率
+    if (isNight) {
+        threshold = Math.floor(threshold * DAY_NIGHT_CONFIG.NIGHT_MUTE_THRESHOLD_MULTIPLIER);
+    }
+    
+    // 检查是否达到禁言条件
+    if (voteCount < threshold) {
+        return { 
+            duration: 0, 
+            threshold, 
+            shouldMute: false,
+            additionalVotes: 0
+        };
+    }
+    
+    // 计算总禁言时长：基础时长 + (超出阈值的票数 × 每票增加时间)
+    const baseDuration = LINEAR_MUTE_CONFIG.BASE_DURATION;
+    const additionalVotes = voteCount - threshold;
+    const totalDuration = baseDuration + (additionalVotes * LINEAR_MUTE_CONFIG.ADDITIONAL_MINUTES_PER_VOTE);
+    
+    return { 
+        duration: totalDuration, 
+        threshold, 
+        shouldMute: true,
+        additionalVotes
+    };
+}
 
 // 动态获取当前时段的禁言配置
 const MUTE_DURATIONS = new Proxy(BASE_MUTE_DURATIONS, {
@@ -287,5 +332,8 @@ module.exports = {
     isDayTime,
     getCurrentTimeMode,
     DAY_NIGHT_CONFIG,
-    getTimeRangeDescription
+    getTimeRangeDescription,
+    // 线性禁言相关导出
+    LINEAR_MUTE_CONFIG,
+    calculateLinearMuteDuration
 };
