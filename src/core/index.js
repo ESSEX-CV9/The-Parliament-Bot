@@ -1,24 +1,4 @@
 // src/core/index.js
-const dns = require('dns');
-try {
- if (process.env.FORCE_IPV4 === '1' && dns.setDefaultResultOrder) {
-   dns.setDefaultResultOrder('ipv4first');
-   console.log('[Network] DNS result order set to ipv4first');
- }
-} catch (e) {
- console.warn('[Network] Failed to set DNS result order:', e?.message);
-}
-try {
- const { setGlobalDispatcher, ProxyAgent } = require('undici');
- const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
- if (proxy) {
-   setGlobalDispatcher(new ProxyAgent(proxy));
-   console.log('[Network] undici proxy enabled:', proxy);
- }
-} catch (e) {
- console.warn('[Network] undici proxy init skipped:', e?.message);
-}
-
 require('dotenv').config();
 
 const {
@@ -171,7 +151,6 @@ const client = new Client({
     ],
     rest: {
         requestTimeout: 60000, // 将超时时间设置为 60 秒
-        timeout: 30000,
     },
 });
 
