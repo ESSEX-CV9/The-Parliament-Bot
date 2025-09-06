@@ -331,15 +331,13 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
             const seriousExecutionCondition = `${base}个🚫开始严肃禁言 (${currentTimeMode})`;
 
             embed = new EmbedBuilder()
-                .setTitle(`【严肃禁言】由 <@${initiatorId}> 发起，对 <@${targetUserId}> 的令人不适内容`)
+                .setTitle('【严肃禁言】这是一场严肃禁言，请仔细思考后投票。')
                 .setDescription(
                     `请前往目标消息添加🚫反应支持严肃禁言，**或者直接对本消息添加🚫反应**。\n\n` +
                     `**目标消息：** ${formatMessageLink(targetMessageUrl)}\n` +
                     `**消息作者：** <@${targetUserId}>\n` +
                     `**发起人：** <@${initiatorId}>\n` +
-                    `**投票结束时间：** <t:${endTimestamp}:f>\n` +
-                    `**当前🚫数量：** ${initialReactionCount}\n` +
-                    `**执行条件：** ${seriousExecutionCondition}\n\n` +
+                    `**投票结束时间：** <t:${endTimestamp}:f>\n\n` +
                     `达到 5 个 🚫 将立即删除被引用消息`
                 )
                 .setColor('#FF0000')
@@ -351,7 +349,6 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
                     { name: '当前累计（近15天）', value: `${prev} 次`, inline: true },
                     { name: '严肃禁言阈值（当前时段）', value: `${base} 人`, inline: true },
                     { name: '若仅达基础反应的最低禁言时长', value: `${minutesMinHuman}`, inline: false },
-                    { name: '反应指引', value: `请添加 🚫；≥5 即删`, inline: false },
                 );
         } else {
             // 其它类型保持现状
