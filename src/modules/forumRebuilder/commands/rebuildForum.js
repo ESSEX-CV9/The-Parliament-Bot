@@ -11,7 +11,7 @@ const path = require('path');
 const fs = require('fs');
 
 const data = new SlashCommandBuilder()
-    .setName('重建论坛')
+    .setName('重建论坛-已废弃')
     .setDescription('从Excel文件重建论坛帖子（管理员专用）')
     .addChannelOption(option =>
         option.setName('目标论坛')

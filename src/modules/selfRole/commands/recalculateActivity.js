@@ -5,7 +5,7 @@ const { saveUserActivityBatch, saveDailyUserActivityBatch, clearChannelActivity 
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('回溯统计活跃度')
+        .setName('自助身份组申请-回溯统计活跃度')
         .setDescription('扫描指定频道的历史消息以统计用户活跃度')
         .addStringOption(option =>
             option.setName('频道id')

@@ -4,7 +4,7 @@ const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../c
 const { checkContestManagePermission, getManagePermissionDeniedMessage } = require('../utils/contestPermissions');
 
 const data = new SlashCommandBuilder()
-    .setName('生成赛事频道初始信息')
+    .setName('赛事-生成赛事频道初始信息')
     .setDescription('重新生成赛事频道的初始消息（用于恢复被删除的消息）')
     .addStringOption(option =>
         option.setName('赛事频道id')

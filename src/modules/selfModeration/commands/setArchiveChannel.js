@@ -4,7 +4,7 @@ const { saveArchiveChannelSettings, getArchiveChannelSettings } = require('../..
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('设置归档频道')
+    .setName('搬石公投-设置归档频道')
     .setDescription('设置被删除消息的归档频道')
     .addSubcommand(subcommand =>
         subcommand

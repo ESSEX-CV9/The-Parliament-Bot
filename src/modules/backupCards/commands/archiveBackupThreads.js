@@ -7,7 +7,7 @@ const permissionManager = require('../../../core/utils/permissionManager');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('archivebackupthreads')
+        .setName('补卡-批量归档补卡线程')
         .setDescription('批量归档补卡线程')
         .addIntegerOption(option =>
             option.setName('start')

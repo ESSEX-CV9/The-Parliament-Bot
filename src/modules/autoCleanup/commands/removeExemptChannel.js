@@ -3,7 +3,7 @@ const { removeExemptChannel, getExemptChannels } = require('../../../core/utils/
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('移除豁免频道')
+        .setName('频道冲水-移除豁免频道')
         .setNameLocalizations({
             'en-US': 'remove-exempt-channel'
         })

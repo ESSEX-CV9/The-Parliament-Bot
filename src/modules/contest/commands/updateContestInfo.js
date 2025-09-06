@@ -4,7 +4,7 @@ const { getContestChannel } = require('../utils/contestDatabase');
 const { checkContestManagePermission, getManagePermissionDeniedMessage } = require('../utils/contestPermissions');
 
 const data = new SlashCommandBuilder()
-    .setName('更新赛事信息')
+    .setName('赛事-更新赛事信息')
     .setDescription('更新赛事频道的详细信息')
     .addStringOption(option => 
         option.setName('新内容')

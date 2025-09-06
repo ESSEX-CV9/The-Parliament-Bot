@@ -10,7 +10,7 @@ const XlsxGenerator = require('../services/xlsxGenerator');
 const ExcelReader = require('../services/excelReader');
 
 const data = new SlashCommandBuilder()
-    .setName('重建帖子')
+    .setName('拟态重建-重建帖子')
     .setDescription('从JSON备份文件重建Discord帖子（管理员专用）')
     .addChannelOption(option =>
         option.setName('目标论坛')

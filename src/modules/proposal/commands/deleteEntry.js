@@ -3,7 +3,7 @@ const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('disc
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('deleteentry')
+    .setName('提案-删除表单入口')
     .setDescription('删除表单入口消息')
     .addStringOption(option => 
         option.setName('消息id')

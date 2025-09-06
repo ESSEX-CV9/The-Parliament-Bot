@@ -7,7 +7,7 @@ const { getBannedKeywords } = require('../../../core/utils/database');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('清理全服务器消息')
+        .setName('频道冲水-清理全服务器消息')
         .setNameLocalizations({
             'en-US': 'cleanup-full-server'
         })

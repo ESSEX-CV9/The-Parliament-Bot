@@ -4,7 +4,7 @@ const { saveCourtSettings, getCourtSettings } = require('../../../core/utils/dat
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('setallowcourtrole')
+    .setName('上庭-setallowcourtrole')
     .setDescription('设置可以申请上庭的身份组')
     .addRoleOption(option => 
         option.setName('身份组')

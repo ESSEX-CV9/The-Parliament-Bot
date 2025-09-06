@@ -5,7 +5,7 @@ const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../c
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('debug-roles')
+        .setName('自助身份组申请-debug-roles')
         .setDescription('【调试】获取并显示服务器内所有身份组的详细信息')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 

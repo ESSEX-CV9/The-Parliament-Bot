@@ -5,7 +5,7 @@ const { createTieAnalysisEmbed, createErrorEmbed } = require('../utils/messageUt
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('get-tie-analysis')
+        .setName('募选-并列情况分析')
         .setDescription('查看募选中的并列情况分析报告')
         .addStringOption(option =>
             option.setName('election_id')

@@ -6,7 +6,7 @@ const { getElectionStatistics } = require('../services/electionResultService');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('查看募选状态')
+        .setName('募选-查看募选状态')
         .setDescription('查看当前募选的状态和统计信息'),
         // .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 

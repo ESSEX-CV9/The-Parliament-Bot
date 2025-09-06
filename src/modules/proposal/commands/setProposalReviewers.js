@@ -4,8 +4,8 @@ const { saveProposalSettings, getProposalSettings } = require('../utils/proposal
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('设置议案审核员')
-    .setDescription('管理议案审核员身份组')
+    .setName('提案-设置提案审核员')
+    .setDescription('管理提案审核员身份组')
     .addSubcommand(subcommand =>
         subcommand
             .setName('添加')

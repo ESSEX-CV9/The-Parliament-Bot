@@ -3,7 +3,7 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('deletereviewentry')
+    .setName('创作者审核-删除审核入口')
     .setDescription('删除审核入口消息')
     .addStringOption(option => 
         option.setName('消息id')

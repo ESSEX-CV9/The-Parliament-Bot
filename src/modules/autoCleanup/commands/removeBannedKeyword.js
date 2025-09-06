@@ -3,7 +3,7 @@ const { removeBannedKeyword, getBannedKeywords } = require('../../../core/utils/
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('移除违禁关键字')
+        .setName('频道冲水-移除违禁关键字')
         .setNameLocalizations({
             'en-US': 'remove-banned-keyword'
         })

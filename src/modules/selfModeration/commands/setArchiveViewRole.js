@@ -3,7 +3,7 @@ const { saveArchiveViewRoleSettings, getArchiveViewRoleSettings, clearArchiveVie
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('设置归档查看身份组')
+    .setName('搬石公投-设置归档查看身份组')
     .setDescription('设置可以查看归档频道的身份组')
     .addSubcommand(subcommand =>
         subcommand

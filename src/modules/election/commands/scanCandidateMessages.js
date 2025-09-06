@@ -5,7 +5,7 @@ const { MessageTrackingService } = require('../services/messageTrackingService')
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('扫描候选人消息')
+        .setName('募选-扫描候选人消息')
         .setDescription('扫描并记录现有候选人简介消息ID（向后兼容功能）')
         .addStringOption(option =>
             option.setName('election_id')

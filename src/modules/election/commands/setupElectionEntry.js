@@ -5,7 +5,7 @@ const { createRegistrationEntryMessage, createErrorEmbed, createSuccessEmbed } =
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('设置募选入口')
+        .setName('募选-设置募选入口')
         .setDescription('设置募选的报名和投票频道')
         .addChannelOption(option =>
             option.setName('报名频道')

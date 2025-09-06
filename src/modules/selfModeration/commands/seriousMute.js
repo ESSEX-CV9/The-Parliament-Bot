@@ -10,7 +10,7 @@ const { processMessageUrlSubmission } = require('../services/moderationService')
  * 后续由 type=serious_mute 的分支在 reactionTracker/moderationChecker/punishmentExecutor 等处实现差异逻辑。
  */
 const data = new SlashCommandBuilder()
-    .setName('极端不适禁言')
+    .setName('禁言极端不适发言用户')
     .setDescription('发起对极端不适用户的禁言投票')
     .addStringOption(option =>
         option.setName('消息链接')

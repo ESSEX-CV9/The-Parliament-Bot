@@ -2,7 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const MessageDeleteService = require('../services/messageDeleteService');
 
 const data = new SlashCommandBuilder()
-    .setName('删除重建消息')
+    .setName('拟态重建-删除重建消息')
     .setDescription('删除你发布的重建消息')
     .addStringOption(option =>
         option.setName('消息链接')

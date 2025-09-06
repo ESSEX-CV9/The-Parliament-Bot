@@ -4,7 +4,7 @@ const { saveSelfModerationGlobalCooldown, getSelfModerationGlobalCooldown } = re
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('设置自助管理冷却')
+    .setName('搬石公投-设置自助管理冷却')
     .setDescription('设置所有用户使用自助管理功能的全局冷却时间')
     .addSubcommand(subcommand =>
         subcommand

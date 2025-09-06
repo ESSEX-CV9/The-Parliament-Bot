@@ -4,7 +4,7 @@ const { removeAllowedServer, getAllowedServers } = require('../../../core/utils/
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('removeallowpreviewserver')
+    .setName('创作者审核-移除允许申请审核的服务器')
     .setDescription('移除允许审核的服务器')
     .addStringOption(option => 
         option.setName('服务器id')

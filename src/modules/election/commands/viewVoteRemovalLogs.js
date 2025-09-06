@@ -5,7 +5,7 @@ const { createErrorEmbed } = require('../utils/messageUtils');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('查看投票清除日志')
+        .setName('募选-查看投票清除日志')
         .setDescription('查看投票清除操作的日志记录（仅管理员可用）')
         .addIntegerOption(option =>
             option.setName('行数')

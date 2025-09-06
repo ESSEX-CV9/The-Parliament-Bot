@@ -4,7 +4,7 @@ const { updateVotingPollCandidates } = require('../services/votingService');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('更新投票候选人')
+        .setName('募选-更新投票候选人')
         .setDescription('手动更新投票器中的候选人名单（管理员专用）')
         .addStringOption(option =>
             option.setName('选举id')

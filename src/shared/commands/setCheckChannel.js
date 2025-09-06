@@ -4,7 +4,7 @@ const { saveCheckChannelSettings, getCheckChannelSettings } = require('../../cor
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('setcheckchannel')
+    .setName('调试-设置检查报告频道')
     .setDescription('设置过期提案检查报告发送频道')
     .addChannelOption(option => 
         option.setName('频道')

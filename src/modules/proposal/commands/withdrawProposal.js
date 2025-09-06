@@ -4,8 +4,8 @@ const { getAllMessages, updateMessage } = require('../../../core/utils/database'
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('withdrawproposal')
-    .setDescription('撤回指定的议案')
+    .setName('提案-撤回提案')
+    .setDescription('撤回指定的提案')
     .addIntegerOption(option => 
         option.setName('提案id')
             .setDescription('要撤回的提案ID（数据库排序ID）')

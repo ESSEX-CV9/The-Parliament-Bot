@@ -2,7 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilde
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('开启投票')
+        .setName('投票-开启投票')
         .setDescription('创建一个新的投票')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
     

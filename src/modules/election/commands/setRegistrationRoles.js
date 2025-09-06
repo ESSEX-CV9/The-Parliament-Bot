@@ -5,7 +5,7 @@ const { createErrorEmbed, createSuccessEmbed } = require('../utils/messageUtils'
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('设置允许募选报名身份组')
+        .setName('募选-设置允许募选报名身份组')
         .setDescription('设置哪些身份组的成员可以参与募选报名（服务器级别持久化配置）')
         .addSubcommand(subcommand =>
             subcommand

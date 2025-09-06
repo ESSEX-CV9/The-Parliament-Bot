@@ -5,7 +5,7 @@ const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../c
 const { getChannelTypeDescription } = require('../utils/channelValidator');
 
 const data = new SlashCommandBuilder()
-    .setName('设置自助管理频道')
+    .setName('搬石公投-设置自助管理频道')
     .setDescription('设置哪些频道可以使用自助管理功能')
     .addSubcommand(subcommand =>
         subcommand

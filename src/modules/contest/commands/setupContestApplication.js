@@ -5,7 +5,7 @@ const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../c
 const { ensureContestStatusTags } = require('../utils/forumTagManager');
 
 const data = new SlashCommandBuilder()
-    .setName('设置赛事申请入口')
+    .setName('赛事-设置赛事申请入口')
     .setDescription('设置赛事申请系统的基础配置')
     .addChannelOption(option => 
         option.setName('审批论坛')

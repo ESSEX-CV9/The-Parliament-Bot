@@ -4,7 +4,7 @@ const { removeAllowedForum, getAllowedForums } = require('../../../core/utils/da
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('removeallowedforum')
+    .setName('创作者审核-移除允许申请审核的论坛频道')
     .setDescription('移除允许审核的论坛频道')
     .addStringOption(option => 
         option.setName('服务器id')

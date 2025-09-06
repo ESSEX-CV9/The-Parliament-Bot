@@ -3,7 +3,7 @@ const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../c
 const { displayService } = require('../services/displayService');
 
 const data = new SlashCommandBuilder()
-    .setName('cachestats')
+    .setName('赛事-查看缓存统计')
     .setDescription('查看比赛系统缓存统计信息（管理员专用）');
 
 async function execute(interaction) {

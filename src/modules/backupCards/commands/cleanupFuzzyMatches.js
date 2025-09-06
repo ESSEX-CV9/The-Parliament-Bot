@@ -7,7 +7,7 @@ const permissionManager = require('../../../core/utils/permissionManager');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('cleanupfuzzymatches')
+        .setName('补卡-批量清理模糊匹配的补卡消息')
         .setDescription('批量清理模糊匹配的补卡消息')
         .addIntegerOption(option =>
             option.setName('start')

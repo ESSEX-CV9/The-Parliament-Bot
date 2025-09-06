@@ -5,7 +5,7 @@ const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../c
 const { saveProposalSettings } = require('../utils/proposalDatabase');
 
 const data = new SlashCommandBuilder()
-    .setName('setupform')
+    .setName('提案-设置表单入口')
     .setDescription('设置一个表单入口')
     .addChannelOption(option => 
         option.setName('预审核论坛')

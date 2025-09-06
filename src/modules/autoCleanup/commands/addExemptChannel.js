@@ -3,7 +3,7 @@ const { addExemptChannel } = require('../../../core/utils/database');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('添加豁免频道')
+        .setName('频道冲水-添加豁免频道')
         .setNameLocalizations({
             'en-US': 'add-exempt-channel'
         })

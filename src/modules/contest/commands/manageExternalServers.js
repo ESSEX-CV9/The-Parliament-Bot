@@ -3,7 +3,7 @@ const { getContestSettings, saveContestSettings } = require('../utils/contestDat
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('管理外部服务器')
+    .setName('赛事-管理外部服务器')
     .setDescription('管理允许投稿的外部服务器列表')
     .addSubcommand(subcommand =>
         subcommand

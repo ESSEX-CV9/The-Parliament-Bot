@@ -9,7 +9,7 @@ const permissionManager = require('../../../core/utils/permissionManager');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('processbackupcards')
+        .setName('补卡-处理补卡表格文件')
         .setDescription('处理补卡Excel文件，自动发送补卡内容到对应帖子')
         .addIntegerOption(option =>
             option.setName('start')

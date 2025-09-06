@@ -5,7 +5,7 @@ const { CandidateManagementService } = require('../services/candidateManagementS
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('编辑候选人信息')
+        .setName('募选-编辑候选人信息')
         .setDescription('管理员编辑候选人信息和状态')
         .addUserOption(option =>
             option.setName('候选人')

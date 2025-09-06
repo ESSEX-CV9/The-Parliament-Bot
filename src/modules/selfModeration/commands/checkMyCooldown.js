@@ -3,7 +3,7 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { checkUserGlobalCooldown } = require('../../../core/utils/database');
 
 const data = new SlashCommandBuilder()
-    .setName('查看我的冷却')
+    .setName('搬石公投-查看我的冷却')
     .setDescription('查看您当前的自助管理功能冷却状态');
 
 async function execute(interaction) {

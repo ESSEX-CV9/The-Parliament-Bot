@@ -4,7 +4,7 @@ const { getSelfModerationSettings, saveSelfModerationSettings } = require('../..
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('设置自助管理权限')
+    .setName('搬石公投-设置自助管理权限')
     .setDescription('设置哪些身份组可以使用自助管理功能')
     .addSubcommand(subcommand =>
         subcommand

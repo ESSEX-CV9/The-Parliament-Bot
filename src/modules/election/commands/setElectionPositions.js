@@ -5,7 +5,7 @@ const { createSuccessEmbed, createErrorEmbed } = require('../utils/messageUtils'
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('设置募选职位')
+        .setName('募选-设置募选职位')
         .setDescription('设置募选的职位和人数')
         .addStringOption(option =>
             option.setName('募选名称')
