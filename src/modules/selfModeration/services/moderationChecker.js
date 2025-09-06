@@ -70,6 +70,29 @@ async function processIndividualVote(client, vote) {
             return;
         }
         
+        // 严肃禁言投票：≥5 立即删除目标消息（在阈值判定之前执行）
+        try {
+            const executedActions = Array.isArray(vote.executedActions) ? vote.executedActions : [];
+            const alreadyDeleteNow = executedActions.some(a => a && a.action === 'delete_now');
+            const dedupCount = (vote.currentReactionCount ?? vote.reactionCount ?? vote.deduplicatedCount ?? 0);
+            if (type === 'serious_mute' && dedupCount >= 5 && !alreadyDeleteNow) {
+                const { deleteMessageImmediately } = require('./punishmentExecutor');
+                const delRes = await deleteMessageImmediately(client, vote);
+                if (delRes && delRes.success) {
+                    const newExecutedActions = [...executedActions, { action: 'delete_now', at: Date.now() }];
+                    await updateSelfModerationVote(guildId, targetMessageId, type, {
+                        executedActions: newExecutedActions,
+                        lastExecuted: new Date().toISOString()
+                    });
+                    console.log(`已在严肃禁言投票中立即删除目标消息 ${targetMessageId}，并记录 executedActions.delete_now`);
+                } else {
+                    console.warn(`严肃禁言投票立即删除失败: ${targetMessageId} - ${delRes && delRes.error ? delRes.error : '未知原因'}`);
+                }
+            }
+        } catch (immediateErr) {
+            console.error('处理严肃禁言投票即时删除时出错:', immediateErr);
+        }
+        
         // 检查是否达到执行阈值
         const thresholdCheck = checkReactionThreshold(currentReactionCount, type);
         
@@ -170,7 +193,8 @@ async function executePunishment(client, vote) {
         let result;
         if (type === 'delete') {
             result = await executeDeleteMessage(client, vote);
-        } else if (type === 'mute') {
+        } else if (type === 'mute' || type === 'serious_mute') {
+            // serious_mute 复用禁言执行链路
             result = await executeMuteUser(client, vote);
         }
         
@@ -195,8 +219,8 @@ async function handleExpiredVote(client, vote) {
         
         let deleteResult = null;
         
-        // 如果是禁言投票，投票结束后删除消息并归档
-        if (type === 'mute') {
+        // 如果是禁言投票（含严肃禁言），投票结束后删除消息并归档
+        if (type === 'mute' || type === 'serious_mute') {
             // 检查是否达到禁言阈值
             const thresholdCheck = checkReactionThreshold(currentReactionCount, type);
             
@@ -264,8 +288,8 @@ async function editVoteAnnouncementToExpired(client, vote, deleteResult = null) 
         
         let description = `**${actionName}**投票已结束\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${targetUserId}>\n**发起人：** <@${initiatorId}>\n**最终⚠️数量：** ${currentReactionCount}（去重后）\n**所需数量：** ${thresholdCheck.threshold}\n\n${currentReactionCount >= thresholdCheck.threshold ? '✅ 已达到执行条件并执行' : '❌ 未达到执行条件，投票结束'}`;
         
-        // 🔥 如果是禁言投票且有删除结果，添加消息删除状态
-        if (type === 'mute' && deleteResult) {
+        // 🔥 如果是禁言/严肃禁言投票且有删除结果，添加消息删除状态
+        if ((type === 'mute' || type === 'serious_mute') && deleteResult) {
             if (deleteResult.success && !deleteResult.alreadyDeleted) {
                 description += `\n**消息状态：** ✅ 已删除`;
                 if (deleteResult.archived) {
@@ -332,7 +356,7 @@ async function sendPunishmentNotification(client, vote, result) {
                 .setDescription(description)
                 .setColor('#FF0000')
                 .setTimestamp();
-        } else if (type === 'mute' && result.success) {
+        } else if ((type === 'mute' || type === 'serious_mute') && result.success) {
             let description;
             if (result.alreadyMuted) {
                 description = `<@${result.userId}> 已经被禁言，当前禁言时长：**${result.currentDuration}**\n\n⚠️反应数量：${currentReactionCount}（去重后）`;
@@ -371,59 +395,6 @@ async function sendPunishmentNotification(client, vote, result) {
  * @param {Client} client - Discord客户端
  * @param {object} vote - 投票数据
  */
-async function editVoteAnnouncementToExpired(client, vote) {
-    try {
-        const { 
-            channelId, 
-            type, 
-            currentReactionCount, 
-            targetMessageUrl, 
-            voteAnnouncementMessageId,
-            voteAnnouncementChannelId,
-            initiatorId,
-            targetUserId
-        } = vote;
-        
-        // 获取投票公告所在的频道
-        const announcementChannel = await client.channels.fetch(voteAnnouncementChannelId || channelId);
-        if (!announcementChannel) return;
-        
-        // 获取投票公告消息
-        if (!voteAnnouncementMessageId) {
-            console.log('没有找到投票公告消息ID，无法编辑');
-            return;
-        }
-        
-        const announcementMessage = await announcementChannel.messages.fetch(voteAnnouncementMessageId);
-        if (!announcementMessage) {
-            console.log('投票公告消息不存在，无法编辑');
-            return;
-        }
-        
-        const actionName = type === 'delete' ? '删除消息' : '禁言用户';
-        const thresholdCheck = checkReactionThreshold(currentReactionCount, type);
-        
-        let description = `**${actionName}**投票已结束\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${targetUserId}>\n**发起人：** <@${initiatorId}>\n**最终⚠️数量：** ${currentReactionCount}（去重后）\n**所需数量：** ${thresholdCheck.threshold}\n\n${currentReactionCount >= thresholdCheck.threshold ? '✅ 已达到执行条件并执行' : '❌ 未达到执行条件，投票结束'}`;
-        
-        description += `\n\n💡 反应统计包含目标消息和投票公告的所有⚠️反应（同一用户只计算一次）`;
-        
-        const embed = new EmbedBuilder()
-            .setTitle('⏰ 投票时间已结束')
-            .setDescription(description)
-            .setColor(currentReactionCount >= thresholdCheck.threshold ? '#00FF00' : '#808080')
-            .setTimestamp()
-            .setFooter({
-                text: '投票已结束'
-            });
-        
-        // 编辑原投票公告消息
-        await announcementMessage.edit({ embeds: [embed] });
-        console.log(`已编辑投票公告消息 ${voteAnnouncementMessageId} 为投票结束通知`);
-        
-    } catch (error) {
-        console.error('编辑投票公告为过期通知时出错:', error);
-    }
-}
 
 /**
  * 启动自助管理检查器

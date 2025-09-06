@@ -87,58 +87,6 @@ function getChannelTypeDescription(channel) {
     return channelTypes[channel.type] || `未知类型(${channel.type})`;
 }
 
-/**
- * 检查机器人在目标频道是否有必要的权限
- * @param {Channel} channel - 目标频道
- * @param {GuildMember} botMember - 机器人成员对象
- * @param {string} action - 需要执行的操作 ('delete' 或 'mute')
- * @returns {object} {hasPermission: boolean, missingPermissions: string[]}
- */
-function checkBotPermissions(channel, botMember, action) {
-    try {
-        const permissions = channel.permissionsFor(botMember);
-        const missingPermissions = [];
-        
-        if (!permissions) {
-            return {
-                hasPermission: false,
-                missingPermissions: ['无法获取频道权限']
-            };
-        }
-        
-        // 检查基础权限
-        if (!permissions.has('ViewChannel')) {
-            missingPermissions.push('查看频道');
-        }
-        
-        if (!permissions.has('SendMessages')) {
-            missingPermissions.push('发送消息');
-        }
-        
-        // 根据操作检查特定权限
-        if (action === 'delete') {
-            if (!permissions.has('ManageMessages')) {
-                missingPermissions.push('管理消息');
-            }
-        } else if (action === 'mute') {
-            if (!permissions.has('ModerateMembers')) {
-                missingPermissions.push('管理成员（禁言）');
-            }
-        }
-        
-        return {
-            hasPermission: missingPermissions.length === 0,
-            missingPermissions
-        };
-        
-    } catch (error) {
-        console.error('检查机器人权限时出错:', error);
-        return {
-            hasPermission: false,
-            missingPermissions: ['权限检查失败']
-        };
-    }
-}
 
 /**
  * 获取频道的层级信息（用于调试和日志）
@@ -190,6 +138,10 @@ function checkBotPermissions(channel, botMember, action) {
         if (action === 'delete') {
             if (!permissions.has('ManageMessages')) {
                 missingPermissions.push('管理消息');
+            }
+        } else if (action === 'serious_mute') {
+            if (!permissions.has('ManageChannels')) {
+                missingPermissions.push('ManageChannels（管理频道）');
             }
         } else if (action === 'mute') {
             if (!permissions.has('ModerateMembers')) {

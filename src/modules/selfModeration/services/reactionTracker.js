@@ -36,8 +36,8 @@ function getVoteEmojis(type) {
     if (type === 'delete') {
         // 删除投票使用⚠️表情
         return ['⚠️', '⚠', 'warning', ':warning:'];
-    } else if (type === 'mute') {
-        // 禁言投票使用🚫表情
+    } else if (type === 'mute' || type === 'serious_mute') {
+        // 禁言投票与严肃禁言复用🚫表情
         return ['🚫', '🚯', 'no_entry_sign', ':no_entry_sign:'];
     }
     
@@ -80,7 +80,7 @@ async function getVoteReactionUsers(client, channelId, messageId, type = 'delete
         });
         
         if (!voteReaction) {
-            const emojiText = type === 'mute' ? '🚫' : '⚠️';
+            const emojiText = (type === 'mute' || type === 'serious_mute') ? '🚫' : '⚠️';
             console.log(`消息 ${messageId} 没有${emojiText}反应`);
             return new Set();
         }
@@ -95,12 +95,12 @@ async function getVoteReactionUsers(client, channelId, messageId, type = 'delete
             }
         });
         
-        const emojiText = type === 'mute' ? '🚫' : '⚠️';
+        const emojiText = (type === 'mute' || type === 'serious_mute') ? '🚫' : '⚠️';
         console.log(`消息 ${messageId} 的${emojiText}反应用户数量: ${userIds.size}`);
         return userIds;
         
     } catch (error) {
-        const emojiText = type === 'mute' ? '🚫' : '⚠️';
+        const emojiText = (type === 'mute' || type === 'serious_mute') ? '🚫' : '⚠️';
         console.error(`获取${emojiText}反应用户时出错:`, error);
         return new Set();
     }
@@ -273,6 +273,15 @@ function checkReactionThreshold(reactionCount, type) {
             reached: reactionCount >= MUTE_BASE_THRESHOLD,
             threshold: MUTE_BASE_THRESHOLD,
             action: '禁言用户'
+        };
+    } else if (type === 'serious_mute') {
+        // 严肃禁言：基于动态 Level 1 阈值 × 1.5 向上取整
+        const base0 = MUTE_DURATIONS.LEVEL_1.threshold;
+        const base = Math.ceil(base0 * 1.5);
+        return {
+            reached: reactionCount >= base,
+            threshold: base,
+            action: '严肃禁言'
         };
     }
     

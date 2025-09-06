@@ -80,15 +80,15 @@ async function createOrMergeVote(voteData) {
  */
 async function checkConflictingVote(guildId, targetMessageId, currentType) {
     try {
-        const otherType = currentType === 'delete' ? 'mute' : 'delete';
-        const conflictingVote = await getSelfModerationVote(guildId, targetMessageId, otherType);
-        
-        if (conflictingVote && conflictingVote.status === 'active') {
-            return conflictingVote;
+        // 将 serious_mute 视同 mute：当当前为 delete 时，需要与 mute/serious_mute 冲突互斥
+        const typesToCheck = currentType === 'delete' ? ['mute', 'serious_mute'] : ['delete'];
+        for (const t of typesToCheck) {
+            const conflictingVote = await getSelfModerationVote(guildId, targetMessageId, t);
+            if (conflictingVote && conflictingVote.status === 'active') {
+                return conflictingVote;
+            }
         }
-        
         return null;
-        
     } catch (error) {
         console.error('检查冲突投票时出错:', error);
         return null;
