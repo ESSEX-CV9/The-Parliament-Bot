@@ -49,6 +49,7 @@ const applyToCourtCommand = require('../modules/court/commands/applyToCourt');
 // 自助管理系统命令
 const deleteShitMessageCommand = require('../modules/selfModeration/commands/deleteShitMessage');
 const muteShitUserCommand = require('../modules/selfModeration/commands/muteShitUser');
+const seriousMuteCommand = require('../modules/selfModeration/commands/seriousMute');
 const setSelfModerationRolesCommand = require('../modules/selfModeration/commands/setSelfModerationRoles');
 const setSelfModerationChannelsCommand = require('../modules/selfModeration/commands/setSelfModerationChannels');
 const setSelfModerationCooldownCommand = require('../modules/selfModeration/commands/setSelfModerationCooldown');
@@ -184,6 +185,7 @@ client.commands.set(applyToCourtCommand.data.name, applyToCourtCommand);
 // 自助管理系统命令
 client.commands.set(deleteShitMessageCommand.data.name, deleteShitMessageCommand);
 client.commands.set(muteShitUserCommand.data.name, muteShitUserCommand);
+client.commands.set(seriousMuteCommand.data.name, seriousMuteCommand);
 client.commands.set(setSelfModerationRolesCommand.data.name, setSelfModerationRolesCommand);
 client.commands.set(setSelfModerationChannelsCommand.data.name, setSelfModerationChannelsCommand);
 client.commands.set(setSelfModerationCooldownCommand.data.name, setSelfModerationCooldownCommand);
