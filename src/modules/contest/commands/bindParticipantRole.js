@@ -5,7 +5,7 @@ const { checkContestManagePermission, getManagePermissionDeniedMessage } = requi
 const { bindParticipantRole } = require('../services/participantRoleService');
 
 const data = new SlashCommandBuilder()
-    .setName('绑定比赛身份组')
+    .setName('赛事-绑定比赛身份组')
     .setDescription('为当前比赛绑定一个参赛者专属的装饰身份组')
     .addRoleOption(option =>
         option.setName('身份组')

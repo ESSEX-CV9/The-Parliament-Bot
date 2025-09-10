@@ -5,7 +5,7 @@ const { checkContestManagePermission, getManagePermissionDeniedMessage } = requi
 const { openRoleManagementPanel } = require('../services/participantRoleService');
 
 const data = new SlashCommandBuilder()
-    .setName('管理比赛身份组')
+    .setName('赛事-管理比赛身份组')
     .setDescription('打开参赛者身份组的管理面板');
 
 async function execute(interaction) {

@@ -71,6 +71,8 @@ const manageAllowedForumsCommand = require('../modules/contest/commands/manageAl
 const manageExternalServersCommand = require('../modules/contest/commands/manageExternalServers');
 const cacheStats = require('../modules/contest/commands/cacheStats');
 const regenerateContestMessagesCommand = require('../modules/contest/commands/regenerateContestMessages');
+const bindParticipantRoleCommand = require('../modules/contest/commands/bindParticipantRole');
+const manageParticipantRoleCommand = require('../modules/contest/commands/manageParticipantRole');
 
 // 自动清理系统命令
 const addBannedKeywordCommand = require('../modules/autoCleanup/commands/addBannedKeyword');
@@ -207,6 +209,8 @@ client.commands.set(manageAllowedForumsCommand.data.name, manageAllowedForumsCom
 client.commands.set(manageExternalServersCommand.data.name, manageExternalServersCommand);
 client.commands.set(cacheStats.data.name, cacheStats);
 client.commands.set(regenerateContestMessagesCommand.data.name, regenerateContestMessagesCommand);
+client.commands.set(bindParticipantRoleCommand.data.name, bindParticipantRoleCommand);
+client.commands.set(manageParticipantRoleCommand.data.name, manageParticipantRoleCommand);
 
 // 自动清理系统命令
 client.commands.set(addBannedKeywordCommand.data.name, addBannedKeywordCommand);

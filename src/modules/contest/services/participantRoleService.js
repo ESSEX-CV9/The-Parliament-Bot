@@ -350,10 +350,11 @@ async function grantToAll(interaction) {
 }
 
 /**
- * 公开发布所有参赛者名单
+ * 私密地列出所有参赛者名单
  * @param {import('discord.js').Interaction} interaction
  */
 async function listAllParticipants(interaction) {
+    //  deferReply 必须是 ephemeral
     await interaction.deferReply({ ephemeral: true });
 
     const allParticipants = await getParticipantMembers(interaction.guild, interaction.channel.id);
@@ -361,21 +362,37 @@ async function listAllParticipants(interaction) {
         return interaction.editReply({ content: '🤔 没有任何有效的参赛者。' });
     }
 
-    const userList = allParticipants.map(m => m.user.tag).join('\n');
+    // 生成包含用户tag、ID和提及的详细列表
+    const userListString = allParticipants
+        .map((member, index) => `${index + 1}. ${member.user.tag} (${member.id})`)
+        .join('\n');
 
-    const embed = new EmbedBuilder()
-        .setTitle(`🏆 ${interaction.channel.name} - 参赛者名单`)
-        .setDescription(userList)
-        .setColor('#87CEEB')
-        .setTimestamp();
+    // 检查列表字符串长度
+    // Discord Embed description 上限是 4096，私密消息内容上限是 2000，我们取一个保守值
+    if (userListString.length < 1900) {
+        // 如果名单不长，直接用 Embed 发送
+        const embed = new EmbedBuilder()
+            .setTitle(`🏆 ${interaction.channel.name} - 参赛者名单 (私密)`)
+            .setDescription(userListString)
+            .setColor('#87CEEB')
+            .setFooter({ text: `共 ${allParticipants.length} 人 | 此消息仅您可见` })
+            .setTimestamp();
 
-    // 发送公开消息，但不提及任何人
-    await interaction.channel.send({
-        embeds: [embed],
-        allowed_mentions: { parse: [] } // 禁用所有提及
-    });
+        await interaction.editReply({ embeds: [embed] });
 
-    await interaction.editReply({ content: '✅ 已在当前频道发布参赛者名单。' });
+    } else {
+        // 如果名单太长，生成一个 txt 文件发送
+        const fileBuffer = Buffer.from(userListString, 'utf-8');
+        const attachment = {
+            attachment: fileBuffer,
+            name: `participants-${interaction.channel.id}.txt`
+        };
+
+        await interaction.editReply({
+            content: `✅ 参赛者名单过长（共 ${allParticipants.length} 人），已为您生成文本文件。此消息仅您可见。`,
+            files: [attachment]
+        });
+    }
 }
 
 
