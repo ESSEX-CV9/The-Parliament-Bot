@@ -7,6 +7,8 @@ const { validateChannel, checkBotPermissions } = require('../utils/channelValida
 const { createOrMergeVote, checkConflictingVote, formatVoteInfo } = require('./votingManager');
 const { getShitReactionCount } = require('./reactionTracker');
 const { getSelfModerationVoteEndTime, DELETE_THRESHOLD, MUTE_DURATIONS, getCurrentTimeMode } = require('../../../core/config/timeconfig');
+const { getRecentSeriousMuteCount } = require('./seriousMuteHistory');
+const { formatDuration } = require('../utils/timeCalculator');
 
 /**
  * 处理所有来自自助管理模块的交互（按钮点击和嵌入窗口的提交）。
@@ -107,11 +109,12 @@ async function processMessageUrlSubmission(interaction, type, messageUrl) {
             });
         }
         
-        // 检查用户权限
-        const hasPermission = checkSelfModerationPermission(interaction.member, type, settings);
+        // 检查用户权限（serious_mute 视同 mute 放行）
+        const permType = (type === 'serious_mute') ? 'mute' : type;
+        const hasPermission = checkSelfModerationPermission(interaction.member, permType, settings);
         if (!hasPermission) {
             return interaction.editReply({
-                content: getSelfModerationPermissionDeniedMessage(type)
+                content: getSelfModerationPermissionDeniedMessage(permType)
             });
         }
         
@@ -285,8 +288,8 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         const endTimestamp = Math.floor(new Date(endTime).getTime() / 1000);
         
         // 获取对应投票类型的表情符号
-        const voteEmoji = type === 'mute' ? '🚫' : '⚠️';
-        const emojiName = type === 'mute' ? '🚫' : '⚠️';
+        const voteEmoji = (type === 'mute' || type === 'serious_mute') ? '🚫' : '⚠️';
+        const emojiName = (type === 'mute' || type === 'serious_mute') ? '🚫' : '⚠️';
         
         // 获取当前反应数量
         const initialReactionCount = await getShitReactionCount(
@@ -298,24 +301,72 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         
         // 🔥 动态获取阈值配置
         const deleteThreshold = DELETE_THRESHOLD;
-        const muteThreshold = MUTE_DURATIONS.LEVEL_1.threshold; // 最低禁言阈值
+        const { calculateLinearMuteDuration, LINEAR_MUTE_CONFIG } = require('../../../core/config/timeconfig');
         
         // 🔥 获取当前时段模式
         const currentTimeMode = getCurrentTimeMode();
+        const isNight = require('../../../core/config/timeconfig').isDayTime() === false;
         
-        // 🔥 构建执行条件文本
-        const executionCondition = type === 'delete' 
-            ? `${deleteThreshold}个⚠️删除消息 (${currentTimeMode})` 
-            : `${muteThreshold}个🚫开始禁言 (${currentTimeMode})`;
+        // 🔥 构建执行条件文本 - 显示线性禁言规则
+        let executionCondition;
+        if (type === 'delete') {
+            executionCondition = `${deleteThreshold}个⚠️删除消息 (${currentTimeMode})`;
+        } else {
+            const muteCalc = calculateLinearMuteDuration(10, isNight); // 使用基础阈值计算
+            const baseThreshold = muteCalc.threshold;
+            executionCondition = `${baseThreshold}个🚫开始禁言(${LINEAR_MUTE_CONFIG.BASE_DURATION}分钟)，每票+${LINEAR_MUTE_CONFIG.ADDITIONAL_MINUTES_PER_VOTE}分钟 (${currentTimeMode})`;
+        }
         
-        const embed = new EmbedBuilder()
-            .setTitle(`🗳️ ${actionName}投票已启动`)
-            .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加${voteEmoji}反应来表达支持，**或者直接对本消息添加${voteEmoji}反应**。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${targetUserId}>\n**发起人：** <@${initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前${emojiName}数量：** ${initialReactionCount}\n**执行条件：** ${executionCondition}`)
-            .setColor('#FFA500')
-            .setTimestamp()
-            .setFooter({
-                text: `${emojiName}反应数量会定时检查，达到条件后会自动执行相应操作。可以对目标消息或本公告添加${emojiName}反应，同一用户只计算一次。`
-            });
+        let embed;
+
+        if (type === 'serious_mute') {
+            // 严肃禁言分支：红色样式 + 额外字段
+            const base0 = MUTE_DURATIONS.LEVEL_1.threshold;
+            const base = Math.ceil(base0 * 1.5);
+
+            // 近15天累计次数
+            const guildId = voteData.guildId;
+            const prev = await getRecentSeriousMuteCount(guildId, targetUserId);
+
+            // 若仅达基础反应的最低禁言时长
+            const levelIndexMin = prev + 1;
+            const baseMinutesList = [10, 20, 30, 60, 120, 240, 360, 480, 600]; // A1 映射
+            const minutesMin = levelIndexMin >= 10 ? 720 : baseMinutesList[levelIndexMin - 1];
+            const minutesMinHuman = formatDuration(minutesMin);
+
+            const seriousExecutionCondition = `${base}个🚫开始严肃禁言 (${currentTimeMode})`;
+
+            embed = new EmbedBuilder()
+                .setTitle('【严肃禁言】这是一场严肃禁言，请仔细思考后投票。')
+                .setDescription(
+                    `请前往目标消息添加🚫反应支持严肃禁言，**或者直接对本消息添加🚫反应**。\n\n` +
+                    `**目标消息：** ${formatMessageLink(targetMessageUrl)}\n` +
+                    `**消息作者：** <@${targetUserId}>\n` +
+                    `**发起人：** <@${initiatorId}>\n` +
+                    `**投票结束时间：** <t:${endTimestamp}:f>\n\n` +
+                    `达到 5 个 🚫 将立即删除被引用消息`
+                )
+                .setColor('#FF0000')
+                .setTimestamp()
+                .setFooter({
+                    text: `🚫反应数量会定时检查，达到条件后会自动执行相应操作。可以对目标消息或本公告添加🚫反应，同一用户只计算一次。`
+                })
+                .addFields(
+                    { name: '当前累计（近15天）', value: `${prev} 次`, inline: true },
+                    { name: '严肃禁言阈值（当前时段）', value: `${base} 人`, inline: true },
+                    { name: '若仅达基础反应的最低禁言时长', value: `${minutesMinHuman}`, inline: false },
+                );
+        } else {
+            // 其它类型保持现状
+            embed = new EmbedBuilder()
+                .setTitle(`🗳️ ${actionName}投票已启动`)
+                .setDescription(`有用户发起了${actionName}投票，请大家前往目标消息添加${voteEmoji}反应来表达支持，**或者直接对本消息添加${voteEmoji}反应**。\n\n**目标消息：** ${formatMessageLink(targetMessageUrl)}\n**消息作者：** <@${targetUserId}>\n**发起人：** <@${initiatorId}>\n**投票结束时间：** <t:${endTimestamp}:f>\n**当前${emojiName}数量：** ${initialReactionCount}\n**执行条件：** ${executionCondition}`)
+                .setColor('#FFA500')
+                .setTimestamp()
+                .setFooter({
+                    text: `${emojiName}反应数量会定时检查，达到条件后会自动执行相应操作。可以对目标消息或本公告添加${emojiName}反应，同一用户只计算一次。`
+                });
+        }
         
         // 检查是否有冲突的投票
         const conflictingVote = await checkConflictingVote(voteData.guildId, voteData.targetMessageId, type);

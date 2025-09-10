@@ -3,7 +3,7 @@ const { getBannedKeywords } = require('../../../core/utils/database');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('查看违禁关键字')
+        .setName('频道冲水-查看违禁关键字')
         .setNameLocalizations({
             'en-US': 'list-banned-keywords'
         })

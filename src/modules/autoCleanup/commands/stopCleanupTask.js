@@ -3,7 +3,7 @@ const { taskManager } = require('../services/taskManager');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('停止清理任务')
+        .setName('频道冲水-停止清理任务')
         .setNameLocalizations({
             'en-US': 'stop-cleanup-task'
         })

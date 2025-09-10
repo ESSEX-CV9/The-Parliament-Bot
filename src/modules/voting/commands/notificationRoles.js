@@ -3,7 +3,7 @@ const { saveNotificationConfig, getNotificationConfig } = require('../services/n
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('设置通知身份组')
+        .setName('投票-设置通知身份组')
         .setDescription('设置自助通知身份组系统')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
         .addSubcommand(subcommand =>

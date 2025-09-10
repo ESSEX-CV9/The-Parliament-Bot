@@ -3,7 +3,7 @@ const { getAutoCleanupSettings, saveAutoCleanupSettings } = require('../../../co
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('切换自动清理')
+        .setName('频道冲水-切换自动清理')
         .setNameLocalizations({
             'en-US': 'toggle-auto-cleanup'
         })

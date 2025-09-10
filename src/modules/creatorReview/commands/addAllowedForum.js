@@ -4,7 +4,7 @@ const { addAllowedForum, isServerAllowed, getAllowedForums } = require('../../..
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('addallowedforum')
+    .setName('创作者审核-添加允许申请审核的论坛频道')
     .setDescription('添加允许审核的论坛频道')
     .addStringOption(option => 
         option.setName('服务器id')

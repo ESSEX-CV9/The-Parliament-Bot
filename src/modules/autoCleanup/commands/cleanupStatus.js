@@ -4,7 +4,7 @@ const { getAutoCleanupSettings } = require('../../../core/utils/database');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('清理状态')
+        .setName('频道冲水-清理状态')
         .setNameLocalizations({
             'en-US': 'cleanup-status'
         })

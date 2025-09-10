@@ -13,7 +13,7 @@ const ATTACHMENTS_DIR = path.join(__dirname, '../../../../data/attachments');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('manage-attachment-cleanup')
+        .setName('搬石公投-管理附件清理')
         .setDescription('管理附件清理任务')
         .addSubcommand(subcommand =>
             subcommand

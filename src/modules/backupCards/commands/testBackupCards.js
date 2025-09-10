@@ -9,7 +9,7 @@ const permissionManager = require('../../../core/utils/permissionManager');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('testbackupcards')
+        .setName('补卡-测试补卡模块')
         .setDescription('测试补卡模块的基础功能')
         .addIntegerOption(option =>
             option.setName('rows')

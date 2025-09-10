@@ -5,7 +5,7 @@ const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../c
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('创建自助身份组面板')
+        .setName('自助身份组申请-创建自助身份组面板')
         .setDescription('在当前频道创建一个自助身份组的申请入口')
         .addStringOption(option =>
             option.setName('标题')

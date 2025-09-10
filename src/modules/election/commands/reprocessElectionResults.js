@@ -6,7 +6,7 @@ const { calculateElectionResults } = require('../services/electionResultService'
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('重新处理选举结果')
+        .setName('募选-重新处理选举结果')
         .setDescription('手动重新计算和发布最近一次选举的结果')
         .addStringOption(option =>
             option.setName('选举id')

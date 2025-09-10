@@ -4,7 +4,7 @@ const { saveReviewSettings } = require('../../../core/utils/database');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('setupreview')
+    .setName('创作者审核-设置审核提交入口')
     .setDescription('设置审核提交入口')
     .addIntegerOption(option => 
         option.setName('所需反应数')

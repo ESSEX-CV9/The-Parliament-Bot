@@ -1,6 +1,6 @@
 // src/modules/selfRole/services/activityTracker.js
 
-const { saveUserActivityBatch, getSelfRoleSettings, getAllSelfRoleSettings, saveSelfRoleSettings } = require('../../../core/utils/database');
+const { saveUserActivityBatch, saveDailyUserActivityBatch, getSelfRoleSettings, getAllSelfRoleSettings, saveSelfRoleSettings } = require('../../../core/utils/database');
 
 /**
  * 单个用户在某频道内的活跃度增量数据。
@@ -70,8 +70,14 @@ async function _writeCacheToDatabase() {
     console.log(`[SelfRole] 💾 开始将 ${Object.keys(cacheToWrite).length} 个服务器的活跃度增量数据写入数据库...`);
 
     try {
+        // 保存总体活跃度数据
         await saveUserActivityBatch(cacheToWrite);
-        
+
+        // 保存每日活跃度数据
+        // 使用 UTC 时间确保与历史数据回溯的日期计算一致
+        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
+        await saveDailyUserActivityBatch(cacheToWrite, today);
+
         // 批量更新所有涉及服务器的最后成功保存时间戳
         const guildIds = Object.keys(cacheToWrite);
         for (const guildId of guildIds) {
@@ -81,7 +87,7 @@ async function _writeCacheToDatabase() {
                 await saveSelfRoleSettings(guildId, settings);
             }
         }
-        
+
         console.log('[SelfRole] ✅ 活跃度数据成功写入数据库。');
     } catch (error) {
         console.error('[SelfRole] ❌ 写入活跃度数据到数据库时出错:', error);

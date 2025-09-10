@@ -4,7 +4,7 @@ const { getCourtSettings } = require('../../../core/utils/database');
 const { processCourtApplication } = require('../services/courtService');
 
 const data = new SlashCommandBuilder()
-    .setName('申请上庭')
+    .setName('上庭-申请上庭')
     .setDescription('申请对某个成员进行处罚')
     .addUserOption(option => 
         option.setName('处罚对象')

@@ -3,7 +3,7 @@ const { setCleanupChannels, getAutoCleanupSettings } = require('../../../core/ut
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('设置清理频道')
+        .setName('频道冲水-设置清理频道')
         .setNameLocalizations({
             'en-US': 'set-cleanup-channels'
         })

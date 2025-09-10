@@ -49,6 +49,7 @@ const applyToCourtCommand = require('../modules/court/commands/applyToCourt');
 // 自助管理系统命令
 const deleteShitMessageCommand = require('../modules/selfModeration/commands/deleteShitMessage');
 const muteShitUserCommand = require('../modules/selfModeration/commands/muteShitUser');
+const seriousMuteCommand = require('../modules/selfModeration/commands/seriousMute');
 const setSelfModerationRolesCommand = require('../modules/selfModeration/commands/setSelfModerationRoles');
 const setSelfModerationChannelsCommand = require('../modules/selfModeration/commands/setSelfModerationChannels');
 const setSelfModerationCooldownCommand = require('../modules/selfModeration/commands/setSelfModerationCooldown');
@@ -126,6 +127,7 @@ const deleteRebuiltMessageCommand = require('../modules/threadRebuilder/commands
 const uploadCommand = require('../modules/selfFileUpload/commands/uploadFile');
 const whoisCommand = require('../modules/selfFileUpload/commands/queryAnonymousLog');
 const manageOptOutCommand = require('../modules/selfFileUpload/commands/manageOptOut.js');
+const collectBackupsCommand = require('../modules/selfFileUpload/commands/collectBackups.js');
 
 // 补卡系统命令
 const processBackupCardsCommand = require('../modules/backupCards/commands/processBackupCards');
@@ -146,7 +148,10 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions, // 需要这个intent来监控reaction
         GatewayIntentBits.MessageContent,
-    ]
+    ],
+    rest: {
+        requestTimeout: 60000, // 将超时时间设置为 60 秒
+    },
 });
 
 client.commands = new Collection();
@@ -180,6 +185,7 @@ client.commands.set(applyToCourtCommand.data.name, applyToCourtCommand);
 // 自助管理系统命令
 client.commands.set(deleteShitMessageCommand.data.name, deleteShitMessageCommand);
 client.commands.set(muteShitUserCommand.data.name, muteShitUserCommand);
+client.commands.set(seriousMuteCommand.data.name, seriousMuteCommand);
 client.commands.set(setSelfModerationRolesCommand.data.name, setSelfModerationRolesCommand);
 client.commands.set(setSelfModerationChannelsCommand.data.name, setSelfModerationChannelsCommand);
 client.commands.set(setSelfModerationCooldownCommand.data.name, setSelfModerationCooldownCommand);
@@ -261,6 +267,7 @@ client.commands.set(updateVotingCandidatesCommand.data.name, updateVotingCandida
 client.commands.set(uploadCommand.data.name, uploadCommand);
 client.commands.set(whoisCommand.data.name, whoisCommand);
 client.commands.set(manageOptOutCommand.data.name, manageOptOutCommand);
+client.commands.set(collectBackupsCommand.data.name, collectBackupsCommand);
 
 // 自助身份组系统命令
 client.commands.set(setupRolePanelCommand.data.name, setupRolePanelCommand);

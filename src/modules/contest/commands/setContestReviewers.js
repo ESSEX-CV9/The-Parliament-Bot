@@ -4,7 +4,7 @@ const { saveContestSettings, getContestSettings } = require('../utils/contestDat
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('设置赛事审核员')
+    .setName('赛事-设置赛事审核员身份组')
     .setDescription('管理赛事申请审核员身份组')
     .addSubcommand(subcommand =>
         subcommand

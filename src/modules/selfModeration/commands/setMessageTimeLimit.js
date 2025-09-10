@@ -4,7 +4,7 @@ const { saveMessageTimeLimit, getMessageTimeLimit } = require('../../../core/uti
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('设置消息时间限制')
+    .setName('搬石公投-设置消息时间限制')
     .setDescription('设置可以投票的消息的时间限制')
     .addSubcommand(subcommand =>
         subcommand

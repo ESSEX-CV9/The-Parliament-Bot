@@ -5,7 +5,7 @@ const { CandidateManagementService } = require('../services/candidateManagementS
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('管理候选人状态')
+        .setName('募选-管理候选人状态')
         .setDescription('管理候选人参选资格（打回或撤销）')
         .addUserOption(option =>
             option.setName('candidate')

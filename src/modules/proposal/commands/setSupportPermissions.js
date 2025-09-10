@@ -4,7 +4,7 @@ const { saveSupportPermissionSettings, getSupportPermissionSettings } = require(
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('setsupportpermissions')
+    .setName('提案-设置支持提案的身份组')
     .setDescription('设置可以支持提案的身份组权限')
     .addSubcommand(subcommand =>
         subcommand

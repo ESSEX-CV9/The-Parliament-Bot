@@ -3,7 +3,7 @@ const { getExemptChannels } = require('../../../core/utils/database');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('查看豁免频道')
+        .setName('频道冲水-查看豁免频道')
         .setNameLocalizations({
             'en-US': 'list-exempt-channels'
         })

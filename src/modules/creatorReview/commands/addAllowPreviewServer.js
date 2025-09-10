@@ -4,7 +4,7 @@ const { addAllowedServer, getAllowedServers } = require('../../../core/utils/dat
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('addallowpreviewserver')
+    .setName('创作者审核-添加允许申请审核的服务器')
     .setDescription('添加允许审核的服务器')
     .addStringOption(option => 
         option.setName('服务器id')

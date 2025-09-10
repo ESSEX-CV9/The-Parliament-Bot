@@ -6,7 +6,7 @@ const { createErrorEmbed, createSuccessEmbed } = require('../utils/messageUtils'
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('清除募选投票')
+        .setName('募选-清除募选投票')
         .setDescription('清除指定用户的募选投票（仅管理员可用）')
         .addUserOption(option =>
             option.setName('用户')

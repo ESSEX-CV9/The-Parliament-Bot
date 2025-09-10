@@ -1,11 +1,11 @@
 // src/modules/selfRole/commands/recalculateActivity.js
 
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ChannelType } = require('discord.js');
-const { saveUserActivityBatch, clearChannelActivity } = require('../../../core/utils/database');
+const { saveUserActivityBatch, saveDailyUserActivityBatch, clearChannelActivity } = require('../../../core/utils/database');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('回溯统计活跃度')
+        .setName('自助身份组申请-回溯统计活跃度')
         .setDescription('扫描指定频道的历史消息以统计用户活跃度')
         .addStringOption(option =>
             option.setName('频道id')
@@ -51,6 +51,7 @@ module.exports = {
             let lastMessageId = null;
             let hasMoreMessages = true;
             const channelActivity = {}; // 只计算当前频道的增量
+            const dailyChannelActivity = {}; // 按日期分组的活跃度数据
 
             if (resetData) {
                 console.log(`[SelfRole] 🗑️ 重置频道 ${channel.name} 的活跃度数据...`);
@@ -75,24 +76,45 @@ module.exports = {
                     if (message.author.bot) continue;
 
                     const authorId = message.author.id;
+                    const messageDate = new Date(message.createdTimestamp).toISOString().split('T')[0]; // YYYY-MM-DD
+
+                    // 更新总体活跃度
                     if (!channelActivity[authorId]) {
                         channelActivity[authorId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                     }
                     channelActivity[authorId].messageCount++;
 
+                    // 更新每日活跃度
+                    if (!dailyChannelActivity[messageDate]) {
+                        dailyChannelActivity[messageDate] = {};
+                    }
+                    if (!dailyChannelActivity[messageDate][authorId]) {
+                        dailyChannelActivity[messageDate][authorId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
+                    }
+                    dailyChannelActivity[messageDate][authorId].messageCount++;
+
                     // 检查是否为主动提及 (回复或@)
                     const isMentioning = message.reference !== null || message.mentions.users.size > 0 || message.mentions.roles.size > 0;
                     if (isMentioning) {
                         channelActivity[authorId].mentioningCount++;
+                        dailyChannelActivity[messageDate][authorId].mentioningCount++;
                     }
 
                     message.mentions.users.forEach(user => {
                         if (user.bot || user.id === authorId) return;
                         const mentionedId = user.id;
+
+                        // 更新总体被提及数
                         if (!channelActivity[mentionedId]) {
                             channelActivity[mentionedId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                         }
                         channelActivity[mentionedId].mentionedCount++;
+
+                        // 更新每日被提及数
+                        if (!dailyChannelActivity[messageDate][mentionedId]) {
+                            dailyChannelActivity[messageDate][mentionedId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
+                        }
+                        dailyChannelActivity[messageDate][mentionedId].mentionedCount++;
                     });
                 }
 
@@ -109,6 +131,16 @@ module.exports = {
             };
 
             await saveUserActivityBatch(batchData);
+
+            // 保存每日活跃度数据
+            for (const date in dailyChannelActivity) {
+                const dailyBatchData = {
+                    [guildId]: {
+                        [channel.id]: dailyChannelActivity[date]
+                    }
+                };
+                await saveDailyUserActivityBatch(dailyBatchData, date);
+            }
 
             console.log(`[SelfRole] ✅ 频道 ${channel.name} 的历史消息回溯统计完成。`);
             const successEmbed = new EmbedBuilder()

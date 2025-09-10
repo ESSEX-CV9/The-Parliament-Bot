@@ -3,7 +3,7 @@ const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getUserPermissionDetails, getAllowedRoles } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('debugpermissions')
+    .setName('调试-调试权限')
     .setDescription('调试权限信息（仅用于测试）')
     .addUserOption(option => 
         option.setName('用户')

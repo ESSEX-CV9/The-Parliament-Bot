@@ -1,8 +1,9 @@
 // src\modules\selfModeration\services\punishmentExecutor.js
 const { updateSelfModerationVote } = require('../../../core/utils/database');
-const { calculateMuteDuration, calculateAdditionalMuteDuration, formatDuration } = require('../utils/timeCalculator');
-const { DELETE_THRESHOLD } = require('../../../core/config/timeconfig');
+const { calculateAdditionalMuteDuration, formatDuration } = require('../utils/timeCalculator');
+const { MUTE_DURATIONS } = require('../../../core/config/timeconfig');
 const { archiveDeletedMessage } = require('./archiveService');
+const { getRecentSeriousMuteCount, appendSeriousMuteEvent } = require('./seriousMuteHistory');
 
 /**
  * 执行删除消息惩罚
@@ -215,19 +216,61 @@ async function executeMuteUser(client, voteData) {
         console.log(`开始执行禁言用户: ${targetUserId}, 反应数量: ${currentReactionCount}, 目标消息存在: ${targetMessageExists}`);
         
         // 计算禁言时长
-        const currentMuteDuration = getCurrentMuteDuration(executedActions);
-        const muteInfo = calculateAdditionalMuteDuration(currentReactionCount, currentMuteDuration);
-        
-        if (muteInfo.additionalDuration <= 0) {
-            console.log(`用户 ${targetUserId} 不需要额外禁言时间`);
-            return {
-                success: true,
-                action: 'mute',
-                alreadyMuted: true,
-                currentDuration: formatDuration(currentMuteDuration),
-                reactionCount: currentReactionCount,
-                targetMessageExists
+        const recordType = voteData.type || 'mute';
+
+        let muteInfo;
+        let effectiveReactionCount = currentReactionCount;
+
+        if (recordType === 'serious_mute') {
+            // 严肃禁言 A1 规则（仅在本函数内部计算时长，执行链路复用现有实现）
+            const count = (voteData.currentReactionCount ?? voteData.reactionCount ?? voteData.deduplicatedCount ?? 0);
+            const prev = await getRecentSeriousMuteCount(guildId, targetUserId);
+            const base0 = MUTE_DURATIONS.LEVEL_1.threshold;
+            const base = Math.ceil(base0 * 1.5);
+            const multiplier = Math.max(1, Math.floor(count / base));
+            const levelIndex = prev + multiplier;
+            const table = [10, 20, 30, 60, 120, 240, 360, 480, 600];
+            const targetTotalMinutes = levelIndex >= 10 ? 720 : table[levelIndex - 1];
+            const currentExecuted = getCurrentMuteDuration(executedActions);
+            const additional = Math.max(0, targetTotalMinutes - currentExecuted);
+
+            effectiveReactionCount = count;
+
+            if (additional <= 0) {
+                console.log(`[SeriousMute] 用户 ${targetUserId} 无需追加禁言：已执行 ${currentExecuted} 分钟，目标 ${targetTotalMinutes} 分钟`);
+                return {
+                    success: true,
+                    action: 'mute',
+                    alreadyMuted: true,
+                    currentDuration: formatDuration(currentExecuted),
+                    reactionCount: count,
+                    targetMessageExists
+                };
+            }
+
+            muteInfo = {
+                additionalDuration: additional,
+                totalDuration: targetTotalMinutes,
+                newLevel: `A1_${levelIndex}`,
+                serious: { levelIndex }
             };
+        } else {
+            const currentMuteDuration = getCurrentMuteDuration(executedActions);
+            const calc = calculateAdditionalMuteDuration(currentReactionCount, currentMuteDuration);
+
+            if (calc.additionalDuration <= 0) {
+                console.log(`用户 ${targetUserId} 不需要额外禁言时间`);
+                return {
+                    success: true,
+                    action: 'mute',
+                    alreadyMuted: true,
+                    currentDuration: formatDuration(currentMuteDuration),
+                    reactionCount: currentReactionCount,
+                    targetMessageExists
+                };
+            }
+
+            muteInfo = calc;
         }
         
         // 获取服务器和用户
@@ -276,7 +319,7 @@ async function executeMuteUser(client, voteData) {
             timestamp: new Date().toISOString(),
             duration: muteInfo.additionalDuration,
             totalDuration: muteInfo.totalDuration,
-            reactionCount: currentReactionCount,
+            reactionCount: effectiveReactionCount,
             level: muteInfo.newLevel,
             endTime: muteEndTime.toISOString(),
             channelId: targetChannelId,
@@ -286,14 +329,59 @@ async function executeMuteUser(client, voteData) {
         
         // 更新投票状态
         const newExecutedActions = [...executedActions, muteAction];
-        await updateSelfModerationVote(guildId, targetMessageId, 'mute', {
+        await updateSelfModerationVote(guildId, targetMessageId, recordType, {
             executedActions: newExecutedActions,
             lastExecuted: new Date().toISOString(),
             executed: true
             // 注意：这里不设置 status: 'completed'，因为投票还没结束
         });
+
+        // 严肃禁言：成功后写入历史事件（娱乐指令不写入）
+        if (recordType === 'serious_mute') {
+            try {
+                const voteId = voteData.id || `${guildId}:${targetMessageId}`;
+                const levelIndex = (muteInfo.serious && muteInfo.serious.levelIndex) ? muteInfo.serious.levelIndex : 1;
+                await appendSeriousMuteEvent({
+                    guildId,
+                    userId: targetUserId,
+                    channelId: permissionChannel.id,
+                    voteId,
+                    messageId: targetMessageId,
+                    durationMinutes: muteInfo.totalDuration,
+                    levelIndex,
+                    executedAt: Date.now()
+                });
+            } catch (e) {
+                console.error('[SeriousMuteHistory] 记录严肃禁言事件失败:', e);
+            }
+        }
         
         console.log(`成功禁言用户 ${targetUserId} ${muteInfo.additionalDuration}分钟`);
+        
+        // 新增：检查是否为首次禁言，如果是则立即删除并归档消息
+        let messageDeleteResult = null;
+        const isFirstTimeMute = getCurrentMuteDuration(executedActions) === 0; // 之前没有执行过禁言
+        
+        if (isFirstTimeMute && targetMessageExists !== false) {
+            console.log(`首次禁言开始，立即删除并归档消息: ${targetMessageId}`);
+            try {
+                // 删除并归档消息
+                messageDeleteResult = await deleteAndArchiveMessage(client, voteData);
+                
+                // 更新投票状态，记录消息删除
+                await updateSelfModerationVote(guildId, targetMessageId, recordType, {
+                    messageDeletedOnMuteStart: true,
+                    messageDeletedAt: new Date().toISOString(),
+                    messageArchived: messageDeleteResult.archived,
+                    messageDeleteResult: messageDeleteResult.success
+                });
+                
+                console.log(`首次禁言时删除消息结果: 成功=${messageDeleteResult.success}, 归档=${messageDeleteResult.archived}`);
+            } catch (deleteError) {
+                console.error('首次禁言时删除消息失败:', deleteError);
+                messageDeleteResult = { success: false, error: deleteError.message, archived: false };
+            }
+        }
         
         // 设置定时器，到时间后解除禁言
         setTimeout(async () => {
@@ -312,10 +400,15 @@ async function executeMuteUser(client, voteData) {
             additionalDuration: formatDuration(muteInfo.additionalDuration),
             totalDuration: formatDuration(muteInfo.totalDuration),
             level: muteInfo.newLevel,
-            reactionCount: currentReactionCount,
+            reactionCount: effectiveReactionCount,
             endTime: muteEndTime,
             targetMessageExists,
-            permissionChannelId: permissionChannel.id
+            permissionChannelId: permissionChannel.id,
+            // 新增：首次禁言时的消息删除信息
+            isFirstTimeMute: isFirstTimeMute,
+            messageDeleted: messageDeleteResult ? messageDeleteResult.success : false,
+            messageArchived: messageDeleteResult ? messageDeleteResult.archived : false,
+            messageDeleteError: messageDeleteResult ? messageDeleteResult.error : null
         };
         
     } catch (error) {
@@ -430,12 +523,51 @@ async function deleteMessageAfterVoteEnd(client, voteData) {
         };
     }
 }
-
+ 
+/**
+ * 立即删除目标消息（严肃禁言投票专用）
+ * 尽量复用 deleteMessageAfterVoteEnd 与 deleteAndArchiveMessage 的底层逻辑
+ * 不在此处更新投票状态，避免打断后续流程；调用方在执行成功后自行记录 executedActions
+ * @param {Client} client - Discord客户端
+ * @param {object} voteData - 投票数据
+ * @returns {object} 删除结果 { success: boolean, alreadyDeleted?: boolean, archived?: boolean, error?: string }
+ */
+async function deleteMessageImmediately(client, voteData) {
+    try {
+        const { targetMessageExists, targetMessageId } = voteData;
+ 
+        console.log(`立即删除目标消息: ${targetMessageId}, 消息存在: ${targetMessageExists}`);
+ 
+        // 如果目标消息本来就不存在，视为已删除
+        if (targetMessageExists === false) {
+            return {
+                success: true,
+                alreadyDeleted: true,
+                archived: false
+            };
+        }
+ 
+        // 复用通用删除+归档逻辑
+        const deleteResult = await deleteAndArchiveMessage(client, voteData);
+        return deleteResult;
+ 
+    } catch (error) {
+        console.error('立即删除目标消息时出错:', error);
+        return {
+            success: false,
+            action: 'delete',
+            error: error.message,
+            archived: false
+        };
+    }
+}
+ 
 module.exports = {
     executeDeleteMessage,
     executeMuteUser,
     delayedDeleteMessage,
     deleteMessageAfterVoteEnd, // 新增导出
     getCurrentMuteDuration,
-    deleteAndArchiveMessage
+    deleteAndArchiveMessage,
+    deleteMessageImmediately
 };

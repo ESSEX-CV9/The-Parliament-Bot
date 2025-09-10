@@ -4,7 +4,7 @@ const { saveFormPermissionSettings, getFormPermissionSettings } = require('../..
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 const data = new SlashCommandBuilder()
-    .setName('setformpermissions')
+    .setName('提案-设置可以使用表单的身份组')
     .setDescription('设置可以使用表单的身份组权限')
     .addSubcommand(subcommand =>
         subcommand

@@ -4,7 +4,7 @@ const { ensureContestStatusTags, CONTEST_STATUS_TAGS } = require('../utils/forum
 const { getContestSettings, saveContestSettings } = require('../utils/contestDatabase');
 
 const data = new SlashCommandBuilder()
-    .setName('初始化赛事标签')
+    .setName('赛事-初始化赛事标签')
     .setDescription('初始化或更新赛事审批论坛的状态标签')
     .addChannelOption(option => 
         option.setName('论坛频道')

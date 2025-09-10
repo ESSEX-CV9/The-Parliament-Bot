@@ -5,7 +5,7 @@ const { getSelfRoleSettings, getUserActivity } = require('../../../core/utils/da
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('查询我的活跃度')
+        .setName('自助身份组申请-查询我的活跃度')
         .setDescription('查询您在特定频道的发言和被提及数')
         .addChannelOption(option =>
             option.setName('频道')
