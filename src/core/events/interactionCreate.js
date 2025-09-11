@@ -86,7 +86,7 @@ const {
     showUserList,
     handleUserListPageNavigation,
     confirmManualAction,
-    grantToAll,
+    showBulkGrantGuide,
     listAllParticipants
 } = require('../../modules/contest/services/participantRoleService');
 
@@ -477,8 +477,8 @@ async function interactionCreateHandler(interaction) {
                     await showUserList(interaction, 'grant');
                 } else if (interaction.customId.includes('_revoke_list_')) {
                     await showUserList(interaction, 'revoke');
-                } else if (interaction.customId.includes('_grant_all_')) {
-                    await grantToAll(interaction);
+                } else if (interaction.customId.includes('_bulk_grant_guide_')) {
+                    await showBulkGrantGuide(interaction);
                 } else if (interaction.customId.includes('_list_all_')) {
                     await listAllParticipants(interaction);
                 }

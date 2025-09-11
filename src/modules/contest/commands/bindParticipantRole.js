@@ -1,7 +1,7 @@
 ﻿// src/modules/contest/commands/bindParticipantRole.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getContestChannel } = require('../utils/contestDatabase');
-const { checkContestManagePermission, getManagePermissionDeniedMessage } = require('../utils/contestPermissions');
+const { checkContestRoleBindingPermission, getManagePermissionDeniedMessage } = require('../utils/contestPermissions');
 const { bindParticipantRole } = require('../services/participantRoleService');
 
 const data = new SlashCommandBuilder()
@@ -24,7 +24,7 @@ async function execute(interaction) {
     }
 
     // 2. 检查权限
-    const hasPermission = checkContestManagePermission(interaction.member, contestChannelData);
+    const hasPermission = checkContestRoleBindingPermission(interaction.member, contestChannelData);
     if (!hasPermission) {
         return interaction.editReply({
             content: getManagePermissionDeniedMessage(),
