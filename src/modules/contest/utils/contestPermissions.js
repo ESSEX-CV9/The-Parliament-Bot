@@ -97,6 +97,74 @@ function checkContestManagePermission(member, contestChannelData) {
 }
 
 /**
+ * 检查用户是否有绑定身份组的权限
+ */
+function checkContestRoleBindingPermission(member, contestSettings) {
+    try {
+        console.log(`检查赛事身份组绑定权限 - 用户: ${member.user.tag}`);
+
+        // 管理员总是有权限
+        if (checkAdminPermission(member)) {
+            console.log(`✅ 管理员权限 - ${member.user.tag}`);
+            return true;
+        }
+
+        // 检查是否有审核员身份组，其也有权限
+        if (!contestSettings || !contestSettings.reviewerRoles || contestSettings.reviewerRoles.length === 0) {
+            console.log(`❌ 未设置审核员身份组 - ${member.user.tag}`);
+            return false;
+        }
+
+        const userRoleIds = member.roles.cache.map(role => role.id);
+        const hasPermission = contestSettings.reviewerRoles.some(roleId =>
+            userRoleIds.includes(roleId)
+        );
+
+        console.log(`赛事身份组绑定权限检查结果: ${hasPermission} - ${member.user.tag}`);
+        return hasPermission;
+
+    } catch (error) {
+        console.error('检查赛事身份组绑定权限时出错:', error);
+        return false;
+    }
+}
+
+/**
+ * 检查用户是否有管理比赛身份组的权限（主办方或审核员）
+ */
+function checkContestRoleManagePermission(member, contestChannelData, contestSettings) {
+    try {
+        console.log(`检查身份组管理权限 - 用户: ${member.user.tag}, 频道: ${contestChannelData.channelId}`);
+
+        // 管理员总是有权限
+        if (checkAdminPermission(member)) {
+            console.log(`✅ 管理员权限 - ${member.user.tag}`);
+            return true;
+        }
+
+        // 申请人（主办方）有权限
+        if (member.user.id === contestChannelData.applicantId) {
+            console.log(`✅ 申请人权限 - ${member.user.tag}`);
+            return true;
+        }
+
+        // 审核员有权限
+        if (checkContestReviewPermission(member, contestSettings)) {
+            // checkContestReviewPermission 内部会打印日志，所以这里不用重复
+            console.log(`✅ 审核员权限 - ${member.user.tag}`);
+            return true;
+        }
+
+        console.log(`❌ 无身份组管理权限 - ${member.user.tag}`);
+        return false;
+
+    } catch (error) {
+        console.error('检查身份组管理权限时出错:', error);
+        return false;
+    }
+}
+
+/**
  * 获取申请权限不足的错误消息
  */
 function getApplicationPermissionDeniedMessage(allowedRoles = []) {
@@ -138,6 +206,8 @@ module.exports = {
     checkContestApplicationPermission,
     checkContestReviewPermission,
     checkContestManagePermission,
+    checkContestRoleBindingPermission,
+    checkContestRoleManagePermission,
     getApplicationPermissionDeniedMessage,
     getReviewPermissionDeniedMessage,
     getManagePermissionDeniedMessage,

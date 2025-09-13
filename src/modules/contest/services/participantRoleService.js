@@ -102,12 +102,12 @@ function buildManagementPanel(contestChannelData, role) {
         ),
         new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-                .setCustomId(`role_manage_grant_all_${role.id}`)
-                .setLabel('发放给所有参赛者')
-                .setStyle(ButtonStyle.Primary),
+                .setCustomId(`role_manage_bulk_grant_guide_${role.id}`) // 更改 customId
+                .setLabel('批量发放指南') // 更改标签
+                .setStyle(ButtonStyle.Primary), // 样式可以保持 Primary 或改为 Secondary
             new ButtonBuilder()
                 .setCustomId(`role_manage_list_all_${role.id}`)
-                .setLabel('公开所有参赛者名单')
+                .setLabel('导出参赛者名单')
                 .setStyle(ButtonStyle.Secondary)
         )
     ];
@@ -317,36 +317,42 @@ async function confirmManualAction(interaction, mode) {
 
 
 /**
- * 发放身份组给所有未拥有的参赛者
+ * 显示批量发放身份组的指南
  * @param {import('discord.js').Interaction} interaction
  */
-async function grantToAll(interaction) {
+async function showBulkGrantGuide(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
-    const contestChannelData = await getContestChannel(interaction.channel.id);
-    const role = await interaction.guild.roles.fetch(contestChannelData.participantRoleId);
+    const embed = new EmbedBuilder()
+        .setTitle('🏆 批量发放身份组指南')
+        .setColor('#5865F2') // Discord 蓝色
+        .setDescription(
+            "为了防止误操作，我们移除了“一键发放”功能。您可以通过以下两种推荐的方法来安全地批量发放身份组：\n---"
+        )
+        .addFields(
+            {
+                name: '方法一：使用本机器人的手动发放功能',
+                value:
+                    "1. 在管理面板上，点击 **`手动发放`** 按钮。\n" +
+                    "2. 机器人会列出**第一页**尚未拥有身份组的参赛者。\n" +
+                    "3. 点击下方的**下拉菜单**，选择本页所有您想发放身份组的用户（可以多选）。\n" +
+                    "4. 点击 **`确认发放`** 按钮。\n" +
+                    "5. **如果参与者多于一页**，请点击 **`下一页`** 按钮，然后重复第 3 和第 4 步，直到完成所有页面的发放。\n\n" +
+                    "**优点**：安全可控，无需任何额外权限或机器人。"
+            },
+            {
+                name: '方法二：使用专业的管理机器人（推荐）',
+                value:
+                    "如果参赛人数非常多，手动分页会很繁琐。更高效的方法是：\n\n" +
+                    "1. 在管理面板上，点击 **`导出参赛者名单`** 按钮，获取所有参赛者的用户ID。\n" +
+                    "2. 复制这些用户ID。\n" +
+                    "3. 使用服务器中其他管理机器人的批量添加身份组命令。\n" +
+                    "**优点**：效率最高，尤其适合参赛人数众多的情况。"
+            }
+        )
+        .setFooter({ text: '这是一个操作指南，点击此处的按钮不会执行任何实际操作。' });
 
-    const allParticipants = await getParticipantMembers(interaction.guild, interaction.channel.id);
-    const usersToGrant = allParticipants.filter(m => !m.roles.cache.has(role.id));
-
-    if (usersToGrant.length === 0) {
-        return interaction.editReply({ content: '✅ 所有参赛者都已拥有该身份组。' });
-    }
-
-    let successCount = 0;
-    let failCount = 0;
-    for (const member of usersToGrant) {
-        try {
-            await member.roles.add(role);
-            successCount++;
-        } catch (e) {
-            failCount++;
-        }
-    }
-
-    await interaction.editReply({
-        content: `✅ **批量发放完成**\n成功发放给 **${successCount}** 名用户。\n失败 **${failCount}** 名用户。`
-    });
+    await interaction.editReply({ embeds: [embed] });
 }
 
 /**
@@ -433,7 +439,7 @@ module.exports = {
     showUserList,
     handleUserListPageNavigation,
     confirmManualAction,
-    grantToAll,
+    showBulkGrantGuide,
     listAllParticipants,
     grantRoleOnSubmission
 };
