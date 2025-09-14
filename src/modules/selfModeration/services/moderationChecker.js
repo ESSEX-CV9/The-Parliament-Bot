@@ -178,7 +178,7 @@ async function processIndividualVote(client, vote) {
             const executedActions = Array.isArray(vote.executedActions) ? vote.executedActions : [];
             const alreadyDeleteNow = executedActions.some(a => a && a.action === 'delete_now');
             const dedupCount = (vote.currentReactionCount ?? vote.reactionCount ?? vote.deduplicatedCount ?? 0);
-            if (type === 'serious_mute' && dedupCount >= 5 && !alreadyDeleteNow) {
+            if (type === 'serious_mute' && vote.earlyDelete === true && dedupCount >= 5 && !alreadyDeleteNow) {
                 const { deleteMessageImmediately } = require('./punishmentExecutor');
                 const delRes = await deleteMessageImmediately(client, vote);
                 if (delRes && delRes.success) {
