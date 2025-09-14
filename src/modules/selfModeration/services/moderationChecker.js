@@ -446,7 +446,7 @@ async function editVoteAnnouncementToExpired(client, vote, deleteResult = null) 
  */
 async function sendPunishmentNotification(client, vote, result) {
     try {
-        const { channelId, type, currentReactionCount, targetMessageUrl, voteAnnouncementMessageId } = vote;
+        const { channelId, type, currentReactionCount, targetMessageUrl, voteAnnouncementMessageId, targetMessageExists } = vote;
         const channel = await client.channels.fetch(channelId);
         if (!channel) return;
         
@@ -471,29 +471,35 @@ async function sendPunishmentNotification(client, vote, result) {
                 .setColor('#FF0000')
                 .setTimestamp();
         } else if ((type === 'mute' || type === 'serious_mute') && result.success) {
-             let description;
+            let description;
             if (result.alreadyMuted) {
                 description = `<@${result.userId}> 已经被禁言，当前总禁言时长：**${result.currentDuration}**\n\n🚫反应数量：${currentReactionCount}（去重后）`;
             } else {
                 const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
                 description = `由于🚫反应数量达到 **${currentReactionCount}** 个（去重后），<@${result.userId}> 已在此频道被禁言：\n\n**总禁言时长：** ${result.totalDuration}\n**解禁时间：** <t:${endTimestamp}:f>\n**目标消息：** ${targetMessageUrl}`;
                 
-                // 显示消息删除状态
+                // 显示消息删除状态（兼容提前删除与消息已不存在）
                 if (result.isFirstTimeMute) {
-                    description += `\n\n**消息处理：** `;
-                    if (result.messageDeleted) {
-                        description += `✅ 已删除`;
+                    let messageStatusText = '';
+                    if (targetMessageExists === false) {
+                        messageStatusText = '✅ 消息已被删除';
+                    } else if (result.messageDeleted) {
                         if (result.messageArchived) {
-                            description += ` | ✅ 已归档`;
+                            messageStatusText = '✅ 已删除 | ✅ 已归档';
+                        } else if (!result.messageDeleteError) {
+                            // 已删除但未归档，多为提前已被删或归档不可用
+                            messageStatusText = '✅ 消息已被删除';
                         } else {
-                            description += ` | ❌ 归档失败`;
+                            messageStatusText = `❌ 删除失败 (${result.messageDeleteError})`;
                         }
                     } else {
-                        description += `❌ 删除失败`;
                         if (result.messageDeleteError) {
-                            description += ` (${result.messageDeleteError})`;
+                            messageStatusText = `❌ 删除失败 (${result.messageDeleteError})`;
+                        } else {
+                            messageStatusText = '❌ 删除失败';
                         }
                     }
+                    description += `\n\n**消息处理：** ${messageStatusText}`;
                 }
             }
             
@@ -501,8 +507,12 @@ async function sendPunishmentNotification(client, vote, result) {
                 description += `\n\n💡 反应统计包含目标消息和投票公告的所有🚫反应（同一用户只计算一次）`;
             }
             
+            const successTitle = type === 'serious_mute'
+                ? (result.alreadyMuted ? '🔇 严肃禁言：用户已处于禁言状态' : '🔇 严肃禁言已执行')
+                : (result.alreadyMuted ? '🔇 用户已处于禁言状态' : '🔇 搬屎用户已被禁言');
+            
             embed = new EmbedBuilder()
-                .setTitle(result.alreadyMuted ? '🔇 用户已处于禁言状态' : '🔇 搬屎用户已被禁言')
+                .setTitle(successTitle)
                 .setDescription(description)
                 .setColor(result.alreadyMuted ? '#FFA500' : '#FF8C00')
                 .setTimestamp();
