@@ -99,7 +99,7 @@ async function showMessageInputModal(interaction, type) {
  * @param {string} type - 操作类型 ('delete' 或 'mute')。
  * @param {string} messageUrl - 用户提交的消息链接。
  */
-async function processMessageUrlSubmission(interaction, type, messageUrl) {
+async function processMessageUrlSubmission(interaction, type, messageUrl, options = {}) {
     try {
         // 获取设置
         const settings = await getSelfModerationSettings(interaction.guild.id);
@@ -198,6 +198,12 @@ async function processMessageUrlSubmission(interaction, type, messageUrl) {
             type: type,
             initiatorId: interaction.user.id
         };
+
+        // 严肃禁言：注入提前删除与原消息描述配置（默认 earlyDelete = true）
+        if (type === 'serious_mute') {
+            voteData.earlyDelete = options.earlyDelete !== undefined ? options.earlyDelete : true;
+            if (options.originalDescription) voteData.originalDescription = options.originalDescription;
+        }
         
         const voteResult = await createOrMergeVote(voteData);
         
@@ -336,16 +342,24 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
 
             const seriousExecutionCondition = `${base}个🚫开始严肃禁言 (${currentTimeMode})`;
 
+            // 新增：根据投票数据决定提前删除提示与原消息描述
+            const earlyDeleteFlag = (voteData && voteData.earlyDelete !== undefined) ? voteData.earlyDelete : true;
+            const originalDesc = voteData && voteData.originalDescription;
+
+            const descIntro =
+                `请前往目标消息添加🚫反应支持严肃禁言，**或者直接对本消息添加🚫反应**。\n\n` +
+                `**目标消息：** ${formatMessageLink(targetMessageUrl)}\n` +
+                `**消息作者：** <@${targetUserId}>\n` +
+                `**发起人：** <@${initiatorId}>\n` +
+                `**投票结束时间：** <t:${endTimestamp}:f>\n\n`;
+
+            const earlyDeleteText = earlyDeleteFlag === true
+                ? `达到 5 个 🚫 将立即删除被引用消息`
+                : `本投票不启用提前删除。仅当禁言投票达到阈值并执行禁言时才删除原消息。`;
+
             embed = new EmbedBuilder()
                 .setTitle('【严肃禁言】这是一场严肃禁言，请仔细思考后投票。')
-                .setDescription(
-                    `请前往目标消息添加🚫反应支持严肃禁言，**或者直接对本消息添加🚫反应**。\n\n` +
-                    `**目标消息：** ${formatMessageLink(targetMessageUrl)}\n` +
-                    `**消息作者：** <@${targetUserId}>\n` +
-                    `**发起人：** <@${initiatorId}>\n` +
-                    `**投票结束时间：** <t:${endTimestamp}:f>\n\n` +
-                    `达到 5 个 🚫 将立即删除被引用消息`
-                )
+                .setDescription(descIntro + earlyDeleteText)
                 .setColor('#FF0000')
                 .setTimestamp()
                 .setFooter({
@@ -356,6 +370,11 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
                     { name: '严肃禁言阈值（当前时段）', value: `${base} 人`, inline: true },
                     { name: '若仅达基础反应的最低禁言时长', value: `${minutesMinHuman}`, inline: false },
                 );
+
+            // 若提供原消息描述，则追加显示
+            if (originalDesc) {
+                embed.addFields({ name: '原消息描述', value: originalDesc, inline: false });
+            }
         } else {
             // 其它类型保持现状
             embed = new EmbedBuilder()

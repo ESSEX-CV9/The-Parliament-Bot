@@ -15,7 +15,16 @@ const data = new SlashCommandBuilder()
     .addStringOption(option =>
         option.setName('消息链接')
             .setDescription('目标用户发送的消息链接（右键消息 -> 复制消息链接）')
-            .setRequired(true));
+            .setRequired(true))
+    .addBooleanOption(option =>
+        option.setName('是否提前删除消息')
+            .setDescription('达到5个🚫时是否立即删除原消息')
+            .setRequired(false))
+    .addStringOption(option =>
+        option.setName('原消息描述')
+            .setDescription('在投票公告中展示的对原消息的简要描述')
+            .setRequired(false)
+            .setMaxLength(200));
 
 async function execute(interaction) {
     try {
@@ -69,13 +78,23 @@ async function execute(interaction) {
         }
 
         const messageUrl = interaction.options.getString('消息链接');
+        const earlyDeleteOpt = interaction.options.getBoolean('是否提前删除消息');
+        const earlyDelete = (earlyDeleteOpt === null ? true : earlyDeleteOpt); // 若未提供，默认 true 以保持当前行为
+        const originalDesc = interaction.options.getString('原消息描述');
+
+        // 校验：选择提前删除但未提供描述
+        if (earlyDelete === true && (!originalDesc || originalDesc.trim().length === 0)) {
+            return interaction.editReply({
+                content: '❌ 选择了提前删除，需要提供原消息的简单描述。'
+            });
+        }
 
         console.log(`用户 ${interaction.user.tag} 在频道 ${interaction.channel.name} 发起严肃禁言投票`);
         console.log(`目标消息链接: ${messageUrl}`);
 
         // 统一走通用流程：
         // 仅差异：type 使用 'serious_mute'，并附加 { severity: 'serious' } 透传（当前通用函数可忽略多余参数，后续子任务接入）。
-        await processMessageUrlSubmission(interaction, 'serious_mute', messageUrl, { severity: 'serious' });
+        await processMessageUrlSubmission(interaction, 'serious_mute', messageUrl, { severity: 'serious', earlyDelete, originalDescription: originalDesc });
 
         // 成功后更新最后使用时间（沿用 mute 键，最小改动）
         await updateUserLastUsage(interaction.guild.id, interaction.user.id, 'mute');
