@@ -1,7 +1,7 @@
 // src/modules/selfRole/services/selfRoleService.js
 
 const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { getSelfRoleSettings, getUserActivity, getUserActiveDaysCount, saveSelfRoleApplication } = require('../../../core/utils/database');
+const { getSelfRoleSettings, getUserActivity, getUserActiveDaysCount, saveSelfRoleApplication, getPendingApplicationByApplicantRole, getSelfRoleCooldown } = require('../../../core/utils/database');
 
 /**
  * 处理用户点击“自助身份组申请”按钮的事件。
@@ -108,12 +108,35 @@ async function handleSelfRoleSelect(interaction) {
         if (canApply) {
             // 如果资格预审通过，检查是否需要审核
             if (conditions.approval) {
-                try {
-                    await createApprovalPanel(interaction, roleConfig);
-                    results.push(`⏳ **${roleConfig.label}**: 资格审查通过，已提交社区审核。`);
-                } catch (error) {
-                    console.error(`[SelfRole] ❌ 创建审核面板时出错 for ${roleConfig.label}:`, error);
-                    results.push(`❌ **${roleConfig.label}**: 提交审核失败，请联系管理员。`);
+                // 1) 防重复逻辑：检查是否已存在“待审核”的同一用户对同一身份组申请
+                const existing = await getPendingApplicationByApplicantRole(member.id, roleId);
+                if (existing) {
+                    // 已存在待审核面板，提醒用户耐心等待
+                    results.push(`⏳ **${roleConfig.label}**: 您的身份组申请正在人工审核阶段，请耐心等候。`);
+                } else {
+                    // 2) 冷却期逻辑：若被拒绝后设置了冷却天数，检查是否仍在冷却期
+                    const cooldown = await getSelfRoleCooldown(guildId, roleId, member.id);
+                    if (cooldown && cooldown.expiresAt > Date.now()) {
+                        const remainingMs = cooldown.expiresAt - Date.now();
+                        const days = Math.floor(remainingMs / (24 * 60 * 60 * 1000));
+                        const hours = Math.floor((remainingMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+                        const minutes = Math.floor((remainingMs % (60 * 60 * 1000)) / (60 * 1000));
+                        const parts = [];
+                        if (days > 0) parts.push(`${days}天`);
+                        if (hours > 0) parts.push(`${hours}小时`);
+                        if (minutes > 0) parts.push(`${minutes}分钟`);
+                        const remainText = parts.length > 0 ? parts.join('') : '不到1分钟';
+                        results.push(`❌ **${roleConfig.label}**: 您的身份组申请未通过人工审核，已进入冷却期，还有 ${remainText} 结束。`);
+                    } else {
+                        // 3) 不在冷却期且不存在待审核记录，创建新的审核面板
+                        try {
+                            await createApprovalPanel(interaction, roleConfig);
+                            results.push(`⏳ **${roleConfig.label}**: 资格审查通过，已提交社区审核。`);
+                        } catch (error) {
+                            console.error(`[SelfRole] ❌ 创建审核面板时出错 for ${roleConfig.label}:`, error);
+                            results.push(`❌ **${roleConfig.label}**: 提交审核失败，请联系管理员。`);
+                        }
+                    }
                 }
             }
             // 如果资格预审通过且无需审核，则直接授予

@@ -1,7 +1,8 @@
 // src/modules/selfRole/services/approvalService.js
 
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { getSelfRoleApplication, saveSelfRoleApplication, deleteSelfRoleApplication, getSelfRoleSettings } = require('../../../core/utils/database');
+// 引入“被拒后冷却期”设置函数
+const { getSelfRoleApplication, saveSelfRoleApplication, deleteSelfRoleApplication, getSelfRoleSettings, setSelfRoleCooldown } = require('../../../core/utils/database');
 
 /**
  * 处理审核投票按钮的交互
@@ -154,6 +155,19 @@ async function finalizeApplication(interaction, application, finalStatus, roleCo
         finalStatusText = '❌ 已拒绝';
         dmMessage = `很遗憾，您申请的身份组 **${roleConfig.label}** 未能通过社区审核。`;
         finalDescription += `\n\n用户 <@${applicant?.id || application.applicantId}> 的申请已被拒绝。`;
+
+        // 被拒绝后冷却期逻辑（仅当配置了 cooldownDays 时生效）
+        try {
+            const cooldownDays = roleConfig?.conditions?.approval?.cooldownDays;
+            if (typeof cooldownDays === 'number' && cooldownDays > 0) {
+                // 写入“被拒后冷却期”记录，单位为天（内部转换为过期时间戳）
+                await setSelfRoleCooldown(interaction.guild.id, application.roleId, application.applicantId, cooldownDays);
+                console.log(`[SelfRole] 🧊 已为用户 ${application.applicantId} 设置身份组 ${application.roleId} 的被拒后冷却期: ${cooldownDays} 天`);
+                dmMessage += `\n\n提示：您已进入 **${cooldownDays}** 天冷却期，期间无法再次申请此身份组。`;
+            }
+        } catch (err) {
+            console.error('[SelfRole] ❌ 设置被拒后冷却期时出错:', err);
+        }
     }
 
     // 尝试给用户发送私信通知
