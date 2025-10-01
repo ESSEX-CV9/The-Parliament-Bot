@@ -137,12 +137,13 @@ const testBackupCardsCommand = require('../modules/backupCards/commands/testBack
 const archiveBackupThreadsCommand = require('../modules/backupCards/commands/archiveBackupThreads');
 const cleanupFuzzyMatchesCommand = require('../modules/backupCards/commands/cleanupFuzzyMatches');
 
-// 自助身份组系统命令
+//// 自助身份组系统命令
 const setupRolePanelCommand = require('../modules/selfRole/commands/setupRolePanel');
 const setupAdminPanelCommand = require('../modules/selfRole/commands/setupAdminPanel');
 const recalculateActivityCommand = require('../modules/selfRole/commands/recalculateActivity');
 const checkActivityCommand = require('../modules/selfRole/commands/checkActivity');
 const debugRolesCommand = require('../modules/selfRole/commands/debugRoles'); // 调试命令
+const clearCooldownCommand = require('../modules/selfRole/commands/clearCooldown');
 
 const client = new Client({
     intents: [
@@ -273,12 +274,13 @@ client.commands.set(whoisCommand.data.name, whoisCommand);
 client.commands.set(manageOptOutCommand.data.name, manageOptOutCommand);
 client.commands.set(collectBackupsCommand.data.name, collectBackupsCommand);
 
-// 自助身份组系统命令
+//// 自助身份组系统命令
 client.commands.set(setupRolePanelCommand.data.name, setupRolePanelCommand);
 client.commands.set(setupAdminPanelCommand.data.name, setupAdminPanelCommand);
 client.commands.set(recalculateActivityCommand.data.name, recalculateActivityCommand);
 client.commands.set(checkActivityCommand.data.name, checkActivityCommand);
 client.commands.set(debugRolesCommand.data.name, debugRolesCommand); // 调试命令
+client.commands.set(clearCooldownCommand.data.name, clearCooldownCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);

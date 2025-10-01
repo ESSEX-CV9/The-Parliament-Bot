@@ -52,7 +52,7 @@ function initializeSelfRoleDatabase() {
         )
     `);
 
-    // daily_user_activity 表 - 新增：按日期统计的用户活跃度
+    // daily_user_activity 表 ：按日期统计的用户活跃度
     selfRoleDb.exec(`
         CREATE TABLE IF NOT EXISTS daily_user_activity (
             guild_id TEXT NOT NULL,
@@ -77,6 +77,19 @@ function initializeSelfRoleDatabase() {
             rejecters TEXT
         )
     `);
+
+    // role_cooldowns 表 ：被人工审核拒绝后的冷却期记录（单位：ms）
+    
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS role_cooldowns (
+            guild_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, role_id, user_id)
+        )
+    `);
+
     console.log('[SelfRole] ✅ SQLite 数据库和表结构初始化完成。');
 }
 
@@ -403,6 +416,88 @@ async function saveSelfRoleApplication(messageId, data) {
 async function deleteSelfRoleApplication(messageId) {
     const stmt = selfRoleDb.prepare('DELETE FROM role_applications WHERE message_id = ?');
     stmt.run(messageId);
+}
+
+/**
+ * 根据“申请人 + 身份组”查询是否存在待审核申请（用于防止重复创建人工审核面板）
+ * @param {string} applicantId - 申请人用户ID
+ * @param {string} roleId - 身份组ID
+ * @returns {Promise<object|null>} 若存在返回申请对象，否则返回 null
+ */
+async function getPendingApplicationByApplicantRole(applicantId, roleId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT message_id, applicant_id, role_id, status, approvers, rejecters
+        FROM role_applications
+        WHERE applicant_id = ? AND role_id = ? AND status = 'pending'
+        LIMIT 1
+    `);
+    const row = stmt.get(applicantId, roleId);
+    if (!row) return null;
+    return {
+        messageId: row.message_id,
+        applicantId: row.applicant_id,
+        roleId: row.role_id,
+        status: row.status,
+        approvers: JSON.parse(row.approvers || '[]'),
+        rejecters: JSON.parse(row.rejecters || '[]'),
+    };
+}
+
+/**
+ * 设置（或更新）某用户对某身份组的“被拒绝后冷却期”
+ * @param {string} guildId - 服务器ID
+ * @param {string} roleId - 身份组ID
+ * @param {string} userId - 用户ID
+ * @param {number} cooldownDays - 冷却天数
+ * @returns {Promise<{guildId:string, roleId:string, userId:string, expiresAt:number}>}
+ */
+async function setSelfRoleCooldown(guildId, roleId, userId, cooldownDays) {
+    const safeDays = Math.max(0, parseInt(cooldownDays) || 0);
+    const expiresAt = Date.now() + safeDays * 24 * 60 * 60 * 1000;
+
+    const stmt = selfRoleDb.prepare(`
+        INSERT INTO role_cooldowns (guild_id, role_id, user_id, expires_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(guild_id, role_id, user_id) DO UPDATE SET
+            expires_at = excluded.expires_at
+    `);
+    stmt.run(guildId, roleId, userId, expiresAt);
+
+    return { guildId, roleId, userId, expiresAt };
+}
+
+/**
+ * 获取某用户对某身份组的冷却记录
+ * @param {string} guildId - 服务器ID
+ * @param {string} roleId - 身份组ID
+ * @param {string} userId - 用户ID
+ * @returns {Promise<{expiresAt:number}|null>} 若存在返回对象，否则返回 null
+ */
+async function getSelfRoleCooldown(guildId, roleId, userId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT expires_at FROM role_cooldowns
+        WHERE guild_id = ? AND role_id = ? AND user_id = ?
+        LIMIT 1
+    `);
+    const row = stmt.get(guildId, roleId, userId);
+    if (!row) return null;
+    return { expiresAt: row.expires_at };
+}
+
+/**
+ * 清除某用户对某身份组的冷却记录
+ * @param {string} guildId - 服务器ID
+ * @param {string} roleId - 身份组ID
+ * @param {string} userId - 用户ID
+ * @returns {Promise<boolean>} 永远返回 true（若不存在记录也视为已清除）
+ */
+async function clearSelfRoleCooldown(guildId, roleId, userId) {
+    const stmt = selfRoleDb.prepare(`
+        DELETE FROM role_cooldowns
+        WHERE guild_id = ? AND role_id = ? AND user_id = ?
+    `);
+    stmt.run(guildId, roleId, userId);
+    return true;
 }
 
 /**
@@ -1697,5 +1792,11 @@ module.exports = {
     getSelfRoleApplication,
     saveSelfRoleApplication,
     deleteSelfRoleApplication,
+    // 根据申请人+身份组查询是否存在“待审核”申请，防止重复创建面板
+    getPendingApplicationByApplicantRole,
+    // 被拒绝后的冷却期管理
+    setSelfRoleCooldown,
+    getSelfRoleCooldown,
+    clearSelfRoleCooldown,
     clearChannelActivity,
 };

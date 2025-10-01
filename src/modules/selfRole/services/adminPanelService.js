@@ -78,8 +78,8 @@ async function handleRoleSelectForAdd(interaction) {
 
     const approvalInput = new TextInputBuilder()
         .setCustomId('approval')
-        .setLabel('社区审核: 频道ID,支持票,反对票,投票组ID...')
-        .setPlaceholder('示例: 987654321098765432,10,5,111,222\n(审核在指定频道进行,10票通过,5票否决,身份组111和222可投票)')
+        .setLabel('社区审核参数')
+        .setPlaceholder('格式: 审核频道ID,支持票,反对票,审核员组ID(可多个,逗号分隔),被拒绝后冷却天数(可选)\n示例: 987654321098765432,10,5,111,222,3')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false);
 
@@ -180,18 +180,37 @@ async function handleModalSubmit(interaction) {
         }
 
         if (approvalString) {
-            const [channelId, approvals, rejections, ...voterRoleIds] = approvalString.split(',').map(s => s.trim());
+            // 支持“被拒绝后冷却天数”的解析：最后一个字段若为纯数字则视为冷却天数
+            const tokens = approvalString.split(',').map(s => s.trim()).filter(Boolean);
+            const channelId = tokens[0];
+            const approvalsStr = tokens[1];
+            const rejectionsStr = tokens[2];
+            let voterRoleIds = tokens.slice(3);
+            let cooldownDays = null;
+
             const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
             if (!channel || !channel.isTextBased()) {
                 interaction.editReply({ content: `❌ 无效的审核频道ID: ${channelId}` });
                 setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
                 return;
             }
-            if (isNaN(parseInt(approvals)) || isNaN(parseInt(rejections))) {
+
+            if (isNaN(parseInt(approvalsStr)) || isNaN(parseInt(rejectionsStr))) {
                 interaction.editReply({ content: `❌ 支持和反对票数必须是数字。` });
                 setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
                 return;
             }
+
+            // 如果最后一项是纯数字，则作为冷却天数
+            if (voterRoleIds.length > 0) {
+                const last = voterRoleIds[voterRoleIds.length - 1];
+                if (/^\d+$/.test(last)) {
+                    cooldownDays = parseInt(last);
+                    voterRoleIds = voterRoleIds.slice(0, -1);
+                }
+            }
+
+            // 校验投票人身份组ID（若有）
             for (const rId of voterRoleIds) {
                 const role = await interaction.guild.roles.fetch(rId).catch(() => null);
                 if (!role) {
@@ -200,12 +219,16 @@ async function handleModalSubmit(interaction) {
                     return;
                 }
             }
+
             newRoleConfig.conditions.approval = {
                 channelId,
-                requiredApprovals: parseInt(approvals),
-                requiredRejections: parseInt(rejections),
+                requiredApprovals: parseInt(approvalsStr),
+                requiredRejections: parseInt(rejectionsStr),
                 allowedVoterRoles: voterRoleIds,
             };
+            if (typeof cooldownDays === 'number' && cooldownDays > 0) {
+                newRoleConfig.conditions.approval.cooldownDays = cooldownDays;
+            }
         }
 
         if (isEdit) {
@@ -349,7 +372,11 @@ async function handleListRolesButton(interaction) {
         }
         if (roleConfig.conditions.approval) {
             const approval = roleConfig.conditions.approval;
-            conditions.push(`- **社区审核:** 在 <#${approval.channelId}> 中投票 (需 ${approval.requiredApprovals} 支持 / ${approval.requiredRejections} 反对)`);
+            let line = `- **社区审核:** 在 <#${approval.channelId}> 中投票 (需 ${approval.requiredApprovals} 支持 / ${approval.requiredRejections} 反对)`;
+            if (approval.cooldownDays && approval.cooldownDays > 0) {
+                line += `；被拒后冷却 **${approval.cooldownDays}** 天`;
+            }
+            conditions.push(line);
         }
 
         if (conditions.length > 0) {
@@ -512,9 +539,22 @@ async function handleRoleSelectForEdit(interaction) {
     let approvalValue = '';
     if (roleConfig.conditions.approval) {
         const ap = roleConfig.conditions.approval;
-        approvalValue = `${ap.channelId},${ap.requiredApprovals},${ap.requiredRejections},${ap.allowedVoterRoles.join(',')}`;
+        const tokens = [ap.channelId, ap.requiredApprovals, ap.requiredRejections];
+        if (ap.allowedVoterRoles && ap.allowedVoterRoles.length > 0) {
+            tokens.push(...ap.allowedVoterRoles);
+        }
+        if (ap.cooldownDays && ap.cooldownDays > 0) {
+            tokens.push(ap.cooldownDays);
+        }
+        approvalValue = tokens.join(',');
     }
-    const approvalInput = new TextInputBuilder().setCustomId('approval').setLabel('社区审核: 频道ID,支持票,反对票,投票组ID...').setPlaceholder('示例: 987654321,10,5,111,222').setStyle(TextInputStyle.Paragraph).setValue(approvalValue).setRequired(false);
+    const approvalInput = new TextInputBuilder()
+        .setCustomId('approval')
+        .setLabel('社区审核参数')
+        .setPlaceholder('格式: 审核频道ID,支持票,反对票,审核员组ID(可多个,逗号分隔),被拒绝后冷却天数(可选)\n示例: 987654321,10,5,111,222,3')
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue(approvalValue)
+        .setRequired(false);
 
     modal.addComponents(
         new ActionRowBuilder().addComponents(labelInput),
