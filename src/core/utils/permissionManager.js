@@ -6,17 +6,15 @@ const ALLOWED_ROLE_NAMES = [
     '管理组',
     '高级权限',
     '类脑紧急管理组',
-    'BOT维护员',
     '赛博公仆',
     '紧急状态委员',
+    '风干腊肉'
     // 在这里添加更多允许的身份组名称
 ];
 
 // 配置允许使用管理指令的Discord原生权限
 const ALLOWED_PERMISSIONS = [
     PermissionFlagsBits.Administrator,
-    PermissionFlagsBits.ManageGuild,
-    PermissionFlagsBits.ManageChannels,
 ];
 
 /**

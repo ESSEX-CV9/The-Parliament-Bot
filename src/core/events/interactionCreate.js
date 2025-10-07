@@ -268,12 +268,13 @@ async function interactionCreateHandler(interaction) {
                     });
                 }
                 
-                // 获取外部服务器列表
+                // 获取外部服务器列表与全局开关
                 const contestSettings = await getContestSettings(interaction.guild.id);
                 const allowedExternalServers = contestSettings?.allowedExternalServers || [];
+                const showExternalSelect = !!(contestSettings && contestSettings.allowExternalSubmissionOptIn);
                 
                 const { createConfirmChannelSelection } = require('../../modules/contest/components/confirmChannelSelection');
-                const { embed, components } = createConfirmChannelSelection(applicationData, allowedExternalServers);
+                const { embed, components } = createConfirmChannelSelection(applicationData, allowedExternalServers, showExternalSelect);
                 
                 await interaction.reply({
                     embeds: [embed],
@@ -284,7 +285,7 @@ async function interactionCreateHandler(interaction) {
                 // 继续设置频道详情按钮
                 const customIdParts = interaction.customId.replace('proceed_channel_creation_', '').split('_');
                 const applicationId = customIdParts[0];
-                const allowExternalServers = customIdParts[1] === 'true';
+                const allowExternalServers = (customIdParts.length >= 2 && customIdParts[1] === 'true') ? true : false;
                 
                 const applicationData = await getContestApplication(applicationId);
                 

@@ -13,10 +13,13 @@ async function processChannelConfirmation(interaction) {
     try {
         await interaction.deferReply({ ephemeral: true });
         
-        // 从customId中提取申请ID和外部服务器设置
+        // 从customId中提取申请ID和外部服务器设置（兼容缺失布尔段的情况）
         const customIdParts = interaction.customId.replace('contest_confirm_channel_', '').split('_');
         const applicationId = customIdParts[0];
-        const allowExternalServers = customIdParts[1] === 'true';
+        let allowExternalServers = false;
+        if (customIdParts.length >= 2) {
+            allowExternalServers = customIdParts[1] === 'true';
+        }
         
         const applicationData = await getContestApplication(applicationId);
         

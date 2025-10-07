@@ -73,6 +73,7 @@ const cacheStats = require('../modules/contest/commands/cacheStats');
 const regenerateContestMessagesCommand = require('../modules/contest/commands/regenerateContestMessages');
 const bindParticipantRoleCommand = require('../modules/contest/commands/bindParticipantRole');
 const manageParticipantRoleCommand = require('../modules/contest/commands/manageParticipantRole');
+const setExternalSubmissionOptInCommand = require('../modules/contest/commands/setExternalSubmissionOptIn');
 
 // 自动清理系统命令
 const addBannedKeywordCommand = require('../modules/autoCleanup/commands/addBannedKeyword');
@@ -212,6 +213,7 @@ client.commands.set(cacheStats.data.name, cacheStats);
 client.commands.set(regenerateContestMessagesCommand.data.name, regenerateContestMessagesCommand);
 client.commands.set(bindParticipantRoleCommand.data.name, bindParticipantRoleCommand);
 client.commands.set(manageParticipantRoleCommand.data.name, manageParticipantRoleCommand);
+client.commands.set(setExternalSubmissionOptInCommand.data.name, setExternalSubmissionOptInCommand);
 
 // 自动清理系统命令
 client.commands.set(addBannedKeywordCommand.data.name, addBannedKeywordCommand);
