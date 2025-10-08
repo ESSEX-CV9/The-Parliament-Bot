@@ -1,6 +1,6 @@
 // src/modules/selfRole/services/selfRoleService.js
 
-const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { getSelfRoleSettings, getUserActivity, getUserActiveDaysCount, saveSelfRoleApplication, getPendingApplicationByApplicantRole, getSelfRoleCooldown } = require('../../../core/utils/database');
 
 /**
@@ -52,7 +52,7 @@ async function handleSelfRoleButton(interaction) {
  * @param {import('discord.js').StringSelectMenuInteraction} interaction - 字符串选择菜单交互对象。
  */
 async function handleSelfRoleSelect(interaction) {
-    await interaction.deferReply({ ephemeral: true });
+    // 写的时候发现的问题，先留在这：若即将打开模态表单，不要先 deferReply，否则 showModal 会报 InteractionAlreadyReplied
 
     const guildId = interaction.guild.id;
     const member = interaction.member;
@@ -128,25 +128,70 @@ async function handleSelfRoleSelect(interaction) {
                         const remainText = parts.length > 0 ? parts.join('') : '不到1分钟';
                         results.push(`❌ **${roleConfig.label}**: 您的身份组申请未通过人工审核，已进入冷却期，还有 ${remainText} 结束。`);
                     } else {
-                        // 3) 不在冷却期且不存在待审核记录，创建新的审核面板
-                        try {
-                            await createApprovalPanel(interaction, roleConfig);
-                            results.push(`⏳ **${roleConfig.label}**: 资格审查通过，已提交社区审核。`);
-                        } catch (error) {
-                            console.error(`[SelfRole] ❌ 创建审核面板时出错 for ${roleConfig.label}:`, error);
-                            results.push(`❌ **${roleConfig.label}**: 提交审核失败，请联系管理员。`);
+                        // 3) 不在冷却期且不存在待审核记录，若配置了理由则弹出模态，否则直接创建审核面板
+                        const reasonCfg = roleConfig?.conditions?.reason;
+                        if (reasonCfg && reasonCfg.mode && reasonCfg.mode !== 'disabled') {
+                            try {
+                                const modal = new ModalBuilder()
+                                    .setCustomId(`self_role_reason_modal_${roleId}`)
+                                    .setTitle(`申请理由: ${roleConfig.label}`);
+                                const reasonInput = new TextInputBuilder()
+                                    .setCustomId('reason')
+                                    .setLabel('申请理由')
+                                    .setStyle(TextInputStyle.Paragraph)
+                                    .setPlaceholder('请详细说明申请该身份组的理由（示例：我在该频道的贡献、参与情况等）')
+                                    .setRequired(reasonCfg.mode === 'required');
+                                const modalRow = new ActionRowBuilder().addComponents(reasonInput);
+                                modal.addComponents(modalRow);
+                                await interaction.showModal(modal);
+                                return;
+                            } catch (error) {
+                                console.error(`[SelfRole] ❌ 打开理由填写模态时出错 for ${roleConfig.label}:`, error);
+                                results.push(`❌ **${roleConfig.label}**: 无法打开理由填写窗口，请联系管理员。`);
+                            }
+                        } else {
+                            try {
+                                await createApprovalPanel(interaction, roleConfig, null);
+                                results.push(`⏳ **${roleConfig.label}**: 资格审查通过，已提交社区审核。`);
+                            } catch (error) {
+                                console.error(`[SelfRole] ❌ 创建审核面板时出错 for ${roleConfig.label}:`, error);
+                                results.push(`❌ **${roleConfig.label}**: 提交审核失败，请联系管理员。`);
+                            }
                         }
                     }
                 }
             }
-            // 如果资格预审通过且无需审核，则直接授予
+            // 如果资格预审通过且无需审核
             else {
-                try {
-                    await member.roles.add(roleId);
-                    results.push(`✅ **${roleConfig.label}**: 成功获取！`);
-                } catch (error) {
-                    console.error(`[SelfRole] ❌ 授予身份组 ${roleConfig.label} 时出错:`, error);
-                    results.push(`❌ **${roleConfig.label}**: 授予失败，可能是机器人权限不足。`);
+                const reasonCfg = roleConfig?.conditions?.reason;
+                if (reasonCfg && reasonCfg.mode && reasonCfg.mode !== 'disabled') {
+                    // 直授场景依然采集理由，但不公开展示（仅用于审计/后续扩展）
+                    try {
+                        const modal = new ModalBuilder()
+                            .setCustomId(`self_role_reason_modal_${roleId}`)
+                            .setTitle(`申请理由: ${roleConfig.label}`);
+                        const reasonInput = new TextInputBuilder()
+                            .setCustomId('reason')
+                            .setLabel('申请理由')
+                            .setStyle(TextInputStyle.Paragraph)
+                            .setPlaceholder('请说明申请该身份组的理由（可选）')
+                            .setRequired(reasonCfg.mode === 'required');
+                        const modalRow = new ActionRowBuilder().addComponents(reasonInput);
+                        modal.addComponents(modalRow);
+                        await interaction.showModal(modal);
+                        return;
+                    } catch (error) {
+                        console.error(`[SelfRole] ❌ 打开理由填写模态时出错 for ${roleConfig.label}:`, error);
+                        results.push(`❌ **${roleConfig.label}**: 无法打开理由填写窗口，请联系管理员。`);
+                    }
+                } else {
+                    try {
+                        await member.roles.add(roleId);
+                        results.push(`✅ **${roleConfig.label}**: 成功获取！`);
+                    } catch (error) {
+                        console.error(`[SelfRole] ❌ 授予身份组 ${roleConfig.label} 时出错:`, error);
+                        results.push(`❌ **${roleConfig.label}**: 授予失败，可能是机器人权限不足。`);
+                    }
                 }
             }
         } else {
@@ -155,8 +200,9 @@ async function handleSelfRoleSelect(interaction) {
         }
     }
 
-    await interaction.editReply({
+    await interaction.reply({
         content: `**身份组申请结果:**\n\n${results.join('\n')}`,
+        ephemeral: true,
     });
 
     // 60秒后自动删除此消息
@@ -168,6 +214,7 @@ async function handleSelfRoleSelect(interaction) {
 module.exports = {
     handleSelfRoleButton,
     handleSelfRoleSelect,
+    handleReasonModalSubmit,
 };
 
 /**
@@ -175,7 +222,7 @@ module.exports = {
  * @param {import('discord.js').StringSelectMenuInteraction} interaction - 原始的菜单交互对象。
  * @param {object} roleConfig - 所申请身份组的具体配置。
  */
-async function createApprovalPanel(interaction, roleConfig) {
+async function createApprovalPanel(interaction, roleConfig, reasonText) {
     const { approval } = roleConfig.conditions;
     const applicant = interaction.user;
     const role = await interaction.guild.roles.fetch(roleConfig.roleId);
@@ -198,6 +245,12 @@ async function createApprovalPanel(interaction, roleConfig) {
         .setColor(0xFEE75C) // Yellow
         .setTimestamp();
 
+    if (reasonText && reasonText.trim().length > 0) {
+        // 安全处理：去除零宽字符并截断，防止破坏dcapi功能
+        const sanitized = (reasonText || '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+        embed.addFields({ name: '申请理由', value: sanitized.length > 1024 ? sanitized.slice(0, 1024) + '…' : sanitized, inline: false });
+    }
+
     const approveButton = new ButtonBuilder()
         .setCustomId(`self_role_approve_${roleConfig.roleId}_${applicant.id}`)
         .setLabel('✅ 支持')
@@ -210,16 +263,102 @@ async function createApprovalPanel(interaction, roleConfig) {
 
     const row = new ActionRowBuilder().addComponents(approveButton, rejectButton);
 
-    const approvalMessage = await approvalChannel.send({ embeds: [embed], components: [row] });
+    const approvalMessage = await approvalChannel.send({ embeds: [embed], components: [row], allowedMentions: { parse: [] } });
 
-    // 在数据库中创建申请记录
+    // 在数据库中创建申请记录（带理由）
     await saveSelfRoleApplication(approvalMessage.id, {
         applicantId: applicant.id,
         roleId: roleConfig.roleId,
         status: 'pending',
         approvers: [],
         rejecters: [],
+        reason: reasonText || null,
     });
 
     console.log(`[SelfRole] ✅ 为 ${applicant.tag} 的 ${roleConfig.label} 申请创建了审核面板: ${approvalMessage.id}`);
+}
+
+/**
+ * 处理“申请理由”窗口提交
+ * @param {import('discord.js').ModalSubmitInteraction} interaction
+ */
+async function handleReasonModalSubmit(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
+    const guildId = interaction.guild.id;
+    const member = interaction.member;
+    const customId = interaction.customId; // self_role_reason_modal_<roleId>
+    const roleId = customId.replace('self_role_reason_modal_', '');
+
+    // 读取当前配置与活动数据
+    const settings = await getSelfRoleSettings(guildId);
+    const roleConfig = settings?.roles?.find(r => r.roleId === roleId);
+    if (!roleConfig) {
+        await interaction.editReply({ content: '❌ 找不到该身份组的配置，可能已被管理员移除。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
+    }
+
+    // 再次防重复与冷却检查（避免并发/时序问题）
+    if (roleConfig.conditions?.approval) {
+        const existing = await getPendingApplicationByApplicantRole(member.id, roleId);
+        if (existing) {
+            await interaction.editReply({ content: `⏳ **${roleConfig.label}**: 您的申请已在人工审核中，请耐心等待。` });
+            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+            return;
+        }
+        const cooldown = await getSelfRoleCooldown(guildId, roleId, member.id);
+        if (cooldown && cooldown.expiresAt > Date.now()) {
+            const remainingMs = cooldown.expiresAt - Date.now();
+            const days = Math.floor(remainingMs / (24 * 60 * 60 * 1000));
+            const hours = Math.floor((remainingMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+            const minutes = Math.floor((remainingMs % (60 * 60 * 1000)) / (60 * 1000));
+            const parts = [];
+            if (days > 0) parts.push(`${days}天`);
+            if (hours > 0) parts.push(`${hours}小时`);
+            if (minutes > 0) parts.push(`${minutes}分钟`);
+            const remainText = parts.length > 0 ? parts.join('') : '不到1分钟';
+            await interaction.editReply({ content: `❌ **${roleConfig.label}**: 冷却期未结束，还有 ${remainText}。` });
+            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+            return;
+        }
+    }
+
+    // 读取并校验理由
+    const inputRaw = interaction.fields.getTextInputValue('reason') || '';
+    const reasonCfg = roleConfig?.conditions?.reason || {};
+    let sanitized = inputRaw.replace(/[\u200B-\u200D\uFEFF]/g, '').trim().replace(/\s{2,}/g, ' ');
+
+    const minLen = Number.isInteger(reasonCfg.minLen) ? reasonCfg.minLen : 10;
+    const maxLen = Number.isInteger(reasonCfg.maxLen) ? reasonCfg.maxLen : 500;
+    const mode = reasonCfg.mode || 'disabled';
+
+    if (mode === 'required') {
+        if (!sanitized || sanitized.length < minLen) {
+            await interaction.editReply({ content: `❌ 申请理由长度不足，至少需 **${minLen}** 字符。` });
+            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+            return;
+        }
+    }
+    if (sanitized.length > maxLen) {
+        // 超限则截断到最大长度
+        sanitized = sanitized.slice(0, maxLen);
+    }
+
+    // 继续流程：需审核 → 创建审核面板；无需审核 → 直接发身份
+    try {
+        if (roleConfig.conditions?.approval) {
+            await createApprovalPanel(interaction, roleConfig, sanitized || null);
+            await interaction.editReply({ content: `⏳ **${roleConfig.label}**: 资格审查通过，已提交社区审核。` });
+        } else {
+            // 直授场景：授予身份组
+            await member.roles.add(roleId);
+            await interaction.editReply({ content: `✅ **${roleConfig.label}**: 成功获取！` });
+        }
+    } catch (error) {
+        console.error(`[SelfRole] ❌ 提交理由后继续流程时出错 for ${roleConfig.label}:`, error);
+        await interaction.editReply({ content: `❌ **${roleConfig.label}**: 处理失败，请联系管理员。` });
+    }
+
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
 }

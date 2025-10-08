@@ -90,6 +90,18 @@ function initializeSelfRoleDatabase() {
         )
     `);
 
+    // 为 role_applications 表进行列演进：reason 文本列（可空）
+    try {
+        const cols = selfRoleDb.prepare("PRAGMA table_info(role_applications)").all();
+        const hasReason = Array.isArray(cols) && cols.some(c => c.name === 'reason');
+        if (!hasReason) {
+            selfRoleDb.exec("ALTER TABLE role_applications ADD COLUMN reason TEXT");
+            console.log('[SelfRole] 🔧 已为 role_applications 添加 reason 列');
+        }
+    } catch (migErr) {
+        console.error('[SelfRole] ❌ 检查/添加 reason 列时出错：', migErr);
+    }
+
     console.log('[SelfRole] ✅ SQLite 数据库和表结构初始化完成。');
 }
 
@@ -377,6 +389,7 @@ async function getSelfRoleApplication(messageId) {
         status: row.status,
         approvers: JSON.parse(row.approvers || '[]'),
         rejecters: JSON.parse(row.rejecters || '[]'),
+        reason: row.reason || null,
     };
 }
 
@@ -388,14 +401,15 @@ async function getSelfRoleApplication(messageId) {
  */
 async function saveSelfRoleApplication(messageId, data) {
     const stmt = selfRoleDb.prepare(`
-        INSERT INTO role_applications (message_id, applicant_id, role_id, status, approvers, rejecters)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO role_applications (message_id, applicant_id, role_id, status, approvers, rejecters, reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(message_id) DO UPDATE SET
             applicant_id = excluded.applicant_id,
             role_id = excluded.role_id,
             status = excluded.status,
             approvers = excluded.approvers,
-            rejecters = excluded.rejecters
+            rejecters = excluded.rejecters,
+            reason = excluded.reason
     `);
     stmt.run(
         messageId,
@@ -403,7 +417,8 @@ async function saveSelfRoleApplication(messageId, data) {
         data.roleId,
         data.status,
         JSON.stringify(data.approvers || []),
-        JSON.stringify(data.rejecters || [])
+        JSON.stringify(data.rejecters || []),
+        data.reason || null
     );
     return data;
 }
@@ -426,7 +441,7 @@ async function deleteSelfRoleApplication(messageId) {
  */
 async function getPendingApplicationByApplicantRole(applicantId, roleId) {
     const stmt = selfRoleDb.prepare(`
-        SELECT message_id, applicant_id, role_id, status, approvers, rejecters
+        SELECT message_id, applicant_id, role_id, status, approvers, rejecters, reason
         FROM role_applications
         WHERE applicant_id = ? AND role_id = ? AND status = 'pending'
         LIMIT 1
@@ -440,6 +455,7 @@ async function getPendingApplicationByApplicantRole(applicantId, roleId) {
         status: row.status,
         approvers: JSON.parse(row.approvers || '[]'),
         rejecters: JSON.parse(row.rejecters || '[]'),
+        reason: row.reason || null,
     };
 }
 
