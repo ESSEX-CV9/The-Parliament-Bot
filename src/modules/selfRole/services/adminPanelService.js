@@ -57,11 +57,6 @@ async function handleRoleSelectForAdd(interaction) {
         .setValue(role.name)
         .setRequired(true);
 
-    const descriptionInput = new TextInputBuilder()
-        .setCustomId('description')
-        .setLabel('描述 (可选)')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(false);
 
     const prerequisiteInput = new TextInputBuilder()
         .setCustomId('prerequisiteRoleId')
@@ -83,19 +78,27 @@ async function handleRoleSelectForAdd(interaction) {
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(false);
 
+    // 申请理由设置
+    const reasonInput = new TextInputBuilder()
+        .setCustomId('reasonConfig')
+        .setLabel('申请理由设置')
+        .setPlaceholder('格式: 模式(必需|可选|禁用); 最小长度(可选); 最大长度(可选)\n示例: 必需; min=10; max=300')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false);
+
     modal.addComponents(
         new ActionRowBuilder().addComponents(labelInput),
-        new ActionRowBuilder().addComponents(descriptionInput),
         new ActionRowBuilder().addComponents(prerequisiteInput),
         new ActionRowBuilder().addComponents(activityInput),
-        new ActionRowBuilder().addComponents(approvalInput)
+        new ActionRowBuilder().addComponents(approvalInput),
+        new ActionRowBuilder().addComponents(reasonInput)
     );
 
     await interaction.showModal(modal);
 }
 
 /**
- * 处理管理员提交身份组配置模态框的事件（用于添加或修改）。
+ * 处理管理员提交身份组配置框的事件（用于添加或修改）。
  * @param {import('discord.js').ModalSubmitInteraction} interaction - 模态框提交交互对象。
  */
 async function handleModalSubmit(interaction) {
@@ -107,10 +110,12 @@ async function handleModalSubmit(interaction) {
 
     try {
         const label = interaction.fields.getTextInputValue('label');
-        const description = interaction.fields.getTextInputValue('description');
+        let description = '';
+        try { description = interaction.fields.getTextInputValue('description'); } catch (e) { description = ''; }
         const prerequisiteRoleId = interaction.fields.getTextInputValue('prerequisiteRoleId');
         const activityString = interaction.fields.getTextInputValue('activity');
         const approvalString = interaction.fields.getTextInputValue('approval');
+        const reasonString = interaction.fields.getTextInputValue('reasonConfig');
 
         let settings = await getSelfRoleSettings(guildId) || { roles: [] };
 
@@ -228,6 +233,49 @@ async function handleModalSubmit(interaction) {
             };
             if (typeof cooldownDays === 'number' && cooldownDays > 0) {
                 newRoleConfig.conditions.approval.cooldownDays = cooldownDays;
+            }
+        }
+        
+        // 解析申请理由设置
+        if (reasonString) {
+            const raw = reasonString.trim();
+            if (raw.length > 0) {
+                const parts = raw.split(/[;,]\s*/).filter(Boolean);
+                const modeInput = (parts[0] || '').trim();
+                const normalizeMode = (s) => {
+                    const lower = s.toLowerCase();
+                    if (lower === 'required' || s === '必需' || s === '必填') return 'required';
+                    if (lower === 'optional' || s === '可选') return 'optional';
+                    if (lower === 'disabled' || s === '禁用') return 'disabled';
+                    return null;
+                };
+                const mode = normalizeMode(modeInput);
+                if (!mode) {
+                    interaction.editReply({ content: '❌ 申请理由设置格式错误：模式必须为 “必需|可选|禁用”（或等价的 required|optional|disabled）。' });
+                    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                    return;
+                }
+                let minLen = null;
+                let maxLen = null;
+                for (const p of parts.slice(1)) {
+                    const m1 = p.match(/^min\s*=\s*(\d+)$/i);
+                    const m2 = p.match(/^max\s*=\s*(\d+)$/i);
+                    if (m1) minLen = parseInt(m1[1]);
+                    if (m2) maxLen = parseInt(m2[1]);
+                }
+                if ((minLen !== null && (isNaN(minLen) || minLen <= 0)) || (maxLen !== null && (isNaN(maxLen) || maxLen <= 0))) {
+                    interaction.editReply({ content: '❌ 申请理由长度设置错误：min/max 必须为正整数。' });
+                    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                    return;
+                }
+                if (minLen !== null && maxLen !== null && minLen > maxLen) {
+                    interaction.editReply({ content: '❌ 申请理由长度设置错误：min 不得大于 max。' });
+                    setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                    return;
+                }
+                newRoleConfig.conditions.reason = { mode };
+                if (minLen !== null) newRoleConfig.conditions.reason.minLen = minLen;
+                if (maxLen !== null) newRoleConfig.conditions.reason.maxLen = maxLen;
             }
         }
 
@@ -378,6 +426,18 @@ async function handleListRolesButton(interaction) {
             }
             conditions.push(line);
         }
+        // 展示申请理由设置（如果配置了）
+        if (roleConfig.conditions.reason) {
+            const rc = roleConfig.conditions.reason;
+            let modeText = rc.mode === 'required' ? '必需' : (rc.mode === 'optional' ? '可选' : '禁用');
+            let line = `- **申请理由:** ${modeText}`;
+            if (rc.mode !== 'disabled') {
+                const minText = (typeof rc.minLen === 'number') ? rc.minLen : '默认10';
+                const maxText = (typeof rc.maxLen === 'number') ? rc.maxLen : '默认500';
+                line += `；长度 ${minText}–${maxText}`;
+            }
+            conditions.push(line);
+        }
 
         if (conditions.length > 0) {
             description += `**申请条件:**\n${conditions.join('\n')}\n`;
@@ -521,7 +581,6 @@ async function handleRoleSelectForEdit(interaction) {
 
     // 使用现有配置预填充字段
     const labelInput = new TextInputBuilder().setCustomId('label').setLabel('显示名称 (必填)').setStyle(TextInputStyle.Short).setValue(roleConfig.label).setRequired(true);
-    const descriptionInput = new TextInputBuilder().setCustomId('description').setLabel('描述 (可选)').setStyle(TextInputStyle.Paragraph).setValue(roleConfig.description || '').setRequired(false);
     const prerequisiteInput = new TextInputBuilder().setCustomId('prerequisiteRoleId').setLabel('前置身份组ID (可选)').setStyle(TextInputStyle.Short).setValue(roleConfig.conditions.prerequisiteRoleId || '').setRequired(false);
     
     let activityValue = '';
@@ -556,12 +615,29 @@ async function handleRoleSelectForEdit(interaction) {
         .setValue(approvalValue)
         .setRequired(false);
 
+    // 申请理由设置
+    let reasonValue = '';
+    if (roleConfig.conditions.reason) {
+        const rc = roleConfig.conditions.reason;
+        const modeZh = rc.mode === 'required' ? '必需' : (rc.mode === 'optional' ? '可选' : (rc.mode === 'disabled' ? '禁用' : (rc.mode || '')));
+        reasonValue = modeZh;
+        if (rc.minLen) reasonValue += `; min=${rc.minLen}`;
+        if (rc.maxLen) reasonValue += `; max=${rc.maxLen}`;
+    }
+    const reasonInput = new TextInputBuilder()
+        .setCustomId('reasonConfig')
+        .setLabel('申请理由设置')
+        .setPlaceholder('格式: 模式(必需|可选|禁用); 最小长度(可选); 最大长度(可选)\n示例: 必需; min=10; max=300')
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue(reasonValue)
+        .setRequired(false);
+
     modal.addComponents(
         new ActionRowBuilder().addComponents(labelInput),
-        new ActionRowBuilder().addComponents(descriptionInput),
         new ActionRowBuilder().addComponents(prerequisiteInput),
         new ActionRowBuilder().addComponents(activityInput),
-        new ActionRowBuilder().addComponents(approvalInput)
+        new ActionRowBuilder().addComponents(approvalInput),
+        new ActionRowBuilder().addComponents(reasonInput)
     );
 
     await interaction.showModal(modal);

@@ -10,7 +10,7 @@ const { processCourtSupport } = require('../../modules/court/services/courtVoteT
 const { processCourtVote } = require('../../modules/court/services/courtVotingSystem');
 // 自助管理相关处理
 const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
-const { handleSelfRoleButton, handleSelfRoleSelect } = require('../../modules/selfRole/services/selfRoleService');
+const { handleSelfRoleButton, handleSelfRoleSelect, handleReasonModalSubmit } = require('../../modules/selfRole/services/selfRoleService');
 const { processApprovalVote } = require('../../modules/selfRole/services/approvalService');
 const {
     handleAddRoleButton,
@@ -556,6 +556,9 @@ async function interactionCreateHandler(interaction) {
             // 新增：获奖作品设置模态框
             if (interaction.customId.startsWith('award_modal_')) {
                 await displayService.handleAwardModalSubmission(interaction);
+            } else if (interaction.customId.startsWith('self_role_reason_modal_')) {
+                // 自助身份组申请理由窗口提交
+                await handleReasonModalSubmit(interaction);
             } else if (interaction.customId.startsWith('admin_add_role_modal_') || interaction.customId.startsWith('admin_edit_role_modal_')) {
                 await handleModalSubmit(interaction);
             }
