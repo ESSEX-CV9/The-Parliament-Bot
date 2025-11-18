@@ -1,6 +1,6 @@
 // src/modules/contest/commands/viewSubmissionsContext.js
 const { ContextMenuCommandBuilder, ApplicationCommandType, MessageFlags } = require('discord.js');
-const { getContestChannel } = require('../utils/contestDatabase');
+const { preprocessSubmissions, paginateData } = require('../utils/dataProcessor');
 const { displayService } = require('../services/displayService');
 
 const data = new ContextMenuCommandBuilder()
@@ -17,31 +17,54 @@ async function execute(interaction) {
             });
         }
 
+        await interaction.deferReply({ ephemeral: true });
+
         const channelId = interaction.channel.id;
 
         // 检查当前频道是否为赛事频道
-        const contestChannelData = await getContestChannel(channelId);
+        const contestChannelData = await displayService.getContestChannelData(channelId);
         
         if (!contestChannelData) {
-            return interaction.reply({
-                content: '❌ 此频道不是赛事频道。\n\n💡 提示：此指令只能在赛事频道中使用。',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '❌ 此频道不是赛事频道。\n\n💡 提示：此指令只能在赛事频道中使用。'
             });
         }
 
-        // 构造一个兼容的 interaction 对象，模拟按钮点击
-        // 复用现有的 handleViewAllSubmissions 逻辑
-        const mockInteraction = {
-            ...interaction,
-            customId: `c_all_${channelId}`,
-            isButton: () => false,
-            isMessageContextMenuCommand: () => true
-        };
+        // 检查用户权限
+        const isOrganizer = contestChannelData.applicantId === interaction.user.id;
 
-        // 调用现有的展示逻辑
-        await displayService.handleViewAllSubmissions(mockInteraction);
+        // 获取所有有效投稿
+        const submissions = await displayService.getSubmissionsData(channelId);
+        const processedSubmissions = preprocessSubmissions(submissions);
 
-        console.log(`用户通过右键指令查看赛事稿件 - 频道: ${channelId}, 用户: ${interaction.user.tag}`);
+        if (processedSubmissions.length === 0) {
+            return interaction.editReply({
+                content: '📝 当前没有任何投稿作品。'
+            });
+        }
+
+        const itemsPerPage = 5; // 默认每页5个
+        const paginationInfo = paginateData(processedSubmissions, 1, itemsPerPage);
+
+        // 构建展示内容
+        const embed = await displayService.buildFullDisplayEmbed(processedSubmissions, paginationInfo, itemsPerPage);
+
+        // 根据权限构建不同的组件
+        const components = displayService.buildFullDisplayComponents(
+            paginationInfo.currentPage,
+            paginationInfo.totalPages,
+            channelId,
+            itemsPerPage,
+            isOrganizer,
+            paginationInfo.pageData  // 传递当前页面的投稿数据
+        );
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: components
+        });
+
+        console.log(`用户通过右键指令查看赛事稿件 - 频道: ${channelId}, 用户: ${interaction.user.tag}, 权限: ${isOrganizer ? '主办人' : '普通用户'}`);
 
     } catch (error) {
         console.error('查看赛事稿件时出错:', error);
