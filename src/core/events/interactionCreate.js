@@ -114,6 +114,16 @@ async function interactionCreateHandler(interaction) {
             await command.execute(interaction);
             return;
         }
+
+        // 处理上下文菜单指令（右键指令）
+        if (interaction.isMessageContextMenuCommand() || interaction.isUserContextMenuCommand()) {
+            const command = interaction.client.commands.get(interaction.commandName);
+            
+            if (!command) return;
+            
+            await command.execute(interaction);
+            return;
+        }
         
         // 处理按钮点击
         if (interaction.isButton()) {
