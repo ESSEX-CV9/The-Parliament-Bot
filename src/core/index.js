@@ -148,6 +148,7 @@ const recalculateActivityCommand = require('../modules/selfRole/commands/recalcu
 const checkActivityCommand = require('../modules/selfRole/commands/checkActivity');
 const debugRolesCommand = require('../modules/selfRole/commands/debugRoles'); // 调试命令
 const clearCooldownCommand = require('../modules/selfRole/commands/clearCooldown');
+const configureRolesCommand = require('../modules/selfRole/commands/configureRoles');
 
 const client = new Client({
     intents: [
@@ -289,6 +290,7 @@ client.commands.set(recalculateActivityCommand.data.name, recalculateActivityCom
 client.commands.set(checkActivityCommand.data.name, checkActivityCommand);
 client.commands.set(debugRolesCommand.data.name, debugRolesCommand); // 调试命令
 client.commands.set(clearCooldownCommand.data.name, clearCooldownCommand);
+client.commands.set(configureRolesCommand.data.name, configureRolesCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);

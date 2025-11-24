@@ -185,12 +185,14 @@ async function handleModalSubmit(interaction) {
         }
 
         if (approvalString) {
-            // 支持“被拒绝后冷却天数”的解析：最后一个字段若为纯数字则视为冷却天数
+            // 解析“社区审核参数”
+            // 支持新语法：使用 "days=3" 明确指定冷却天数；否则仅当最后一项不是合法身份组ID且为纯数字时，才视为冷却天数
             const tokens = approvalString.split(',').map(s => s.trim()).filter(Boolean);
             const channelId = tokens[0];
             const approvalsStr = tokens[1];
             const rejectionsStr = tokens[2];
-            let voterRoleIds = tokens.slice(3);
+            const rawTail = tokens.slice(3);
+            let voterRoleIds = [];
             let cooldownDays = null;
 
             const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
@@ -200,18 +202,32 @@ async function handleModalSubmit(interaction) {
                 return;
             }
 
-            if (isNaN(parseInt(approvalsStr)) || isNaN(parseInt(rejectionsStr))) {
+            if (isNaN(parseInt(approvalsStr, 10)) || isNaN(parseInt(rejectionsStr, 10))) {
                 interaction.editReply({ content: `❌ 支持和反对票数必须是数字。` });
                 setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
                 return;
             }
 
-            // 如果最后一项是纯数字，则作为冷却天数
-            if (voterRoleIds.length > 0) {
-                const last = voterRoleIds[voterRoleIds.length - 1];
-                if (/^\d+$/.test(last)) {
-                    cooldownDays = parseInt(last);
-                    voterRoleIds = voterRoleIds.slice(0, -1);
+            // 优先解析显式的冷却天数声明：days=3
+            for (const item of rawTail) {
+                const m = item.match(/^days\s*=\s*(\d+)$/i);
+                if (m) {
+                    cooldownDays = parseInt(m[1], 10);
+                } else {
+                    voterRoleIds.push(item);
+                }
+            }
+
+            // 兼容旧格式：若最后一项为纯数字且不是合法身份组ID，则作为冷却天数
+            if (cooldownDays === null && rawTail.length > 0) {
+                const lastRaw = rawTail[rawTail.length - 1];
+                if (/^\d+$/.test(lastRaw)) {
+                    const testRole = await interaction.guild.roles.fetch(lastRaw).catch(() => null);
+                    if (!testRole) {
+                        cooldownDays = parseInt(lastRaw, 10);
+                        // 移除最后一个被识别为冷却天数的条目
+                        voterRoleIds = voterRoleIds.slice(0, -1);
+                    }
                 }
             }
 
@@ -227,8 +243,9 @@ async function handleModalSubmit(interaction) {
 
             newRoleConfig.conditions.approval = {
                 channelId,
-                requiredApprovals: parseInt(approvalsStr),
-                requiredRejections: parseInt(rejectionsStr),
+                requiredApprovals: parseInt(approvalsStr, 10),
+                requiredRejections: parseInt(rejectionsStr, 10),
+                // 重要：保持为字符串，避免将 Snowflake 转为 Number 导致精度丢失（结尾变 00）
                 allowedVoterRoles: voterRoleIds,
             };
             if (typeof cooldownDays === 'number' && cooldownDays > 0) {
@@ -600,10 +617,12 @@ async function handleRoleSelectForEdit(interaction) {
         const ap = roleConfig.conditions.approval;
         const tokens = [ap.channelId, ap.requiredApprovals, ap.requiredRejections];
         if (ap.allowedVoterRoles && ap.allowedVoterRoles.length > 0) {
+            // 保持 Snowflake 为字符串
             tokens.push(...ap.allowedVoterRoles);
         }
         if (ap.cooldownDays && ap.cooldownDays > 0) {
-            tokens.push(ap.cooldownDays);
+            // 新格式：显式标注冷却天数，避免与“全数字的身份组ID”混淆
+            tokens.push(`days=${ap.cooldownDays}`);
         }
         approvalValue = tokens.join(',');
     }
