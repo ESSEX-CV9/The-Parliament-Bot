@@ -22,6 +22,7 @@ const TEST_CONFIG = {
     // 自助管理系统
     SELF_MODERATION_VOTE_DURATION_MINUTES: 2,    // 投票持续时间：2分钟（测试）
     SELF_MODERATION_CHECK_INTERVAL_MINUTES: 0.5, // 检查间隔：30秒
+    MUTE_STATUS_CHECK_INTERVAL_MINUTES: 1,       // 禁言状态检查间隔：1分钟（测试）
 };
 
 // 生产模式下的时间设置（以小时/天为单位，正常使用）
@@ -42,6 +43,7 @@ const PRODUCTION_CONFIG = {
     // 自助管理系统
     SELF_MODERATION_VOTE_DURATION_MINUTES: 10,   // 投票持续时间：10分钟
     SELF_MODERATION_CHECK_INTERVAL_MINUTES: 0.5,   // 检查间隔：1分钟
+    MUTE_STATUS_CHECK_INTERVAL_MINUTES: 20,        // 禁言状态检查间隔：20分钟
 };
 
 // 白天/夜晚模式配置
@@ -100,6 +102,12 @@ const LINEAR_MUTE_CONFIG = {
     BASE_THRESHOLD: 10,        // 开始禁言的票数
     BASE_DURATION: 10,         // 基础禁言时长（分钟）
     ADDITIONAL_MINUTES_PER_VOTE: 2  // 每票增加的分钟数
+};
+
+// 禁言状态检查配置
+const MUTE_STATUS_CHECK_CONFIG = {
+    MAX_UNMUTE_ATTEMPTS: 5,    // 最大解封尝试次数
+    VERIFY_UNMUTE: true        // 确认解封后再次尝试解封以确保执行
 };
 
 // 禁言时长配置（分钟）- 保留用于兼容性，但已改为使用线性计算
@@ -275,6 +283,7 @@ function getCheckIntervals() {
         courtApplicationCheck: config.COURT_APPLICATION_CHECK_INTERVAL_MINUTES * 60 * 1000,
         courtVoteCheck: config.COURT_VOTE_CHECK_INTERVAL_MINUTES * 60 * 1000,
         selfModerationCheck: config.SELF_MODERATION_CHECK_INTERVAL_MINUTES * 60 * 1000,
+        muteStatusCheck: config.MUTE_STATUS_CHECK_INTERVAL_MINUTES * 60 * 1000,
     };
 }
 
@@ -335,5 +344,7 @@ module.exports = {
     getTimeRangeDescription,
     // 线性禁言相关导出
     LINEAR_MUTE_CONFIG,
-    calculateLinearMuteDuration
+    calculateLinearMuteDuration,
+    // 禁言状态检查配置导出
+    MUTE_STATUS_CHECK_CONFIG
 };

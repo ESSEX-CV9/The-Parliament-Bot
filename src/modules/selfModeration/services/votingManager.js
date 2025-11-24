@@ -54,7 +54,14 @@ async function createOrMergeVote(voteData) {
             executed: false,
             executedActions: [], // 记录已执行的惩罚
             voteAnnouncementMessageId: null, // 投票公告消息ID
-            voteAnnouncementChannelId: channelId // 投票公告所在频道ID
+            voteAnnouncementChannelId: channelId, // 投票公告所在频道ID
+            // 禁言状态追踪字段
+            muteStatus: null, // 禁言状态：null(未禁言) | 'active'(禁言中) | 'completed'(已解封) | 'failed'(失败)
+            muteChannelId: null, // 实际禁言的频道ID
+            muteEndTime: null, // 解禁时间（ISO字符串）
+            unmuteAttempts: 0, // 解封尝试次数
+            lastUnmuteAttempt: null, // 最后一次解封尝试时间
+            lastUnmuteError: null // 最后一次解封失败的错误信息
         };
         
         const savedVote = await saveSelfModerationVote(newVoteData);

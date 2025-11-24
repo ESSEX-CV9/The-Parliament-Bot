@@ -4,10 +4,11 @@ const { getCheckIntervals } = require('../../../core/config/timeconfig');
 const { batchCheckReactions, checkReactionThreshold } = require('./reactionTracker');
 const { executeDeleteMessage, executeMuteUser, checkAndDeleteUserMessage } = require('./punishmentExecutor');
 const { EmbedBuilder } = require('discord.js');
-const { formatMessageLink } = require('../utils/messageParser'); 
+const { formatMessageLink } = require('../utils/messageParser');
 const { deleteMessageAfterVoteEnd } = require('./punishmentExecutor');
 const { calculateLinearMuteDuration, isDayTime, LINEAR_MUTE_CONFIG } = require('../../../core/config/timeconfig');
 const { formatDuration } = require('../utils/timeCalculator');
+const { startMuteStatusChecker } = require('./muteStatusChecker');
 
 /**
  * 检查所有活跃的自助管理投票
@@ -584,6 +585,9 @@ function startSelfModerationChecker(client) {
     setInterval(() => {
         checkActiveModerationVotes(client);
     }, intervals.selfModerationCheck);
+    
+    // 同时启动禁言状态检查器
+    startMuteStatusChecker(client);
 }
 
 module.exports = {

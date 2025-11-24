@@ -347,13 +347,19 @@ async function executeMuteUser(client, voteData) {
             targetMessageExists
         };
         
-        // 更新投票状态，保存解禁时间
+        // 更新投票状态，保存解禁时间和禁言状态
         const newExecutedActions = [...executedActions, muteAction];
         await updateSelfModerationVote(guildId, targetMessageId, recordType, {
             executedActions: newExecutedActions,
             lastExecuted: new Date().toISOString(),
             executed: true,
-            muteEndTime: muteEndTime.toISOString() // 保存解禁时间
+            muteEndTime: muteEndTime.toISOString(), // 保存解禁时间
+            // 禁言状态追踪
+            muteStatus: 'active', // 标记为禁言中
+            muteChannelId: permissionChannel.id, // 记录禁言频道
+            unmuteAttempts: 0, // 重置解封尝试次数
+            lastUnmuteAttempt: null,
+            lastUnmuteError: null
             // 注意：这里不设置 status: 'completed'，因为投票还没结束
         });
 
@@ -424,10 +430,29 @@ async function executeMuteUser(client, voteData) {
             try {
                 await permissionChannel.permissionOverwrites.delete(member);
                 console.log(`已解除用户 ${targetUserId} 在频道 ${permissionChannel.id} 的禁言`);
+                
+                // 更新禁言状态为已完成
+                await updateSelfModerationVote(guildId, targetMessageId, recordType, {
+                    muteStatus: 'completed',
+                    lastUnmuteAttempt: new Date().toISOString()
+                });
+                
                 // 清除定时器记录
                 delete global.muteTimers[`${guildId}_${targetUserId}_${permissionChannel.id}`];
             } catch (error) {
                 console.error(`解除禁言时出错:`, error);
+                
+                // 更新解封失败信息，保持状态为 active 以便定时检查器重试
+                try {
+                    await updateSelfModerationVote(guildId, targetMessageId, recordType, {
+                        muteStatus: 'active', // 保持禁言中状态
+                        unmuteAttempts: 1, // 记录失败次数
+                        lastUnmuteAttempt: new Date().toISOString(),
+                        lastUnmuteError: error.message
+                    });
+                } catch (updateError) {
+                    console.error('更新解封失败状态时出错:', updateError);
+                }
             }
         }, remainingTime); // 使用剩余时长而非总时长
         
