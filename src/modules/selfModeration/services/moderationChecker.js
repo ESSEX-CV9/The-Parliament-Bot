@@ -472,44 +472,74 @@ async function sendPunishmentNotification(client, vote, result) {
                 .setColor('#FF0000')
                 .setTimestamp();
         } else if ((type === 'mute' || type === 'serious_mute') && result.success) {
-            let description;
+            // 如果已经被禁言且不需要追加时长，跳过通知的发送和更新
             if (result.alreadyMuted) {
-                // 已经被禁言，不需要追加禁言
-                if (result.endTime) {
-                    const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
-                    description = `<@${result.userId}> 已经被禁言，当前总禁言时长：**${result.totalDuration}**\n\n**解禁时间：** <t:${endTimestamp}:f>\n**🚫反应数量：** ${currentReactionCount}（去重后）`;
-                } else {
-                    // 如果没有解禁时间（不应该发生，但作为后备）
-                    description = `<@${result.userId}> 已经被禁言，当前总禁言时长：**${result.currentDuration}**\n\n🚫反应数量：${currentReactionCount}（去重后）`;
-                }
-            } else {
-                // 首次禁言或追加禁言
-                const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
-                description = `由于🚫反应数量达到 **${currentReactionCount}** 个（去重后），<@${result.userId}> 已在此频道被禁言：\n\n**总禁言时长：** ${result.totalDuration}\n**解禁时间：** <t:${endTimestamp}:f>\n**目标消息：** ${targetMessageUrl}`;
-                
-                // 显示消息删除状态（兼容提前删除与消息已不存在）
-                if (result.isFirstTimeMute) {
-                    let messageStatusText = '';
-                    if (targetMessageExists === false) {
-                        messageStatusText = '✅ 消息已被删除';
-                    } else if (result.messageDeleted) {
-                        if (result.messageArchived) {
-                            messageStatusText = '✅ 已删除 | ✅ 已归档';
-                        } else if (!result.messageDeleteError) {
-                            // 已删除但未归档，多为提前已被删或归档不可用
-                            messageStatusText = '✅ 消息已被删除';
-                        } else {
-                            messageStatusText = `❌ 删除失败 (${result.messageDeleteError})`;
-                        }
-                    } else {
-                        if (result.messageDeleteError) {
-                            messageStatusText = `❌ 删除失败 (${result.messageDeleteError})`;
-                        } else {
-                            messageStatusText = '❌ 删除失败';
-                        }
+                console.log(`用户 ${result.userId} 已处于禁言状态且无需追加时长，跳过通知更新`);
+                return; // 直接返回，不发送也不更新通知
+            }
+            
+            // 🔥 如果是更新现有消息，使用增量更新方式保留原始信息
+            if (punishmentNotificationMessageId) {
+                try {
+                    const existingMessage = await channel.messages.fetch(punishmentNotificationMessageId);
+                    if (existingMessage && existingMessage.embeds[0]) {
+                        // 使用增量更新：只更新总禁言时长和解禁时间
+                        const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
+                        const existingEmbed = existingMessage.embeds[0];
+                        let existingDescription = existingEmbed.description || '';
+                        
+                        // 更新总禁言时长
+                        existingDescription = existingDescription.replace(
+                            /\*\*总禁言时长：\*\* .+/,
+                            `**总禁言时长：** ${result.totalDuration}`
+                        );
+                        
+                        // 更新解禁时间
+                        existingDescription = existingDescription.replace(
+                            /\*\*解禁时间：\*\* <t:\d+:f>/,
+                            `**解禁时间：** <t:${endTimestamp}:f>`
+                        );
+                        
+                        // 使用 EmbedBuilder.from() 复制现有embed并更新描述
+                        const updatedEmbed = EmbedBuilder.from(existingEmbed)
+                            .setDescription(existingDescription);
+                        
+                        await existingMessage.edit({ embeds: [updatedEmbed] });
+                        console.log(`已增量更新禁言执行通知消息 ${punishmentNotificationMessageId}，保留了原始信息`);
+                        return; // 更新成功，直接返回
                     }
-                    description += `\n\n**消息处理：** ${messageStatusText}`;
+                } catch (error) {
+                    console.error('增量更新禁言执行通知失败，将发送新消息:', error);
                 }
+            }
+            
+            // 首次发送消息：构建完整的embed
+            let description;
+            const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
+            description = `由于🚫反应数量达到 **${currentReactionCount}** 个（去重后），<@${result.userId}> 已在此频道被禁言：\n\n**总禁言时长：** ${result.totalDuration}\n**解禁时间：** <t:${endTimestamp}:f>\n**目标消息：** ${targetMessageUrl}`;
+            
+            // 显示消息删除状态（兼容提前删除与消息已不存在）
+            if (result.isFirstTimeMute) {
+                let messageStatusText = '';
+                if (targetMessageExists === false) {
+                    messageStatusText = '✅ 消息已被删除';
+                } else if (result.messageDeleted) {
+                    if (result.messageArchived) {
+                        messageStatusText = '✅ 已删除 | ✅ 已归档';
+                    } else if (!result.messageDeleteError) {
+                        // 已删除但未归档，多为提前已被删或归档不可用
+                        messageStatusText = '✅ 消息已被删除';
+                    } else {
+                        messageStatusText = `❌ 删除失败 (${result.messageDeleteError})`;
+                    }
+                } else {
+                    if (result.messageDeleteError) {
+                        messageStatusText = `❌ 删除失败 (${result.messageDeleteError})`;
+                    } else {
+                        messageStatusText = '❌ 删除失败';
+                    }
+                }
+                description += `\n\n**消息处理：** ${messageStatusText}`;
             }
             
             if (voteAnnouncementMessageId) {
@@ -517,13 +547,13 @@ async function sendPunishmentNotification(client, vote, result) {
             }
             
             const successTitle = type === 'serious_mute'
-                ? (result.alreadyMuted ? '🔇 严肃禁言：用户已处于禁言状态' : '🔇 严肃禁言已执行')
-                : (result.alreadyMuted ? '🔇 用户已处于禁言状态' : '🔇 搬屎用户已被禁言');
+                ? '🔇 严肃禁言已执行'
+                : '🔇 搬屎用户已被禁言';
             
             embed = new EmbedBuilder()
                 .setTitle(successTitle)
                 .setDescription(description)
-                .setColor(result.alreadyMuted ? '#FFA500' : '#FF8C00')
+                .setColor('#FF8C00')
                 .setTimestamp();
         } else {
             // 执行失败
@@ -532,20 +562,6 @@ async function sendPunishmentNotification(client, vote, result) {
                 .setDescription(`执行${type === 'delete' ? '删除消息' : '禁言用户'}时出现错误：\n\`\`\`${result.error}\`\`\``)
                 .setColor('#8B0000')
                 .setTimestamp();
-        }
-        
-        // 如果是禁言投票且已有通知消息ID，则更新现有消息；否则发送新消息
-        if ((type === 'mute' || type === 'serious_mute') && punishmentNotificationMessageId) {
-            try {
-                const existingMessage = await channel.messages.fetch(punishmentNotificationMessageId);
-                if (existingMessage) {
-                    await existingMessage.edit({ embeds: [embed] });
-                    console.log(`已更新禁言执行通知消息 ${punishmentNotificationMessageId}`);
-                    return; // 更新成功，直接返回
-                }
-            } catch (error) {
-                console.error('更新禁言执行通知失败，将发送新消息:', error);
-            }
         }
         
         // 发送新消息

@@ -239,7 +239,7 @@ async function executeMuteUser(client, voteData) {
             if (additional <= 0) {
                 console.log(`[SeriousMute] 用户 ${targetUserId} 无需追加禁言：已执行 ${currentExecuted} 分钟，目标 ${targetTotalMinutes} 分钟`);
                 
-                // 从投票数据中获取解禁时间
+                // 从投票数据中获取解禁时间，确保转换为Date对象
                 let endTime = null;
                 if (voteData.muteEndTime) {
                     endTime = new Date(voteData.muteEndTime);
@@ -254,7 +254,7 @@ async function executeMuteUser(client, voteData) {
                     totalDuration: formatDuration(targetTotalMinutes),
                     reactionCount: count,
                     targetMessageExists,
-                    endTime: endTime
+                    endTime: endTime // 确保返回解禁时间
                 };
             }
 
@@ -271,7 +271,7 @@ async function executeMuteUser(client, voteData) {
             if (calc.additionalDuration <= 0) {
                 console.log(`用户 ${targetUserId} 不需要额外禁言时间`);
                 
-                // 从投票数据中获取解禁时间
+                // 从投票数据中获取解禁时间，确保转换为Date对象
                 let endTime = null;
                 if (voteData.muteEndTime) {
                     endTime = new Date(voteData.muteEndTime);
@@ -286,7 +286,7 @@ async function executeMuteUser(client, voteData) {
                     totalDuration: formatDuration(calc.totalDuration),
                     reactionCount: currentReactionCount,
                     targetMessageExists,
-                    endTime: endTime
+                    endTime: endTime // 确保返回解禁时间
                 };
             }
 
