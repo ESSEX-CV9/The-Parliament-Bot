@@ -1,5 +1,6 @@
 // src\core\utils\permissionManager.js
 const { PermissionFlagsBits } = require('discord.js');
+const { isUserInSelfModerationBlacklist } = require('./database');
 
 // 配置允许使用管理指令的身份组名称
 const ALLOWED_ROLE_NAMES = [
@@ -506,6 +507,63 @@ function getSupportPermissionDeniedMessage(allowedRoleNames = []) {
     return message;
 }
 
+/**
+ * 检查用户是否在自助管理黑名单中
+ * @param {string} guildId - 服务器ID
+ * @param {string} userId - 用户ID
+ * @returns {Promise<object>} { isBlacklisted: boolean, reason: string, expiresAt: string, bannedBy: string }
+ */
+async function checkSelfModerationBlacklist(guildId, userId) {
+    try {
+        console.log(`\n=== 自助管理黑名单检查开始 ===`);
+        console.log(`服务器: ${guildId}`);
+        console.log(`用户: ${userId}`);
+        
+        const result = await isUserInSelfModerationBlacklist(guildId, userId);
+        
+        if (result.isBlacklisted) {
+            console.log(`❌ 用户在黑名单中`);
+            console.log(`封禁原因: ${result.reason || '无'}`);
+            console.log(`过期时间: ${result.expiresAt || '永久'}`);
+        } else {
+            console.log(`✅ 用户不在黑名单中`);
+        }
+        
+        console.log(`=== 自助管理黑名单检查结束 ===\n`);
+        return result;
+        
+    } catch (error) {
+        console.error('检查自助管理黑名单时出错:', error);
+        console.log(`=== 自助管理黑名单检查结束（出错） ===\n`);
+        return { isBlacklisted: false, reason: null, expiresAt: null, bannedBy: null };
+    }
+}
+
+/**
+ * 获取自助管理黑名单错误消息
+ * @param {string} reason - 封禁原因（可选）
+ * @param {string} expiresAt - 过期时间（可选）
+ * @returns {string} 错误消息
+ */
+function getSelfModerationBlacklistMessage(reason = null, expiresAt = null) {
+    let message = `❌ **您已被禁止使用自助管理功能**\n\n`;
+    
+    if (reason) {
+        message += `**封禁原因：** ${reason}\n\n`;
+    }
+    
+    if (expiresAt) {
+        const expiryTimestamp = Math.floor(new Date(expiresAt).getTime() / 1000);
+        message += `**解除时间：** <t:${expiryTimestamp}:F> (<t:${expiryTimestamp}:R>)\n\n`;
+    } else {
+        message += `**解除时间：** 永久封禁\n\n`;
+    }
+    
+    message += `如有疑问，请联系服务器管理员。`;
+    
+    return message;
+}
+
 // 启动时打印配置信息
 console.log(`\n=== 权限管理模块已加载 ===`);
 console.log(`允许的身份组:`, ALLOWED_ROLE_NAMES);
@@ -533,5 +591,9 @@ module.exports = {
     // 自助管理权限相关导出
     checkSelfModerationPermission,
     checkSelfModerationChannelPermission,
-    getSelfModerationPermissionDeniedMessage
+    getSelfModerationPermissionDeniedMessage,
+    
+    // 自助管理黑名单相关导出
+    checkSelfModerationBlacklist,
+    getSelfModerationBlacklistMessage
 };

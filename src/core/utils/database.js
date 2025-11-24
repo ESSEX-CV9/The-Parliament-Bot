@@ -25,6 +25,7 @@ const ARCHIVE_SETTINGS_FILE = path.join(DATA_DIR, 'archiveSettings.json');
 const AUTO_CLEANUP_SETTINGS_FILE = path.join(DATA_DIR, 'autoCleanupSettings.json');
 const AUTO_CLEANUP_TASKS_FILE = path.join(DATA_DIR, 'autoCleanupTasks.json');
 const SELF_ROLE_DB_FILE = path.join(DATA_DIR, 'selfRole.sqlite');
+const SELF_MODERATION_BLACKLIST_FILE = path.join(DATA_DIR, 'selfModerationBlacklist.json');
 
 // --- Self Role SQLite Database Initialization ---
 const selfRoleDb = new Database(SELF_ROLE_DB_FILE);
@@ -152,6 +153,9 @@ if (!fs.existsSync(AUTO_CLEANUP_SETTINGS_FILE)) {
 }
 if (!fs.existsSync(AUTO_CLEANUP_TASKS_FILE)) {
     fs.writeFileSync(AUTO_CLEANUP_TASKS_FILE, '{}', 'utf8');
+}
+if (!fs.existsSync(SELF_MODERATION_BLACKLIST_FILE)) {
+    fs.writeFileSync(SELF_MODERATION_BLACKLIST_FILE, '{}', 'utf8');
 }
 
 // --- 自助身份组模块 (SQLite) ---
@@ -1700,6 +1704,179 @@ async function isUserOptedOut(userId) {
 
 // --- 自助补档模块函数 结束 ---
 
+// --- 自助管理黑名单模块函数 开始 ---
+
+/**
+ * 读取自助管理黑名单数据
+ * @returns {object} 黑名单数据
+ */
+function readSelfModerationBlacklist() {
+    try {
+        const data = fs.readFileSync(SELF_MODERATION_BLACKLIST_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('读取自助管理黑名单文件失败:', err);
+        return {};
+    }
+}
+
+/**
+ * 写入自助管理黑名单数据
+ * @param {object} data - 黑名单数据
+ */
+function writeSelfModerationBlacklist(data) {
+    try {
+        fs.writeFileSync(SELF_MODERATION_BLACKLIST_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('写入自助管理黑名单文件失败:', err);
+    }
+}
+
+/**
+ * 获取服务器的自助管理黑名单
+ * @param {string} guildId - 服务器ID
+ * @returns {Promise<object>} 黑名单数据 { userId: { bannedAt, bannedBy, reason, expiresAt } }
+ */
+async function getSelfModerationBlacklist(guildId) {
+    const blacklist = readSelfModerationBlacklist();
+    return blacklist[guildId] || {};
+}
+
+/**
+ * 添加用户到自助管理黑名单
+ * @param {string} guildId - 服务器ID
+ * @param {string} userId - 用户ID
+ * @param {string} bannedBy - 执行封禁的管理员ID
+ * @param {string} reason - 封禁原因（可选）
+ * @param {number} durationDays - 封禁时长（天数，0或null表示永久）
+ * @returns {Promise<object>} 黑名单条目
+ */
+async function addUserToSelfModerationBlacklist(guildId, userId, bannedBy, reason = null, durationDays = 0) {
+    const blacklist = readSelfModerationBlacklist();
+    
+    if (!blacklist[guildId]) {
+        blacklist[guildId] = {};
+    }
+    
+    const bannedAt = new Date().toISOString();
+    let expiresAt = null;
+    
+    if (durationDays && durationDays > 0) {
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + durationDays);
+        expiresAt = expiryDate.toISOString();
+    }
+    
+    blacklist[guildId][userId] = {
+        bannedAt,
+        bannedBy,
+        reason: reason || null,
+        expiresAt,
+        durationDays: durationDays || 0
+    };
+    
+    writeSelfModerationBlacklist(blacklist);
+    console.log(`用户 ${userId} 已添加到服务器 ${guildId} 的自助管理黑名单`);
+    
+    return blacklist[guildId][userId];
+}
+
+/**
+ * 从自助管理黑名单移除用户
+ * @param {string} guildId - 服务器ID
+ * @param {string} userId - 用户ID
+ * @returns {Promise<boolean>} 是否成功移除
+ */
+async function removeUserFromSelfModerationBlacklist(guildId, userId) {
+    const blacklist = readSelfModerationBlacklist();
+    
+    if (!blacklist[guildId] || !blacklist[guildId][userId]) {
+        return false;
+    }
+    
+    delete blacklist[guildId][userId];
+    writeSelfModerationBlacklist(blacklist);
+    console.log(`用户 ${userId} 已从服务器 ${guildId} 的自助管理黑名单移除`);
+    
+    return true;
+}
+
+/**
+ * 检查用户是否在自助管理黑名单中（会自动清理过期的封禁）
+ * @param {string} guildId - 服务器ID
+ * @param {string} userId - 用户ID
+ * @returns {Promise<object>} { isBlacklisted: boolean, reason: string, expiresAt: string, bannedBy: string }
+ */
+async function isUserInSelfModerationBlacklist(guildId, userId) {
+    const blacklist = readSelfModerationBlacklist();
+    
+    if (!blacklist[guildId] || !blacklist[guildId][userId]) {
+        return { isBlacklisted: false, reason: null, expiresAt: null, bannedBy: null };
+    }
+    
+    const entry = blacklist[guildId][userId];
+    
+    // 检查是否已过期
+    if (entry.expiresAt) {
+        const now = new Date();
+        const expiryDate = new Date(entry.expiresAt);
+        
+        if (now >= expiryDate) {
+            // 已过期，自动移除
+            delete blacklist[guildId][userId];
+            writeSelfModerationBlacklist(blacklist);
+            console.log(`用户 ${userId} 的封禁已过期，自动从黑名单移除`);
+            return { isBlacklisted: false, reason: null, expiresAt: null, bannedBy: null };
+        }
+    }
+    
+    return {
+        isBlacklisted: true,
+        reason: entry.reason,
+        expiresAt: entry.expiresAt,
+        bannedBy: entry.bannedBy,
+        bannedAt: entry.bannedAt
+    };
+}
+
+/**
+ * 清理服务器中所有过期的黑名单条目
+ * @param {string} guildId - 服务器ID
+ * @returns {Promise<number>} 清理的条目数量
+ */
+async function cleanupExpiredBlacklist(guildId) {
+    const blacklist = readSelfModerationBlacklist();
+    
+    if (!blacklist[guildId]) {
+        return 0;
+    }
+    
+    const now = new Date();
+    let cleanedCount = 0;
+    
+    for (const userId in blacklist[guildId]) {
+        const entry = blacklist[guildId][userId];
+        
+        if (entry.expiresAt) {
+            const expiryDate = new Date(entry.expiresAt);
+            
+            if (now >= expiryDate) {
+                delete blacklist[guildId][userId];
+                cleanedCount++;
+            }
+        }
+    }
+    
+    if (cleanedCount > 0) {
+        writeSelfModerationBlacklist(blacklist);
+        console.log(`服务器 ${guildId} 清理了 ${cleanedCount} 个过期的黑名单条目`);
+    }
+    
+    return cleanedCount;
+}
+
+// --- 自助管理黑名单模块函数 结束 ---
+
 
 module.exports = {
     saveSettings,
@@ -1815,4 +1992,11 @@ module.exports = {
     getSelfRoleCooldown,
     clearSelfRoleCooldown,
     clearChannelActivity,
+
+    // 自助管理黑名单相关导出
+    getSelfModerationBlacklist,
+    addUserToSelfModerationBlacklist,
+    removeUserFromSelfModerationBlacklist,
+    isUserInSelfModerationBlacklist,
+    cleanupExpiredBlacklist,
 };

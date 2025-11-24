@@ -1,5 +1,5 @@
 // src\modules\selfModeration\services\reactionTracker.js
-const { updateSelfModerationVote } = require('../../../core/utils/database');
+const { updateSelfModerationVote, getSelfModerationBlacklist } = require('../../../core/utils/database');
 const { DELETE_THRESHOLD, MUTE_DURATIONS, calculateLinearMuteDuration, isDayTime } = require('../../../core/config/timeconfig');
 
 /**
@@ -46,14 +46,15 @@ function getVoteEmojis(type) {
 }
 
 /**
- * 获取消息的投票反应用户列表（支持不同投票类型）
+ * 获取消息的投票反应用户列表（支持不同投票类型，排除黑名单用户）
  * @param {Client} client - Discord客户端
  * @param {string} channelId - 频道ID
  * @param {string} messageId - 消息ID
  * @param {string} type - 投票类型 ('delete' 或 'mute')
+ * @param {string} guildId - 服务器ID（用于黑名单检查）
  * @returns {Set<string>} 用户ID集合
  */
-async function getVoteReactionUsers(client, channelId, messageId, type = 'delete') {
+async function getVoteReactionUsers(client, channelId, messageId, type = 'delete', guildId = null) {
     try {
         const channel = await client.channels.fetch(channelId);
         if (!channel) {
@@ -89,8 +90,32 @@ async function getVoteReactionUsers(client, channelId, messageId, type = 'delete
         const users = await voteReaction.users.fetch();
         const userIds = new Set();
         
+        // 获取黑名单（如果提供了 guildId）
+        let blacklist = {};
+        if (guildId) {
+            blacklist = await getSelfModerationBlacklist(guildId);
+        }
+        
         users.forEach(user => {
             if (!user.bot) { // 排除机器人
+                // 检查用户是否在黑名单中
+                if (guildId && blacklist[user.id]) {
+                    // 检查黑名单是否已过期
+                    const entry = blacklist[user.id];
+                    if (entry.expiresAt) {
+                        const now = new Date();
+                        const expiryDate = new Date(entry.expiresAt);
+                        if (now < expiryDate) {
+                            // 未过期，排除此用户
+                            console.log(`排除黑名单用户的投票: ${user.tag} (${user.id})`);
+                            return;
+                        }
+                    } else {
+                        // 永久封禁，排除此用户
+                        console.log(`排除黑名单用户的投票: ${user.tag} (${user.id})`);
+                        return;
+                    }
+                }
                 userIds.add(user.id);
             }
         });
@@ -130,19 +155,19 @@ async function getDeduplicatedReactionCount(client, voteData) {
         // 初始化用户集合
         const allUsers = new Set();
         
-        // 如果目标消息存在，获取其反应用户
+        // 如果目标消息存在，获取其反应用户（传入 guildId 以进行黑名单过滤）
         if (targetMessageExists) {
-            const targetUsers = await getVoteReactionUsers(client, targetChannelId, targetMessageId, type);
-            console.log(`目标消息反应用户: ${targetUsers.size}`);
+            const targetUsers = await getVoteReactionUsers(client, targetChannelId, targetMessageId, type, guildId);
+            console.log(`目标消息反应用户（排除黑名单后）: ${targetUsers.size}`);
             targetUsers.forEach(userId => allUsers.add(userId));
         } else {
             console.log(`目标消息不存在，跳过目标消息反应统计`);
         }
         
-        // 获取投票公告的反应用户（投票公告应该始终存在）
+        // 获取投票公告的反应用户（投票公告应该始终存在，传入 guildId 以进行黑名单过滤）
         if (voteAnnouncementMessageId && voteAnnouncementChannelId) {
-            const announcementUsers = await getVoteReactionUsers(client, voteAnnouncementChannelId, voteAnnouncementMessageId, type);
-            console.log(`投票公告反应用户: ${announcementUsers.size}`);
+            const announcementUsers = await getVoteReactionUsers(client, voteAnnouncementChannelId, voteAnnouncementMessageId, type, guildId);
+            console.log(`投票公告反应用户（排除黑名单后）: ${announcementUsers.size}`);
             announcementUsers.forEach(userId => allUsers.add(userId));
         }
         
@@ -174,7 +199,7 @@ async function getDeduplicatedReactionCount(client, voteData) {
  */
 async function getShitReactionCount(client, guildId, channelId, messageId) {
     try {
-        const users = await getVoteReactionUsers(client, channelId, messageId, 'delete');
+        const users = await getVoteReactionUsers(client, channelId, messageId, 'delete', guildId);
         return users.size;
     } catch (error) {
         console.error('获取⚠️反应数量时出错:', error);

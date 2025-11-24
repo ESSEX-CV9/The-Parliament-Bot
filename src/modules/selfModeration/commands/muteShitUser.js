@@ -1,7 +1,7 @@
 // src\modules\selfModeration\commands\muteShitUser.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getSelfModerationSettings, checkUserGlobalCooldown, updateUserLastUsage } = require('../../../core/utils/database');
-const { checkSelfModerationPermission, checkSelfModerationChannelPermission, getSelfModerationPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
+const { checkSelfModerationPermission, checkSelfModerationChannelPermission, getSelfModerationPermissionDeniedMessage, checkSelfModerationBlacklist, getSelfModerationBlacklistMessage } = require('../../../core/utils/permissionManager');
 const { validateChannel } = require('../utils/channelValidator');
 const { processMessageUrlSubmission } = require('../services/moderationService');
 
@@ -39,6 +39,14 @@ async function execute(interaction) {
         if (!hasPermission) {
             return interaction.editReply({
                 content: getSelfModerationPermissionDeniedMessage('mute')
+            });
+        }
+
+        // 检查用户是否在黑名单中
+        const blacklistCheck = await checkSelfModerationBlacklist(interaction.guild.id, interaction.user.id);
+        if (blacklistCheck.isBlacklisted) {
+            return interaction.editReply({
+                content: getSelfModerationBlacklistMessage(blacklistCheck.reason, blacklistCheck.expiresAt)
             });
         }
 

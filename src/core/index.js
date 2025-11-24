@@ -59,6 +59,7 @@ const setArchiveChannelCommand = require('../modules/selfModeration/commands/set
 const setArchiveViewRoleCommand = require('../modules/selfModeration/commands/setArchiveViewRole');
 const getArchiveViewPermissionCommand = require('../modules/selfModeration/commands/getArchiveViewPermission');
 const manageAttachmentCleanupCommand = require('../modules/selfModeration/commands/manageAttachmentCleanup');
+const manageSelfModerationBlacklistCommand = require('../modules/selfModeration/commands/manageSelfModerationBlacklist');
 
 // 赛事系统命令
 const setupContestApplicationCommand = require('../modules/contest/commands/setupContestApplication');
@@ -201,6 +202,7 @@ client.commands.set(setArchiveChannelCommand.data.name, setArchiveChannelCommand
 client.commands.set(setArchiveViewRoleCommand.data.name, setArchiveViewRoleCommand);
 client.commands.set(getArchiveViewPermissionCommand.data.name, getArchiveViewPermissionCommand);
 client.commands.set(manageAttachmentCleanupCommand.data.name, manageAttachmentCleanupCommand);
+client.commands.set(manageSelfModerationBlacklistCommand.data.name, manageSelfModerationBlacklistCommand);
 
 // 赛事系统命令
 client.commands.set(setupContestApplicationCommand.data.name, setupContestApplicationCommand);
