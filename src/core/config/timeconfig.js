@@ -2,7 +2,7 @@
 // 时间配置文件 - 方便测试时快速调整时间
 
 // 是否为测试模式（true = 测试模式，时间大幅缩短；false = 生产模式，正常时间）
-const TEST_MODE = true; // 改为 false 可切换到测试模式
+const TEST_MODE = false; // 改为 false 可切换到测试模式
 
 // 测试模式下的时间设置（以分钟为单位，方便测试）
 const TEST_CONFIG = {
@@ -48,7 +48,7 @@ const PRODUCTION_CONFIG = {
 const DAY_NIGHT_CONFIG = {
     // 北京时间白天时段（8:00 - 次日1:00 为白天模式）
     DAY_START_HOUR: 8,   // 白天开始时间（8点）
-    DAY_END_HOUR: 1,     // 白天结束时间（次日1点）- 如果小于开始时间，表示跨越午夜
+    DAY_END_HOUR: 23,     // 白天结束时间（次日1点）- 如果小于开始时间，表示跨越午夜
     
     // 夜晚模式的调整系数
     NIGHT_DELETE_THRESHOLD_MULTIPLIER: 0.7, // 夜晚删除阈值 = 白天 * 0.7
@@ -97,8 +97,8 @@ function getTimeRangeDescription() {
 
 // 线性禁言配置（新的线性增长模式）
 const LINEAR_MUTE_CONFIG = {
-    BASE_THRESHOLD: 1,        // 开始禁言的票数
-    BASE_DURATION: 3,         // 基础禁言时长（分钟）
+    BASE_THRESHOLD: 10,        // 开始禁言的票数
+    BASE_DURATION: 10,         // 基础禁言时长（分钟）
     ADDITIONAL_MINUTES_PER_VOTE: 2  // 每票增加的分钟数
 };
 
