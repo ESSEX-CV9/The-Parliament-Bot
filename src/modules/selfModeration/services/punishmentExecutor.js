@@ -238,13 +238,23 @@ async function executeMuteUser(client, voteData) {
 
             if (additional <= 0) {
                 console.log(`[SeriousMute] 用户 ${targetUserId} 无需追加禁言：已执行 ${currentExecuted} 分钟，目标 ${targetTotalMinutes} 分钟`);
+                
+                // 从投票数据中获取解禁时间
+                let endTime = null;
+                if (voteData.muteEndTime) {
+                    endTime = new Date(voteData.muteEndTime);
+                }
+                
                 return {
                     success: true,
                     action: 'mute',
                     alreadyMuted: true,
+                    userId: targetUserId,
                     currentDuration: formatDuration(currentExecuted),
+                    totalDuration: formatDuration(targetTotalMinutes),
                     reactionCount: count,
-                    targetMessageExists
+                    targetMessageExists,
+                    endTime: endTime
                 };
             }
 
@@ -260,13 +270,23 @@ async function executeMuteUser(client, voteData) {
 
             if (calc.additionalDuration <= 0) {
                 console.log(`用户 ${targetUserId} 不需要额外禁言时间`);
+                
+                // 从投票数据中获取解禁时间
+                let endTime = null;
+                if (voteData.muteEndTime) {
+                    endTime = new Date(voteData.muteEndTime);
+                }
+                
                 return {
                     success: true,
                     action: 'mute',
                     alreadyMuted: true,
+                    userId: targetUserId,
                     currentDuration: formatDuration(currentMuteDuration),
+                    totalDuration: formatDuration(calc.totalDuration),
                     reactionCount: currentReactionCount,
-                    targetMessageExists
+                    targetMessageExists,
+                    endTime: endTime
                 };
             }
 
@@ -298,9 +318,9 @@ async function executeMuteUser(client, voteData) {
         
         console.log(`将在频道 ${permissionChannel.id} (类型: ${permissionChannel.type}) 设置权限`);
         
-        // 执行频道级禁言（修改权限）
-        const muteEndTime = new Date();
-        muteEndTime.setMinutes(muteEndTime.getMinutes() + muteInfo.additionalDuration);
+        // 计算解禁时间：当前时间 + 总禁言时长（而非追加时长）
+        const now = Date.now();
+        const muteEndTime = new Date(now + muteInfo.totalDuration * 60 * 1000);
         
         // 设置频道权限，禁止用户发送消息
         await permissionChannel.permissionOverwrites.create(member, {
@@ -327,12 +347,13 @@ async function executeMuteUser(client, voteData) {
             targetMessageExists
         };
         
-        // 更新投票状态
+        // 更新投票状态，保存解禁时间
         const newExecutedActions = [...executedActions, muteAction];
         await updateSelfModerationVote(guildId, targetMessageId, recordType, {
             executedActions: newExecutedActions,
             lastExecuted: new Date().toISOString(),
-            executed: true
+            executed: true,
+            muteEndTime: muteEndTime.toISOString() // 保存解禁时间
             // 注意：这里不设置 status: 'completed'，因为投票还没结束
         });
 
@@ -383,15 +404,35 @@ async function executeMuteUser(client, voteData) {
             }
         }
         
-        // 设置定时器，到时间后解除禁言
-        setTimeout(async () => {
+        // 清除之前的定时器（如果存在）
+        if (global.muteTimers && global.muteTimers[`${guildId}_${targetUserId}_${permissionChannel.id}`]) {
+            clearTimeout(global.muteTimers[`${guildId}_${targetUserId}_${permissionChannel.id}`]);
+            console.log(`已清除用户 ${targetUserId} 在频道 ${permissionChannel.id} 的旧定时器`);
+        }
+        
+        // 设置新的定时器，到时间后解除禁言
+        if (!global.muteTimers) {
+            global.muteTimers = {};
+        }
+        
+        // 计算剩余时长：解禁时间 - 当前时间
+        const remainingTime = muteEndTime.getTime() - Date.now();
+        
+        console.log(`设置解禁定时器: 总时长=${muteInfo.totalDuration}分钟, 解禁时间=${muteEndTime.toISOString()}, 剩余时长=${Math.round(remainingTime/1000/60)}分钟`);
+        
+        const timerId = setTimeout(async () => {
             try {
                 await permissionChannel.permissionOverwrites.delete(member);
                 console.log(`已解除用户 ${targetUserId} 在频道 ${permissionChannel.id} 的禁言`);
+                // 清除定时器记录
+                delete global.muteTimers[`${guildId}_${targetUserId}_${permissionChannel.id}`];
             } catch (error) {
                 console.error(`解除禁言时出错:`, error);
             }
-        }, muteInfo.additionalDuration * 60 * 1000);
+        }, remainingTime); // 使用剩余时长而非总时长
+        
+        // 保存定时器ID
+        global.muteTimers[`${guildId}_${targetUserId}_${permissionChannel.id}`] = timerId;
         
         return {
             success: true,

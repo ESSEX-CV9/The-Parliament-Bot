@@ -2,7 +2,7 @@
 // 时间配置文件 - 方便测试时快速调整时间
 
 // 是否为测试模式（true = 测试模式，时间大幅缩短；false = 生产模式，正常时间）
-const TEST_MODE = false; // 改为 false 可切换到测试模式
+const TEST_MODE = true; // 改为 false 可切换到测试模式
 
 // 测试模式下的时间设置（以分钟为单位，方便测试）
 const TEST_CONFIG = {
@@ -97,9 +97,9 @@ function getTimeRangeDescription() {
 
 // 线性禁言配置（新的线性增长模式）
 const LINEAR_MUTE_CONFIG = {
-    BASE_THRESHOLD: 10,        // 开始禁言的票数
-    BASE_DURATION: 10,         // 基础禁言时长（分钟）
-    ADDITIONAL_MINUTES_PER_VOTE: 3  // 每票增加的分钟数
+    BASE_THRESHOLD: 1,        // 开始禁言的票数
+    BASE_DURATION: 3,         // 基础禁言时长（分钟）
+    ADDITIONAL_MINUTES_PER_VOTE: 2  // 每票增加的分钟数
 };
 
 // 禁言时长配置（分钟）- 保留用于兼容性，但已改为使用线性计算

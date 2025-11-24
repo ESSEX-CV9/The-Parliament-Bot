@@ -206,13 +206,13 @@ async function processIndividualVote(client, vote) {
         console.log(`- 是否已执行: ${executed}`);
         console.log(`- 目标消息存在: ${targetMessageExists}`);
         
-        // 如果达到阈值且未执行过，执行惩罚
-        if (thresholdCheck.reached && !executed) {
-            await executePunishment(client, vote);
-        }
-        // 如果投票过期，处理过期逻辑
-        else if (isExpired) {
+        // 优先检查投票是否过期
+        if (isExpired) {
             await handleExpiredVote(client, vote);
+        }
+        // 如果未过期但达到阈值，执行或追加惩罚
+        else if (thresholdCheck.reached) {
+            await executePunishment(client, vote);
         }
         
     } catch (error) {
@@ -439,14 +439,14 @@ async function editVoteAnnouncementToExpired(client, vote, deleteResult = null) 
 }
 
 /**
- * 发送惩罚执行通知
+ * 发送或更新惩罚执行通知
  * @param {Client} client - Discord客户端
  * @param {object} vote - 投票数据
  * @param {object} result - 执行结果
  */
 async function sendPunishmentNotification(client, vote, result) {
     try {
-        const { channelId, type, currentReactionCount, targetMessageUrl, voteAnnouncementMessageId, targetMessageExists } = vote;
+        const { channelId, type, currentReactionCount, targetMessageUrl, voteAnnouncementMessageId, targetMessageExists, punishmentNotificationMessageId } = vote;
         const channel = await client.channels.fetch(channelId);
         if (!channel) return;
         
@@ -473,8 +473,16 @@ async function sendPunishmentNotification(client, vote, result) {
         } else if ((type === 'mute' || type === 'serious_mute') && result.success) {
             let description;
             if (result.alreadyMuted) {
-                description = `<@${result.userId}> 已经被禁言，当前总禁言时长：**${result.currentDuration}**\n\n🚫反应数量：${currentReactionCount}（去重后）`;
+                // 已经被禁言，不需要追加禁言
+                if (result.endTime) {
+                    const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
+                    description = `<@${result.userId}> 已经被禁言，当前总禁言时长：**${result.totalDuration}**\n\n**解禁时间：** <t:${endTimestamp}:f>\n**🚫反应数量：** ${currentReactionCount}（去重后）`;
+                } else {
+                    // 如果没有解禁时间（不应该发生，但作为后备）
+                    description = `<@${result.userId}> 已经被禁言，当前总禁言时长：**${result.currentDuration}**\n\n🚫反应数量：${currentReactionCount}（去重后）`;
+                }
             } else {
+                // 首次禁言或追加禁言
                 const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
                 description = `由于🚫反应数量达到 **${currentReactionCount}** 个（去重后），<@${result.userId}> 已在此频道被禁言：\n\n**总禁言时长：** ${result.totalDuration}\n**解禁时间：** <t:${endTimestamp}:f>\n**目标消息：** ${targetMessageUrl}`;
                 
@@ -525,7 +533,31 @@ async function sendPunishmentNotification(client, vote, result) {
                 .setTimestamp();
         }
         
-        await channel.send({ embeds: [embed] });
+        // 如果是禁言投票且已有通知消息ID，则更新现有消息；否则发送新消息
+        if ((type === 'mute' || type === 'serious_mute') && punishmentNotificationMessageId) {
+            try {
+                const existingMessage = await channel.messages.fetch(punishmentNotificationMessageId);
+                if (existingMessage) {
+                    await existingMessage.edit({ embeds: [embed] });
+                    console.log(`已更新禁言执行通知消息 ${punishmentNotificationMessageId}`);
+                    return; // 更新成功，直接返回
+                }
+            } catch (error) {
+                console.error('更新禁言执行通知失败，将发送新消息:', error);
+            }
+        }
+        
+        // 发送新消息
+        const sentMessage = await channel.send({ embeds: [embed] });
+        
+        // 如果是禁言投票，保存通知消息ID
+        if ((type === 'mute' || type === 'serious_mute') && sentMessage) {
+            const { updateSelfModerationVote } = require('../../../core/utils/database');
+            await updateSelfModerationVote(vote.guildId, vote.targetMessageId, type, {
+                punishmentNotificationMessageId: sentMessage.id
+            });
+            console.log(`已保存禁言执行通知消息ID: ${sentMessage.id}`);
+        }
         
     } catch (error) {
         console.error('发送惩罚通知时出错:', error);
