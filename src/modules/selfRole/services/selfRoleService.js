@@ -1,6 +1,6 @@
 // src/modules/selfRole/services/selfRoleService.js
 
-const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType } = require('discord.js');
 const { getSelfRoleSettings, getUserActivity, getUserActiveDaysCount, saveSelfRoleApplication, getPendingApplicationByApplicantRole, getSelfRoleCooldown } = require('../../../core/utils/database');
 
 /**
@@ -263,10 +263,32 @@ async function createApprovalPanel(interaction, roleConfig, reasonText) {
 
     const row = new ActionRowBuilder().addComponents(approveButton, rejectButton);
 
-    const approvalMessage = await approvalChannel.send({ embeds: [embed], components: [row], allowedMentions: { parse: [] } });
-
+    // 根据频道类型发送：支持 文字频道/论坛/子区
+    let panelMessageId = null;
+    if (approvalChannel.type === ChannelType.GuildForum) {
+        // 论坛频道：创建一个主题贴，首条消息就是投票面板
+        const thread = await approvalChannel.threads.create({
+            name: `身份组申请-${roleConfig.label}-${applicant.username}`,
+            autoArchiveDuration: 10080, // 7天，按需调整
+            message: {
+                embeds: [embed],
+                components: [row],
+                allowedMentions: { parse: [] },
+            },
+        });
+        const starter = await thread.fetchStarterMessage().catch(() => null);
+        if (!starter) {
+            throw new Error('无法获取论坛主题的首条消息以绑定投票面板ID');
+        }
+        panelMessageId = starter.id;
+    } else {
+        // 文字频道或线程：直接发送
+        const sent = await approvalChannel.send({ embeds: [embed], components: [row], allowedMentions: { parse: [] } });
+        panelMessageId = sent.id;
+    }
+    
     // 在数据库中创建申请记录（带理由）
-    await saveSelfRoleApplication(approvalMessage.id, {
+    await saveSelfRoleApplication(panelMessageId, {
         applicantId: applicant.id,
         roleId: roleConfig.roleId,
         status: 'pending',
@@ -274,8 +296,8 @@ async function createApprovalPanel(interaction, roleConfig, reasonText) {
         rejecters: [],
         reason: reasonText || null,
     });
-
-    console.log(`[SelfRole] ✅ 为 ${applicant.tag} 的 ${roleConfig.label} 申请创建了审核面板: ${approvalMessage.id}`);
+    
+    console.log(`[SelfRole] ✅ 为 ${applicant.tag} 的 ${roleConfig.label} 申请创建了审核面板: ${panelMessageId}`);
 }
 
 /**

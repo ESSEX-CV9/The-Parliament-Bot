@@ -15,8 +15,8 @@ const { updateMonitoredChannels } = require('../services/activityTracker');
 
 /**
  * 统一的“自助身份组申请-配置身份组”斜杠命令
- * 子命令（中文）：
- * - 基础配置（合并新增 + 活跃度设置）
+ * 子命令：
+ * - 基础配置
  * - 审核配置
  * - 申请理由配置（模式可选，不填即禁用）
  * - 移除配置
@@ -26,7 +26,7 @@ const { updateMonitoredChannels } = require('../services/activityTracker');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('自助身份组申请-配置身份组')
-    .setDescription('配置自助身份组申请系统（中文子命令与参数）')
+    .setDescription('配置自助身份组申请系统')
 
     // 子命令：基础配置
     .addSubcommand((sub) =>
@@ -104,8 +104,14 @@ module.exports = {
         .addChannelOption((opt) =>
           opt
             .setName('审核频道')
-            .setDescription('进行投票审核的频道（文字频道）')
-            .addChannelTypes(ChannelType.GuildText)
+            .setDescription('进行投票审核的频道（支持论坛和子区了）')
+            .addChannelTypes(
+              ChannelType.GuildText,
+              ChannelType.GuildForum,
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread
+            )
             .setRequired(true),
         )
         .addIntegerOption((opt) =>
@@ -217,7 +223,7 @@ module.exports = {
     .addSubcommand((sub) =>
       sub
         .setName('展示已配置身份组')
-        .setDescription('展示当前所有已配置的可申请身份组摘要（中文）'),
+        .setDescription('展示当前所有已配置的可申请身份组摘要'),
     ),
 
   /**
@@ -383,8 +389,15 @@ async function handleApprovalConfig(interaction) {
   const clearVoters = interaction.options.getBoolean('清空审核员') ?? false;
   const cooldownDays = interaction.options.getInteger('被拒后冷却天数') ?? null;
 
-  if (!approvalChannel || approvalChannel.type !== ChannelType.GuildText) {
-    await interaction.editReply({ content: `❌ 审核频道必须为文字频道。` });
+  const allowedTypes = new Set([
+    ChannelType.GuildText,
+    ChannelType.GuildForum,
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread,
+  ]);
+  if (!approvalChannel || !allowedTypes.has(approvalChannel.type)) {
+    await interaction.editReply({ content: `❌ 审核频道必须为文字频道、论坛频道或子区。` });
     return;
   }
   if (requiredApprovals <= 0 || requiredRejections <= 0) {
