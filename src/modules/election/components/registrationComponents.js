@@ -278,7 +278,7 @@ async function showIntroductionModal(interaction, election, firstChoice, secondC
         .setStyle(TextInputStyle.Paragraph)
         .setPlaceholder('请简要介绍你自己，包括你的经验、能力和竞选理由...')
         .setRequired(false)
-        .setMaxLength(500);
+        .setMaxLength(1000);
 
     const row = new ActionRowBuilder().addComponents(introductionInput);
     modal.addComponents(row);
@@ -299,7 +299,7 @@ async function handleIntroductionModal(interaction) {
         const firstChoice = parts[parts.length - 2];
         const secondChoice = parts[parts.length - 1] === 'none' ? null : parts[parts.length - 1];
 
-        const selfIntroduction = sanitizeInput(interaction.fields.getTextInputValue('self_introduction'), 500);
+        const selfIntroduction = sanitizeInput(interaction.fields.getTextInputValue('self_introduction'), 1000);
         const userId = interaction.user.id;
         const userDisplayName = interaction.user.displayName || interaction.user.username;
 

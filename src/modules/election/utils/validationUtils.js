@@ -104,8 +104,8 @@ function validateRegistration(registrationData, electionData) {
     }
     
     // 验证自我介绍长度
-    if (registrationData.selfIntroduction && registrationData.selfIntroduction.length > 500) {
-        errors.push('自我介绍不能超过500个字符');
+    if (registrationData.selfIntroduction && registrationData.selfIntroduction.length > 1000) {
+        errors.push('自我介绍不能超过1000个字符');
     }
     
     return {
