@@ -304,9 +304,7 @@ function sanitizeInput(input, maxLength = 500) {
     
     return input
         .trim()
-        .substring(0, maxLength)
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // 移除控制字符
-        .replace(/\s+/g, ' '); // 合并多个空格
+        .substring(0, maxLength);
 }
 
 /**
