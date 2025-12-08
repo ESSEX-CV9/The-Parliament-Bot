@@ -183,11 +183,11 @@ function createAppealModal(election, registration) {
 
     const selfIntroductionInput = new TextInputBuilder()
         .setCustomId('self_introduction')
-        .setLabel('自我介绍（选填，最多500字）')
+        .setLabel('自我介绍（选填，最多1000字符）')
         .setStyle(TextInputStyle.Paragraph)
         .setValue(registration.selfIntroduction || '')
         .setPlaceholder('请简要介绍自己...')
-        .setMaxLength(500)
+        .setMaxLength(1000)
         .setRequired(false);
 
     const positionListInput = new TextInputBuilder()
