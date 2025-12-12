@@ -84,8 +84,6 @@ const {
 const {
     toggleAutoGrant,
     showUserList,
-    handleUserListPageNavigation,
-    confirmManualAction,
     showBulkGrantGuide,
     listAllParticipants
 } = require('../../modules/contest/services/participantRoleService');
@@ -493,16 +491,6 @@ async function interactionCreateHandler(interaction) {
                 } else if (interaction.customId.includes('_list_all_')) {
                     await listAllParticipants(interaction);
                 }
-            } else if (interaction.customId.startsWith('role_page_')) {
-                const mode = interaction.customId.includes('_grant_') ? 'grant' : 'revoke';
-                await handleUserListPageNavigation(interaction, mode);
-            } else if (interaction.customId.startsWith('role_confirm_')) {
-                // 确认按钮需要等待用户从SelectMenu选择，所以这里的处理方式不同
-                // 注意：confirmManualAction 的逻辑已调整为在 service 中处理 awaitMessageComponent
-                const mode = interaction.customId.includes('_grant_') ? 'grant' : 'revoke';
-                await confirmManualAction(interaction, mode);
-            } else if (interaction.customId === 'role_cancel_op') {
-                await interaction.update({ content: '✅ 操作已取消。', embeds: [], components: [] });
             }
             
             return;
