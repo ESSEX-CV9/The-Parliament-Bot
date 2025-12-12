@@ -154,167 +154,184 @@ async function getParticipantMembers(guild, contestChannelId) {
 }
 
 /**
- * 显示用户列表用于手动操作（发放/移除）
+ * 启动用户列表交互会话 (All-in-One 解决方案)
+ * 这模仿了 discord.py 的 View 逻辑，在一个函数内处理所有后续交互
  * @param {import('discord.js').Interaction} interaction
  * @param {'grant'|'revoke'} mode
  */
 async function showUserList(interaction, mode) {
-    await interaction.deferReply({ ephemeral: true });
+    // 1. 初始准备
+    // 如果是按钮触发的，需要先 deferReply；如果是翻页等内部调用，可能需要根据情况处理
+    // 这里假设是从管理面板按钮点击进来的
+    if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true });
+    }
 
     const contestChannelData = await getContestChannel(interaction.channel.id);
-    const role = await interaction.guild.roles.fetch(contestChannelData.participantRoleId);
+    const role = await interaction.guild.roles.fetch(contestChannelData.participantRoleId).catch(() => null);
 
+    if (!role) {
+        return interaction.editReply({ content: '❌ 找不到绑定的身份组。' });
+    }
+
+    // 2. 获取数据
     const allParticipants = await getParticipantMembers(interaction.guild, interaction.channel.id);
-    if (allParticipants.length === 0) {
-        return interaction.editReply({ content: '🤔 没有任何有效的参赛者。' });
-    }
-
-    let targetUsers;
-    if (mode === 'grant') {
-        targetUsers = allParticipants.filter(m => !m.roles.cache.has(role.id));
-    } else { // revoke
-        targetUsers = allParticipants.filter(m => m.roles.cache.has(role.id));
-    }
-
-    if (targetUsers.length === 0) {
-        const message = mode === 'grant'
-            ? '✅ 所有参赛者都已拥有该身份组。'
-            : '✅ 没有任何参赛者拥有该身份组。';
-        return interaction.editReply({ content: message });
-    }
-
-    // 分页处理
-    const pagination = paginateData(targetUsers, 1, ITEMS_PER_PAGE);
-    const { embed, components } = buildUserListPage(pagination, role, mode);
-
-    await interaction.editReply({ embeds: [embed], components: components });
-}
-
-/**
- * 构建用户列表分页视图
- * @param {object} pagination
- * @param {import('discord.js').Role} role
- * @param {'grant'|'revoke'} mode
- */
-function buildUserListPage(pagination, role, mode) {
-    const { pageData, currentPage, totalPages } = pagination;
-    const title = mode === 'grant' ? '手动发放身份组' : '手动移除身份组';
-
-    const embed = new EmbedBuilder()
-        .setTitle(title)
-        .setDescription(pageData.map((member, i) => `${((currentPage-1)*ITEMS_PER_PAGE)+i+1}. ${member.user.tag} (${member.id})`).join('\n'))
-        .setColor(mode === 'grant' ? ButtonStyle.Success : ButtonStyle.Danger)
-        .setFooter({ text: `第 ${currentPage} / ${totalPages} 页` });
-
-    const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`role_select_users_${mode}_${role.id}`)
-        .setPlaceholder('选择要操作的用户...')
-        .setMinValues(1)
-        .setMaxValues(Math.min(pageData.length, 25))
-        .addOptions(pageData.map(member => ({
-            label: member.user.tag.substring(0, 100),
-            value: member.id
-        })));
-
-    const components = [
-        new ActionRowBuilder().addComponents(selectMenu),
-        new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`role_page_prev_${mode}_${role.id}_${currentPage}`).setLabel('◀️ 上一页').setStyle(ButtonStyle.Primary).setDisabled(currentPage <= 1),
-            new ButtonBuilder().setCustomId(`role_page_next_${mode}_${role.id}_${currentPage}`).setLabel('下一页 ▶️').setStyle(ButtonStyle.Primary).setDisabled(currentPage >= totalPages)
-        ),
-        new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`role_confirm_${mode}_${role.id}`).setLabel(mode === 'grant' ? '确认发放' : '确认移除').setStyle(mode === 'grant' ? ButtonStyle.Success : ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId('role_cancel_op').setLabel('取消').setStyle(ButtonStyle.Secondary)
-        )
-    ];
-
-    return { embed, components };
-}
-
-/**
- * 处理用户列表分页
- * @param {import('discord.js').Interaction} interaction
- * @param {'grant'|'revoke'} mode
- */
-async function handleUserListPageNavigation(interaction, mode) {
-    await interaction.deferUpdate();
-    const parts = interaction.customId.split('_');
-    const roleId = parts[parts.length - 2];
-    const currentPage = parseInt(parts[parts.length - 1]);
-    const direction = parts[2]; // prev or next
-
-    const newPage = direction === 'next' ? currentPage + 1 : currentPage - 1;
-
-    const role = await interaction.guild.roles.fetch(roleId);
-    const allParticipants = await getParticipantMembers(interaction.guild, interaction.channel.id);
-
-    let targetUsers;
+    let targetUsers = [];
     if (mode === 'grant') {
         targetUsers = allParticipants.filter(m => !m.roles.cache.has(role.id));
     } else {
         targetUsers = allParticipants.filter(m => m.roles.cache.has(role.id));
     }
 
-    const pagination = paginateData(targetUsers, newPage, ITEMS_PER_PAGE);
-    const { embed, components } = buildUserListPage(pagination, role, mode);
-    await interaction.editReply({ embeds: [embed], components: components });
-}
-
-/**
- * 确认手动操作（发放/移除）
- * @param {import('discord.js').Interaction} interaction
- * @param {'grant'|'revoke'} mode
- */
-async function confirmManualAction(interaction, mode) {
-    await interaction.deferUpdate();
-    const roleId = interaction.customId.split('_').pop();
-    const role = await interaction.guild.roles.fetch(roleId);
-
-    // 从前一个交互（SelectMenu）中获取选择的用户
-    const message = interaction.message;
-    const selectInteraction = await message.awaitMessageComponent({
-        filter: i => i.user.id === interaction.user.id && i.isStringSelectMenu(),
-        componentType: ComponentType.StringSelect,
-        time: 60000 // 60秒超时
-    }).catch(() => null);
-
-    if (!selectInteraction) {
-        return interaction.followUp({ content: '❌ 操作超时，请重新选择用户。', ephemeral: true });
+    if (targetUsers.length === 0) {
+        return interaction.editReply({ content: mode === 'grant' ? '✅ 所有人都已有该身份组。' : '✅ 没人有该身份组。' });
     }
 
-    const userIds = selectInteraction.values;
-    await selectInteraction.deferUpdate();
+    // --- 状态管理 (局部变量，类似 Py 的 self.value) ---
+    let currentPage = 1;
+    let selectedUserIds = new Set(); // 使用 Set 防止重复选择
+    const ITEMS_PER_PAGE = 25; // SelectMenu 最大支持25个
 
-    let successCount = 0;
-    let failCount = 0;
+    // 3. 渲染页面函数
+    const renderPage = async (i = null) => {
+        const pagination = paginateData(targetUsers, currentPage, ITEMS_PER_PAGE);
+        const { pageData, totalPages } = pagination;
 
-    for (const userId of userIds) {
-        const member = await interaction.guild.members.fetch(userId).catch(() => null);
-        if (member) {
-            try {
-                if (mode === 'grant') {
-                    await member.roles.add(role);
-                } else {
-                    await member.roles.remove(role);
-                }
-                successCount++;
-            } catch (e) {
-                console.error(`Failed to ${mode} role for ${member.user.tag}:`, e);
-                failCount++;
-            }
+        const title = mode === 'grant' ? '手动发放身份组' : '手动移除身份组';
+
+        // 构建描述：标记出哪些已经被选中了
+        const description = pageData.map((member, index) => {
+            const isSelected = selectedUserIds.has(member.id);
+            const mark = isSelected ? '✅ ' : '';
+            return `${mark}${((currentPage - 1) * ITEMS_PER_PAGE) + index + 1}. ${member.user.tag}`;
+        }).join('\n');
+
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setDescription(description || '本页无数据')
+            .setColor(mode === 'grant' ? '#57F287' : '#ED4245')
+            .setFooter({ text: `已选择: ${selectedUserIds.size} 人 | 第 ${currentPage} / ${totalPages} 页` });
+
+        // 构建 Select Menu
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('temp_select_users') // ID不重要了，因为我们用Collector
+            .setPlaceholder('在本页选择用户 (可多选)...')
+            .setMinValues(1)
+            .setMaxValues(pageData.length);
+
+        const options = pageData.map(member => ({
+            label: member.user.tag.substring(0, 100),
+            value: member.id,
+            default: selectedUserIds.has(member.id) // 关键：回显选中状态
+        }));
+
+        selectMenu.setOptions(options);
+
+        // 构建按钮
+        const btnRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('btn_prev').setLabel('◀️ 上一页').setStyle(ButtonStyle.Primary).setDisabled(currentPage <= 1),
+            new ButtonBuilder().setCustomId('btn_next').setLabel('下一页 ▶️').setStyle(ButtonStyle.Primary).setDisabled(currentPage >= totalPages),
+            new ButtonBuilder().setCustomId('btn_confirm').setLabel(`确认${mode === 'grant'?'发放':'移除'} (${selectedUserIds.size})`).setStyle(mode === 'grant' ? ButtonStyle.Success : ButtonStyle.Danger).setDisabled(selectedUserIds.size === 0)
+        );
+
+        const menuRow = new ActionRowBuilder().addComponents(selectMenu);
+
+        const payload = { content: '', embeds: [embed], components: [menuRow, btnRow] };
+
+        // 如果是更新交互
+        if (i) {
+            await i.update(payload);
         } else {
-            failCount++;
+            await interaction.editReply(payload);
         }
-    }
 
-    const actionText = mode === 'grant' ? '发放' : '移除';
-    await interaction.editReply({
-        content: `✅ **操作完成**\n成功${actionText} **${successCount}** 名用户。\n失败 **${failCount}** 名用户。`,
-        embeds: [],
-        components: []
+        return await interaction.fetchReply(); // 返回消息对象用于绑定 Collector
+    };
+
+    // 4. 发送初始消息并启动 Collector
+    const message = await renderPage();
+
+    // 创建收集器：监听该消息上的所有按钮和下拉菜单
+    // filter: 只有点击命令的人能操作，防止别人捣乱
+    const collector = message.createMessageComponentCollector({
+        filter: (i) => i.user.id === interaction.user.id,
+        time: 300000 // 5分钟超时
+    });
+
+    // 5. 处理交互事件 (这里就是 Py View 的回调逻辑)
+    collector.on('collect', async (i) => {
+        try {
+            // --- 处理下拉菜单选择 ---
+            if (i.isStringSelectMenu()) {
+                // 更新 Set 中的选择状态
+                const newlySelected = i.values;
+
+                // 这里的逻辑稍微复杂点：StringSelectMenu 返回的是"当前选中的所有项"
+                // 但仅仅是针对"当前页"的。我们需要把当前页没选中的从Set里踢掉，选中的加进去。
+
+                // 1. 获取当前页所有可能的ID
+                const currentPageIds = paginateData(targetUsers, currentPage, ITEMS_PER_PAGE).pageData.map(m => m.id);
+
+                // 2. 遍历当前页ID
+                currentPageIds.forEach(id => {
+                    if (newlySelected.includes(id)) {
+                        selectedUserIds.add(id); // 如果在返回列表里，添加
+                    } else {
+                        selectedUserIds.delete(id); // 如果不在返回列表里（但在当前页），说明被取消了
+                    }
+                });
+
+                // 刷新界面
+                await renderPage(i);
+            }
+
+            // --- 处理按钮 ---
+            else if (i.isButton()) {
+                if (i.customId === 'btn_prev') {
+                    currentPage--;
+                    await renderPage(i);
+                } else if (i.customId === 'btn_next') {
+                    currentPage++;
+                    await renderPage(i);
+                } else if (i.customId === 'btn_confirm') {
+                    // 执行最终逻辑
+                    await i.deferUpdate(); // 先转圈，防止处理慢
+                    collector.stop('finished'); // 停止监听
+
+                    let success = 0, fail = 0;
+                    const idArray = Array.from(selectedUserIds);
+
+                    // 批量操作
+                    for (const uid of idArray) {
+                        const member = await interaction.guild.members.fetch(uid).catch(() => null);
+                        if (member) {
+                            try {
+                                if (mode === 'grant') await member.roles.add(role);
+                                else await member.roles.remove(role);
+                                success++;
+                            } catch (e) { fail++; }
+                        } else { fail++; }
+                    }
+
+                    await interaction.editReply({
+                        content: `✅ **操作完成**\n成功: ${success} 人\n失败: ${fail} 人`,
+                        embeds: [], components: []
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('Collector Error:', err);
+            // 尝试恢复
+            if (!i.replied && !i.deferred) await i.reply({content: '❌ 交互出错', ephemeral: true});
+        }
+    });
+
+    collector.on('end', (collected, reason) => {
+        if (reason !== 'finished') {
+            interaction.editReply({ content: '⚠️ 操作已超时，请重新打开面板。', components: [] }).catch(() => {});
+        }
     });
 }
-
 
 /**
  * 显示批量发放身份组的指南
@@ -437,8 +454,6 @@ module.exports = {
     openRoleManagementPanel,
     toggleAutoGrant,
     showUserList,
-    handleUserListPageNavigation,
-    confirmManualAction,
     showBulkGrantGuide,
     listAllParticipants,
     grantRoleOnSubmission

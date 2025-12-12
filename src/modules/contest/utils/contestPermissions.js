@@ -168,6 +168,13 @@ function getRoleBindingPermissionDeniedMessage() {
 }
 
 /**
+ * 获取身份组管理权限不足的错误消息
+ */
+function getContestRoleManagePermissionDeniedMessage() {
+    return `❌ **权限不足**\n\n您没有权限管理比赛身份组。只有赛事申请人、审核员和管理员可以管理赛事。`;
+}
+
+/**
  * 获取管理权限不足的错误消息
  */
 function getManagePermissionDeniedMessage() {
@@ -193,6 +200,7 @@ module.exports = {
     getApplicationPermissionDeniedMessage,
     getReviewPermissionDeniedMessage,
     getRoleBindingPermissionDeniedMessage,
+    getContestRoleManagePermissionDeniedMessage,
     getManagePermissionDeniedMessage,
     isRoleDecorative,
 };

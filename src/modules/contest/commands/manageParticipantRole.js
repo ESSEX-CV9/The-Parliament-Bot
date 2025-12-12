@@ -1,7 +1,7 @@
 ﻿// src/modules/contest/commands/manageParticipantRole.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { getContestChannel, getContestSettings} = require('../utils/contestDatabase');
-const { checkContestRoleManagePermission, getManagePermissionDeniedMessage } = require('../utils/contestPermissions');
+const { checkContestRoleManagePermission, getContestRoleManagePermissionDeniedMessage } = require('../utils/contestPermissions');
 const { openRoleManagementPanel } = require('../services/participantRoleService');
 
 const data = new SlashCommandBuilder()
@@ -24,7 +24,7 @@ async function execute(interaction) {
     const hasPermission = checkContestRoleManagePermission(interaction.member, contestChannelData, contestSettings);
     if (!hasPermission) {
         return interaction.editReply({
-            content: getManagePermissionDeniedMessage(),
+            content: getContestRoleManagePermissionDeniedMessage(),
         });
     }
 
