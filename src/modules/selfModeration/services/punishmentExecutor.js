@@ -1,7 +1,7 @@
 // src\modules\selfModeration\services\punishmentExecutor.js
 const { updateSelfModerationVote } = require('../../../core/utils/database');
 const { calculateAdditionalMuteDuration, formatDuration } = require('../utils/timeCalculator');
-const { MUTE_DURATIONS } = require('../../../core/config/timeconfig');
+const { MUTE_DURATIONS, SERIOUS_MUTE_STABILITY_CONFIG } = require('../../../core/config/timeconfig');
 const { archiveDeletedMessage } = require('./archiveService');
 const { getRecentSeriousMuteCount, appendSeriousMuteEvent } = require('./seriousMuteHistory');
 
@@ -222,39 +222,40 @@ async function executeMuteUser(client, voteData) {
         let effectiveReactionCount = currentReactionCount;
 
         if (recordType === 'serious_mute') {
-            // 严肃禁言 A1 规则（仅在本函数内部计算时长，执行链路复用现有实现）
+            // 严肃禁言 A1 规则（冻结基准与初始次数，避免投票期间动态累加导致跳档）
             const count = (voteData.currentReactionCount ?? voteData.reactionCount ?? voteData.deduplicatedCount ?? 0);
-            const prev = await getRecentSeriousMuteCount(guildId, targetUserId);
             const base0 = MUTE_DURATIONS.LEVEL_1.threshold;
-            const base = Math.ceil(base0 * 1.5);
+            const frozenBase = (typeof voteData.seriousBase === 'number' ? voteData.seriousBase : Math.ceil(base0 * 1.5));
+            const minBase = (SERIOUS_MUTE_STABILITY_CONFIG && typeof SERIOUS_MUTE_STABILITY_CONFIG.MIN_BASE === 'number') ? SERIOUS_MUTE_STABILITY_CONFIG.MIN_BASE : 5;
+            const base = Math.max(frozenBase, minBase);
+            const prevFrozen = (typeof voteData.initialPrev === 'number') ? voteData.initialPrev : await getRecentSeriousMuteCount(guildId, targetUserId);
             const multiplier = Math.max(1, Math.floor(count / base));
-            const levelIndex = prev + multiplier;
+            const levelIndex = prevFrozen + multiplier;
             const table = [10, 20, 30, 60, 120, 240, 360, 480, 600];
             const targetTotalMinutes = levelIndex >= 10 ? 720 : table[levelIndex - 1];
+
+            const lastTarget = typeof voteData.lastTargetTotalMinutes === 'number' ? voteData.lastTargetTotalMinutes : 0;
             const currentExecuted = getCurrentMuteDuration(executedActions);
-            const additional = Math.max(0, targetTotalMinutes - currentExecuted);
+            let additional = Math.max(0, targetTotalMinutes - currentExecuted);
 
             effectiveReactionCount = count;
 
-            if (additional <= 0) {
-                console.log(`[SeriousMute] 用户 ${targetUserId} 无需追加禁言：已执行 ${currentExecuted} 分钟，目标 ${targetTotalMinutes} 分钟`);
-                
-                // 从投票数据中获取解禁时间，确保转换为Date对象
+            if (targetTotalMinutes <= lastTarget || additional <= 0) {
+                console.log(`[SeriousMute] 用户 ${targetUserId} 不追加：lastTarget=${lastTarget}，当前执行=${currentExecuted}，目标=${targetTotalMinutes}`);
                 let endTime = null;
                 if (voteData.muteEndTime) {
                     endTime = new Date(voteData.muteEndTime);
                 }
-                
                 return {
                     success: true,
                     action: 'mute',
                     alreadyMuted: true,
                     userId: targetUserId,
                     currentDuration: formatDuration(currentExecuted),
-                    totalDuration: formatDuration(targetTotalMinutes),
+                    totalDuration: formatDuration(Math.max(lastTarget, targetTotalMinutes)),
                     reactionCount: count,
                     targetMessageExists,
-                    endTime: endTime // 确保返回解禁时间
+                    endTime: endTime
                 };
             }
 
@@ -262,7 +263,7 @@ async function executeMuteUser(client, voteData) {
                 additionalDuration: additional,
                 totalDuration: targetTotalMinutes,
                 newLevel: `A1_${levelIndex}`,
-                serious: { levelIndex }
+                serious: { levelIndex, base, prev: prevFrozen }
             };
         } else {
             const currentMuteDuration = getCurrentMuteDuration(executedActions);
@@ -318,9 +319,19 @@ async function executeMuteUser(client, voteData) {
         
         console.log(`将在频道 ${permissionChannel.id} (类型: ${permissionChannel.type}) 设置权限`);
         
-        // 计算解禁时间：当前时间 + 总禁言时长（而非追加时长）
+        // 计算解禁时间（严肃禁言采用“旧解禁时间 + 追加时长”的累计模式）
         const now = Date.now();
-        const muteEndTime = new Date(now + muteInfo.totalDuration * 60 * 1000);
+        let muteEndTime;
+        if (recordType === 'serious_mute' && voteData.muteEndTime) {
+            const oldEndMs = new Date(voteData.muteEndTime).getTime();
+            if (oldEndMs > now) {
+                muteEndTime = new Date(oldEndMs + (muteInfo.additionalDuration * 60 * 1000));
+            } else {
+                muteEndTime = new Date(now + muteInfo.totalDuration * 60 * 1000);
+            }
+        } else {
+            muteEndTime = new Date(now + muteInfo.totalDuration * 60 * 1000);
+        }
         
         // 设置频道权限，禁止用户发送消息
         await permissionChannel.permissionOverwrites.create(member, {
@@ -354,6 +365,7 @@ async function executeMuteUser(client, voteData) {
             lastExecuted: new Date().toISOString(),
             executed: true,
             muteEndTime: muteEndTime.toISOString(), // 保存解禁时间
+            lastTargetTotalMinutes: muteInfo.totalDuration, // 记录最新目标总时长用于后续比较
             // 禁言状态追踪
             muteStatus: 'active', // 标记为禁言中
             muteChannelId: permissionChannel.id, // 记录禁言频道
@@ -363,21 +375,23 @@ async function executeMuteUser(client, voteData) {
             // 注意：这里不设置 status: 'completed'，因为投票还没结束
         });
 
-        // 严肃禁言：成功后写入历史事件（娱乐指令不写入）
+        // 严肃禁言：成功后写入历史事件（娱乐指令不写入，且依据策略去重）
         if (recordType === 'serious_mute') {
             try {
-                const voteId = voteData.id || `${guildId}:${targetMessageId}`;
-                const levelIndex = (muteInfo.serious && muteInfo.serious.levelIndex) ? muteInfo.serious.levelIndex : 1;
-                await appendSeriousMuteEvent({
-                    guildId,
-                    userId: targetUserId,
-                    channelId: permissionChannel.id,
-                    voteId,
-                    messageId: targetMessageId,
-                    durationMinutes: muteInfo.totalDuration,
-                    levelIndex,
-                    executedAt: Date.now()
-                });
+                if (!SERIOUS_MUTE_STABILITY_CONFIG || SERIOUS_MUTE_STABILITY_CONFIG.HISTORY_WRITE_MODE === 'first_execute') {
+                    const voteId = voteData.id || `${guildId}:${targetMessageId}`;
+                    const levelIndex = (muteInfo.serious && muteInfo.serious.levelIndex) ? muteInfo.serious.levelIndex : 1;
+                    await appendSeriousMuteEvent({
+                        guildId,
+                        userId: targetUserId,
+                        channelId: permissionChannel.id,
+                        voteId,
+                        messageId: targetMessageId,
+                        durationMinutes: muteInfo.totalDuration,
+                        levelIndex,
+                        executedAt: Date.now()
+                    });
+                }
             } catch (e) {
                 console.error('[SeriousMuteHistory] 记录严肃禁言事件失败:', e);
             }

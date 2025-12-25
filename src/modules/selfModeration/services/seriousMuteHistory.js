@@ -149,7 +149,16 @@ async function appendSeriousMuteEvent(event) {
     const threshold = getWindowThresholdMs(SERIOUS_MUTE_HISTORY_WINDOW_DAYS, nowMs);
     const prePruned = before.filter(e => e && typeof e.executedAt === 'number' && e.executedAt >= threshold);
 
-    // 追加新事件
+    // 按 voteId 去重：同一投票只记录一次，避免在 active 期间重复累加历史次数
+    const existsSameVote = prePruned.some(e => e && e.voteId === normalized.voteId);
+    if (existsSameVote) {
+      ns[key] = prePruned;
+      setNamespace(all, ns);
+      writeStore(all);
+      return;
+    }
+
+    // 追加新事件（仅在未存在相同 voteId 时）
     prePruned.push(normalized);
     ns[key] = prePruned;
 

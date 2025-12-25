@@ -6,7 +6,7 @@ const { parseMessageUrl, isMessageFromSameGuild, formatMessageLink } = require('
 const { validateChannel, checkBotPermissions } = require('../utils/channelValidator');
 const { createOrMergeVote, checkConflictingVote, formatVoteInfo } = require('./votingManager');
 const { getShitReactionCount } = require('./reactionTracker');
-const { getSelfModerationVoteEndTime, DELETE_THRESHOLD, MUTE_DURATIONS, getCurrentTimeMode } = require('../../../core/config/timeconfig');
+const { getSelfModerationVoteEndTime, DELETE_THRESHOLD, MUTE_DURATIONS, getCurrentTimeMode, computeSeriousBase, SERIOUS_MUTE_STABILITY_CONFIG } = require('../../../core/config/timeconfig');
 const { getRecentSeriousMuteCount } = require('./seriousMuteHistory');
 const { formatDuration } = require('../utils/timeCalculator');
 
@@ -203,6 +203,17 @@ async function processMessageUrlSubmission(interaction, type, messageUrl, option
         if (type === 'serious_mute') {
             voteData.earlyDelete = options.earlyDelete !== undefined ? options.earlyDelete : true;
             if (options.originalDescription) voteData.originalDescription = options.originalDescription;
+
+            // 冻结严肃禁言基准与初始历史次数（避免在投票活动期间动态变化导致时长跳档）
+            try {
+                const base0 = MUTE_DURATIONS.LEVEL_1.threshold;
+                const seriousBase = computeSeriousBase(base0);
+                const initialPrev = await getRecentSeriousMuteCount(voteData.guildId, voteData.targetUserId);
+                voteData.seriousBase = seriousBase;
+                voteData.initialPrev = initialPrev;
+            } catch (freezeErr) {
+                console.error('[SeriousMute Freeze] 计算 seriousBase/initialPrev 时出错：', freezeErr);
+            }
         }
         
         const voteResult = await createOrMergeVote(voteData);

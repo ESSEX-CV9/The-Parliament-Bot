@@ -110,6 +110,21 @@ const MUTE_STATUS_CHECK_CONFIG = {
     VERIFY_UNMUTE: true        // 确认解封后再次尝试解封以确保执行
 };
 
+// 严肃禁言稳定性默认参数（可全局配置）
+const SERIOUS_MUTE_STABILITY_CONFIG = {
+    MIN_BASE: 5, // 严肃禁言基础阈值下限，避免退化为 0/1
+    FREEZE_AT_CREATION: true, // 严肃基准与初始次数在投票创建时冻结
+    HISTORY_WRITE_MODE: 'first_execute', // 严肃事件写入策略：'first_execute' | 'on_expire'
+    LIMIT_SINGLE_STEP_JUMP: null // 单次跳级上限，null 表示不限制
+};
+
+// 计算严肃禁言基准阈值：ceil(base0*1.5)，并应用下限保护
+function computeSeriousBase(base0) {
+    const computed = Math.ceil(base0 * 1.5);
+    const minBase = SERIOUS_MUTE_STABILITY_CONFIG.MIN_BASE || 5;
+    return Math.max(computed, minBase);
+}
+
 // 禁言时长配置（分钟）- 保留用于兼容性，但已改为使用线性计算
 const BASE_MUTE_DURATIONS = {
     LEVEL_1: { threshold: 10, duration: 10 },   // 保留第一级作为基准线
@@ -346,5 +361,8 @@ module.exports = {
     LINEAR_MUTE_CONFIG,
     calculateLinearMuteDuration,
     // 禁言状态检查配置导出
-    MUTE_STATUS_CHECK_CONFIG
+    MUTE_STATUS_CHECK_CONFIG,
+    // 严肃禁言稳定性默认参数与计算工具导出
+    SERIOUS_MUTE_STABILITY_CONFIG,
+    computeSeriousBase
 };
