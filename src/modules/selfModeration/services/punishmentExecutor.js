@@ -228,8 +228,20 @@ async function executeMuteUser(client, voteData) {
             const frozenBase = (typeof voteData.seriousBase === 'number' ? voteData.seriousBase : Math.ceil(base0 * 1.5));
             const minBase = (SERIOUS_MUTE_STABILITY_CONFIG && typeof SERIOUS_MUTE_STABILITY_CONFIG.MIN_BASE === 'number') ? SERIOUS_MUTE_STABILITY_CONFIG.MIN_BASE : 5;
             const base = Math.max(frozenBase, minBase);
-            const prevFrozen = (typeof voteData.initialPrev === 'number') ? voteData.initialPrev : await getRecentSeriousMuteCount(guildId, targetUserId);
-            const multiplier = Math.max(1, Math.floor(count / base));
+            
+            // 获取当前投票的 voteId，用于在统计历史次数时排除当前投票
+            const currentVoteId = voteData.id || `${guildId}:${targetMessageId}`;
+            
+            // 使用冻结的 prev 或者重新获取（排除当前投票）
+            const prevFrozen = (typeof voteData.initialPrev === 'number')
+                ? voteData.initialPrev
+                : await getRecentSeriousMuteCount(guildId, targetUserId, 15, currentVoteId);
+            
+            // 检查是否是首次执行禁言（用于决定是否写入历史记录）
+            const isFirstSeriousMuteExecution = getCurrentMuteDuration(executedActions) === 0;
+            
+            // multiplier 固定为 1（投票期间不跳级），跳级在投票结束时统一计算
+            const multiplier = 1;
             const levelIndex = prevFrozen + multiplier;
             const table = [10, 20, 30, 60, 120, 240, 360, 480, 600];
             const targetTotalMinutes = levelIndex >= 10 ? 720 : table[levelIndex - 1];
@@ -263,7 +275,7 @@ async function executeMuteUser(client, voteData) {
                 additionalDuration: additional,
                 totalDuration: targetTotalMinutes,
                 newLevel: `A1_${levelIndex}`,
-                serious: { levelIndex, base, prev: prevFrozen }
+                serious: { levelIndex, base, prev: prevFrozen, isFirstExecution: isFirstSeriousMuteExecution, currentVoteId }
             };
         } else {
             const currentMuteDuration = getCurrentMuteDuration(executedActions);
@@ -375,11 +387,12 @@ async function executeMuteUser(client, voteData) {
             // 注意：这里不设置 status: 'completed'，因为投票还没结束
         });
 
-        // 严肃禁言：成功后写入历史事件（娱乐指令不写入，且依据策略去重）
+        // 严肃禁言：只在首次执行时写入历史事件（避免投票期间重复写入导致 prev 累加）
         if (recordType === 'serious_mute') {
-            try {
-                if (!SERIOUS_MUTE_STABILITY_CONFIG || SERIOUS_MUTE_STABILITY_CONFIG.HISTORY_WRITE_MODE === 'first_execute') {
-                    const voteId = voteData.id || `${guildId}:${targetMessageId}`;
+            const isFirstExecution = muteInfo.serious && muteInfo.serious.isFirstExecution;
+            if (isFirstExecution) {
+                try {
+                    const voteId = muteInfo.serious.currentVoteId || voteData.id || `${guildId}:${targetMessageId}`;
                     const levelIndex = (muteInfo.serious && muteInfo.serious.levelIndex) ? muteInfo.serious.levelIndex : 1;
                     await appendSeriousMuteEvent({
                         guildId,
@@ -391,9 +404,12 @@ async function executeMuteUser(client, voteData) {
                         levelIndex,
                         executedAt: Date.now()
                     });
+                    console.log(`[SeriousMuteHistory] 首次执行，已记录严肃禁言事件: voteId=${voteId}, levelIndex=${levelIndex}`);
+                } catch (e) {
+                    console.error('[SeriousMuteHistory] 记录严肃禁言事件失败:', e);
                 }
-            } catch (e) {
-                console.error('[SeriousMuteHistory] 记录严肃禁言事件失败:', e);
+            } else {
+                console.log(`[SeriousMute] 非首次执行，跳过历史记录写入`);
             }
         }
         

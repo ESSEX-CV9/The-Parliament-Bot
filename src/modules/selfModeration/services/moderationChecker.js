@@ -1,14 +1,15 @@
 // src\modules\selfModeration\services\moderationChecker.js
 const { getAllSelfModerationVotes, updateSelfModerationVote, deleteSelfModerationVote } = require('../../../core/utils/database');
-const { getCheckIntervals } = require('../../../core/config/timeconfig');
+const { getCheckIntervals, MUTE_DURATIONS, SERIOUS_MUTE_STABILITY_CONFIG } = require('../../../core/config/timeconfig');
 const { batchCheckReactions, checkReactionThreshold } = require('./reactionTracker');
-const { executeDeleteMessage, executeMuteUser, checkAndDeleteUserMessage } = require('./punishmentExecutor');
+const { executeDeleteMessage, executeMuteUser, checkAndDeleteUserMessage, getCurrentMuteDuration } = require('./punishmentExecutor');
 const { EmbedBuilder } = require('discord.js');
 const { formatMessageLink } = require('../utils/messageParser');
 const { deleteMessageAfterVoteEnd } = require('./punishmentExecutor');
 const { calculateLinearMuteDuration, isDayTime, LINEAR_MUTE_CONFIG } = require('../../../core/config/timeconfig');
 const { formatDuration } = require('../utils/timeCalculator');
 const { startMuteStatusChecker } = require('./muteStatusChecker');
+const { getRecentSeriousMuteCount, appendSeriousMuteEvent } = require('./seriousMuteHistory');
 
 /**
  * 检查所有活跃的自助管理投票
@@ -319,9 +320,10 @@ async function executePunishment(client, vote) {
  */
 async function handleExpiredVote(client, vote) {
     try {
-        const { guildId, targetMessageId, type, channelId, currentReactionCount, executed } = vote;
+        const { guildId, targetMessageId, type, channelId, currentReactionCount, executed, targetUserId } = vote;
         
         let deleteResult = null;
+        let jumpResult = null; // 跳跃机制结果
         
         // 如果是禁言投票（含严肃禁言），检查消息是否已在禁言开始时被删除
         if (type === 'mute' || type === 'serious_mute') {
@@ -329,12 +331,17 @@ async function handleExpiredVote(client, vote) {
             const thresholdCheck = checkReactionThreshold(currentReactionCount, type);
             
             if (thresholdCheck.reached) {
+                // 🔥 严肃禁言投票结束时的跳跃机制
+                if (type === 'serious_mute' && executed) {
+                    jumpResult = await handleSeriousMuteJumpOnExpire(client, vote);
+                }
+                
                 // 检查是否已经在禁言开始时删除了消息
                 if (vote.messageDeletedOnMuteStart) {
                     console.log(`禁言投票结束，消息已在禁言开始时被删除: ${targetMessageId}`);
-                    deleteResult = { 
-                        success: true, 
-                        alreadyDeleted: true, 
+                    deleteResult = {
+                        success: true,
+                        alreadyDeleted: true,
                         archived: vote.messageArchived || false,
                         deletedOnMuteStart: true
                     };
@@ -353,8 +360,8 @@ async function handleExpiredVote(client, vote) {
             completedAt: new Date().toISOString()
         });
         
-        // 发送投票结束通知（编辑原始公告，包含删除结果）
-        await editVoteAnnouncementToExpired(client, vote, deleteResult);
+        // 发送投票结束通知（编辑原始公告，包含删除结果和跳跃结果）
+        await editVoteAnnouncementToExpired(client, vote, deleteResult, jumpResult);
         
         console.log(`投票 ${guildId}_${targetMessageId}_${type} 已过期`);
         
@@ -364,12 +371,243 @@ async function handleExpiredVote(client, vote) {
 }
 
 /**
+ * 处理严肃禁言投票结束时的跳跃机制
+ * @param {Client} client - Discord客户端
+ * @param {object} vote - 投票数据
+ * @returns {object|null} 跳跃结果
+ */
+async function handleSeriousMuteJumpOnExpire(client, vote) {
+    try {
+        const { guildId, targetMessageId, targetUserId, currentReactionCount, executedActions = [], muteEndTime, muteChannelId } = vote;
+        
+        // 获取基础配置
+        const base0 = MUTE_DURATIONS.LEVEL_1.threshold;
+        const frozenBase = (typeof vote.seriousBase === 'number') ? vote.seriousBase : Math.ceil(base0 * 1.5);
+        const minBase = (SERIOUS_MUTE_STABILITY_CONFIG && typeof SERIOUS_MUTE_STABILITY_CONFIG.MIN_BASE === 'number')
+            ? SERIOUS_MUTE_STABILITY_CONFIG.MIN_BASE : 5;
+        const base = Math.max(frozenBase, minBase);
+        
+        // 获取当前投票的 voteId
+        const currentVoteId = vote.id || `${guildId}:${targetMessageId}`;
+        
+        // 获取历史次数（排除当前投票）
+        const prev = (typeof vote.initialPrev === 'number')
+            ? vote.initialPrev
+            : await getRecentSeriousMuteCount(guildId, targetUserId, 15, currentVoteId);
+        
+        // 计算最终的 multiplier（基于投票结束时的总票数）
+        const finalMultiplier = Math.max(1, Math.floor(currentReactionCount / base));
+        
+        // 如果 multiplier 为 1，无需跳跃
+        if (finalMultiplier <= 1) {
+            console.log(`[SeriousMute] 投票结束，票数${currentReactionCount}，multiplier=${finalMultiplier}，无需跳跃`);
+            return null;
+        }
+        
+        // 计算新的 levelIndex
+        const newLevelIndex = prev + finalMultiplier;
+        const table = [10, 20, 30, 60, 120, 240, 360, 480, 600];
+        const newTotalMinutes = newLevelIndex >= 10 ? 720 : table[newLevelIndex - 1];
+        
+        // 获取当前已执行的禁言时长
+        const currentExecutedMinutes = getCurrentMuteDuration(executedActions);
+        
+        // 如果新的总时长不大于当前已执行的时长，无需跳跃
+        if (newTotalMinutes <= currentExecutedMinutes) {
+            console.log(`[SeriousMute] 投票结束，新目标${newTotalMinutes}分钟不大于当前${currentExecutedMinutes}分钟，无需跳跃`);
+            return null;
+        }
+        
+        // 计算需要追加的时长
+        const additionalMinutes = newTotalMinutes - currentExecutedMinutes;
+        
+        console.log(`[SeriousMute] 投票结束跳跃：票数${currentReactionCount}，multiplier=${finalMultiplier}，levelIndex=${newLevelIndex}，追加${additionalMinutes}分钟`);
+        
+        // 计算新的解禁时间
+        let newMuteEndTime;
+        const now = Date.now();
+        if (muteEndTime) {
+            const oldEndMs = new Date(muteEndTime).getTime();
+            if (oldEndMs > now) {
+                // 在原解禁时间基础上追加
+                newMuteEndTime = new Date(oldEndMs + additionalMinutes * 60 * 1000);
+            } else {
+                // 原禁言已过期，从现在开始计算
+                newMuteEndTime = new Date(now + newTotalMinutes * 60 * 1000);
+            }
+        } else {
+            newMuteEndTime = new Date(now + newTotalMinutes * 60 * 1000);
+        }
+        
+        // 更新权限（延长禁言）
+        try {
+            if (muteChannelId) {
+                const guild = await client.guilds.fetch(guildId);
+                const member = await guild.members.fetch(targetUserId);
+                const permissionChannel = await client.channels.fetch(muteChannelId);
+                
+                if (permissionChannel && permissionChannel.permissionOverwrites) {
+                    await permissionChannel.permissionOverwrites.create(member, {
+                        SendMessages: false,
+                        AddReactions: false,
+                        CreatePublicThreads: false,
+                        CreatePrivateThreads: false,
+                        SendMessagesInThreads: false
+                    });
+                    console.log(`[SeriousMute] 已延长用户 ${targetUserId} 在频道 ${muteChannelId} 的禁言`);
+                }
+                
+                // 更新定时器
+                const timerKey = `${guildId}_${targetUserId}_${muteChannelId}`;
+                if (global.muteTimers && global.muteTimers[timerKey]) {
+                    clearTimeout(global.muteTimers[timerKey]);
+                }
+                
+                if (!global.muteTimers) {
+                    global.muteTimers = {};
+                }
+                
+                const remainingTime = newMuteEndTime.getTime() - Date.now();
+                global.muteTimers[timerKey] = setTimeout(async () => {
+                    try {
+                        await permissionChannel.permissionOverwrites.delete(member);
+                        console.log(`[SeriousMute] 已解除用户 ${targetUserId} 在频道 ${muteChannelId} 的禁言（跳跃后）`);
+                        
+                        await updateSelfModerationVote(guildId, targetMessageId, 'serious_mute', {
+                            muteStatus: 'completed',
+                            lastUnmuteAttempt: new Date().toISOString()
+                        });
+                        
+                        delete global.muteTimers[timerKey];
+                    } catch (error) {
+                        console.error('[SeriousMute] 解除跳跃后禁言时出错:', error);
+                    }
+                }, remainingTime);
+            }
+        } catch (permError) {
+            console.error('[SeriousMute] 延长禁言权限时出错:', permError);
+        }
+        
+        // 记录跳跃动作到 executedActions
+        const jumpAction = {
+            type: 'mute_jump',
+            timestamp: new Date().toISOString(),
+            previousDuration: currentExecutedMinutes,
+            additionalDuration: additionalMinutes,
+            totalDuration: newTotalMinutes,
+            reactionCount: currentReactionCount,
+            multiplier: finalMultiplier,
+            level: `A1_${newLevelIndex}`,
+            endTime: newMuteEndTime.toISOString()
+        };
+        
+        const newExecutedActions = [...executedActions, jumpAction];
+        
+        // 更新投票记录
+        await updateSelfModerationVote(guildId, targetMessageId, 'serious_mute', {
+            executedActions: newExecutedActions,
+            lastExecuted: new Date().toISOString(),
+            muteEndTime: newMuteEndTime.toISOString(),
+            lastTargetTotalMinutes: newTotalMinutes,
+            jumpApplied: true,
+            jumpMultiplier: finalMultiplier,
+            jumpLevelIndex: newLevelIndex
+        });
+        
+        // 更新历史记录中的 levelIndex（如果需要）
+        try {
+            // 历史记录中的 levelIndex 保持为首次写入时的值（prev + 1），跳跃信息记录在投票数据中
+            console.log(`[SeriousMute] 跳跃完成：新 levelIndex=${newLevelIndex}，新解禁时间=${newMuteEndTime.toISOString()}`);
+        } catch (historyError) {
+            console.error('[SeriousMute] 更新历史记录时出错:', historyError);
+        }
+        
+        // 更新禁言执行通知消息
+        await updatePunishmentNotificationForJump(client, vote, {
+            newTotalMinutes,
+            newMuteEndTime,
+            additionalMinutes,
+            finalMultiplier,
+            newLevelIndex
+        });
+        
+        return {
+            jumped: true,
+            previousDuration: currentExecutedMinutes,
+            newTotalDuration: newTotalMinutes,
+            additionalMinutes,
+            multiplier: finalMultiplier,
+            newLevelIndex,
+            newMuteEndTime
+        };
+        
+    } catch (error) {
+        console.error('[SeriousMute] 处理投票结束跳跃时出错:', error);
+        return null;
+    }
+}
+
+/**
+ * 更新禁言执行通知消息以反映跳跃结果
+ * @param {Client} client - Discord客户端
+ * @param {object} vote - 投票数据
+ * @param {object} jumpInfo - 跳跃信息
+ */
+async function updatePunishmentNotificationForJump(client, vote, jumpInfo) {
+    try {
+        const { punishmentNotificationMessageId, channelId } = vote;
+        
+        if (!punishmentNotificationMessageId) {
+            console.log('[SeriousMute] 没有禁言通知消息ID，跳过更新');
+            return;
+        }
+        
+        const channel = await client.channels.fetch(channelId);
+        if (!channel) return;
+        
+        const message = await channel.messages.fetch(punishmentNotificationMessageId);
+        if (!message || !message.embeds[0]) return;
+        
+        const existingEmbed = message.embeds[0];
+        let description = existingEmbed.description || '';
+        
+        // 更新总禁言时长
+        description = description.replace(
+            /\*\*总禁言时长：\*\* .+/,
+            `**总禁言时长：** ${formatDuration(jumpInfo.newTotalMinutes)}`
+        );
+        
+        // 更新解禁时间
+        const endTimestamp = Math.floor(jumpInfo.newMuteEndTime.getTime() / 1000);
+        description = description.replace(
+            /\*\*解禁时间：\*\* <t:\d+:f>/,
+            `**解禁时间：** <t:${endTimestamp}:f>`
+        );
+        
+        // 添加跳跃说明
+        if (!description.includes('票数跳跃')) {
+            description += `\n\n**📈 票数跳跃：** 投票结束时票数达到 ${vote.currentReactionCount}，触发 ${jumpInfo.finalMultiplier}x 跳跃，追加 ${formatDuration(jumpInfo.additionalMinutes)}`;
+        }
+        
+        const updatedEmbed = EmbedBuilder.from(existingEmbed)
+            .setDescription(description);
+        
+        await message.edit({ embeds: [updatedEmbed] });
+        console.log(`[SeriousMute] 已更新禁言通知消息以反映跳跃：追加${jumpInfo.additionalMinutes}分钟`);
+        
+    } catch (error) {
+        console.error('[SeriousMute] 更新禁言通知消息时出错:', error);
+    }
+}
+
+/**
  * 编辑投票公告为投票结束通知
  * @param {Client} client - Discord客户端
  * @param {object} vote - 投票数据
  * @param {object} deleteResult - 删除结果（禁言投票专用）
+ * @param {object} jumpResult - 跳跃结果（严肃禁言专用）
  */
-async function editVoteAnnouncementToExpired(client, vote, deleteResult = null) {
+async function editVoteAnnouncementToExpired(client, vote, deleteResult = null, jumpResult = null) {
     try {
         const { 
             channelId, 
@@ -417,6 +655,14 @@ async function editVoteAnnouncementToExpired(client, vote, deleteResult = null) 
             } else {
                 description += `\n**消息状态：** ❌ 删除失败`;
             }
+        }
+        
+        // 🔥 如果有跳跃结果，添加跳跃信息
+        if (jumpResult && jumpResult.jumped) {
+            description += `\n\n**📈 票数跳跃：** 触发 ${jumpResult.multiplier}x 跳跃`;
+            description += `\n**最终禁言时长：** ${formatDuration(jumpResult.newTotalDuration)}`;
+            const endTimestamp = Math.floor(jumpResult.newMuteEndTime.getTime() / 1000);
+            description += `\n**新解禁时间：** <t:${endTimestamp}:f>`;
         }
         
         description += `\n\n💡 反应统计包含目标消息和投票公告的所有⚠️反应（同一用户只计算一次）`;

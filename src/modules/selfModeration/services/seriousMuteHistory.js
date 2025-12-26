@@ -81,13 +81,15 @@ function getWindowThresholdMs(windowDays, nowMs) {
 /**
  * 获取最近窗口内的严肃禁言事件计数
  * 仅统计已成功执行并写入本集合的 serious_mute 事件
+ * 按 voteId 去重统计：同一投票只计为1次
  *
  * @param {string} guildId - 服务器ID
  * @param {string} userId - 用户ID（被禁言者）
  * @param {number} [windowDays=SERIOUS_MUTE_HISTORY_WINDOW_DAYS] - 窗口天数
- * @returns {Promise<number>} 计数
+ * @param {string} [excludeVoteId=null] - 可选，排除指定投票ID（用于排除当前投票）
+ * @returns {Promise<number>} 计数（按voteId去重后的不同投票次数）
  */
-async function getRecentSeriousMuteCount(guildId, userId, windowDays = SERIOUS_MUTE_HISTORY_WINDOW_DAYS) {
+async function getRecentSeriousMuteCount(guildId, userId, windowDays = SERIOUS_MUTE_HISTORY_WINDOW_DAYS, excludeVoteId = null) {
   try {
     if (!guildId || !userId) {
       return 0;
@@ -97,7 +99,23 @@ async function getRecentSeriousMuteCount(guildId, userId, windowDays = SERIOUS_M
     const key = makeUserKey(guildId, userId);
     const list = Array.isArray(ns[key]) ? ns[key] : [];
     const threshold = getWindowThresholdMs(windowDays, Date.now());
-    const count = list.filter(e => e && typeof e.executedAt === 'number' && e.executedAt >= threshold).length;
+    
+    // 筛选时间窗口内的事件
+    const validEvents = list.filter(e => e && typeof e.executedAt === 'number' && e.executedAt >= threshold);
+    
+    // 按 voteId 去重统计，同时排除指定的 excludeVoteId
+    const uniqueVoteIds = new Set();
+    for (const e of validEvents) {
+      if (e.voteId) {
+        // 如果指定了排除的 voteId，跳过该投票
+        if (excludeVoteId && e.voteId === excludeVoteId) {
+          continue;
+        }
+        uniqueVoteIds.add(e.voteId);
+      }
+    }
+    
+    const count = uniqueVoteIds.size;
     return count;
   } catch (err) {
     console.error('[SeriousMuteHistory] 获取近期计数失败:', err);
