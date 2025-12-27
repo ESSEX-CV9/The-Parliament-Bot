@@ -14,6 +14,24 @@ async function processContestApplication(interaction) {
         
         console.log(`处理赛事申请 - 用户: ${interaction.user.tag}`);
         
+        // ========== 解析轨道ID ==========
+        // 从按钮customId解析轨道ID
+        // 格式: contest_application_{trackId} 或旧格式 contest_application
+        let trackId;
+        const customId = interaction.customId || '';
+        
+        if (customId.startsWith('contest_application_')) {
+            // 新格式，提取轨道ID
+            trackId = customId.replace('contest_application_', '');
+            console.log(`检测到新格式按钮，轨道ID: ${trackId}`);
+        } else {
+            // 旧格式，使用默认轨道
+            const { getContestSettings } = require('../utils/contestDatabase');
+            const tempSettings = await getContestSettings(interaction.guild.id);
+            trackId = tempSettings?.defaultTrackId || 'default';
+            console.log(`检测到旧格式按钮，使用默认轨道: ${trackId}`);
+        }
+        
         // 获取表单数据
         const formData = {
             title: interaction.fields.getTextInputValue('contest_title'),
@@ -26,14 +44,24 @@ async function processContestApplication(interaction) {
         const { getContestSettings } = require('../utils/contestDatabase');
         const settings = await getContestSettings(interaction.guild.id);
         
-        if (!settings || !settings.reviewForumId) {
+        if (!settings || !settings.tracks || !settings.tracks[trackId]) {
             return interaction.editReply({
-                content: '❌ 赛事系统未配置完整，请联系管理员设置审批论坛。'
+                content: `❌ 赛事系统未配置完整或轨道 \`${trackId}\` 不存在，请联系管理员设置。`
+            });
+        }
+        
+        // 从轨道获取审批论坛ID
+        const track = settings.tracks[trackId];
+        const reviewForumId = track.reviewForumId;
+        
+        if (!reviewForumId) {
+            return interaction.editReply({
+                content: `❌ 轨道 \`${trackId}\` 未配置审批论坛，请联系管理员设置。`
             });
         }
         
         // 获取审批论坛
-        const reviewForum = await interaction.client.channels.fetch(settings.reviewForumId);
+        const reviewForum = await interaction.client.channels.fetch(reviewForumId);
         if (!reviewForum) {
             return interaction.editReply({
                 content: '❌ 无法访问审批论坛，请联系管理员检查设置。'
@@ -50,9 +78,10 @@ async function processContestApplication(interaction) {
         
         const reviewThread = await createReviewThread(reviewForum, formData, interaction.user, applicationId);
         
-        // 保存申请数据
+        // 保存申请数据（包含trackId）
         const applicationData = {
             id: applicationId,
+            trackId: trackId, // 记录所属轨道
             applicantId: interaction.user.id,
             guildId: interaction.guild.id,
             threadId: reviewThread.id,
@@ -66,10 +95,11 @@ async function processContestApplication(interaction) {
         
         await saveContestApplication(applicationData);
         
-        console.log(`成功创建赛事申请 - ID: ${applicationId}, 帖子: ${reviewThread.id}`);
+        console.log(`成功创建赛事申请 - ID: ${applicationId}, 轨道: ${trackId}, 帖子: ${reviewThread.id}`);
         
+        const trackName = track.name || trackId;
         await interaction.editReply({
-            content: `✅ **申请提交成功！**\n\n📋 **申请ID：** \`${applicationId}\`\n🔗 **审核帖子：** ${reviewThread.url}\n\n您的申请已提交到审核论坛，请等待管理员审核。您可以在审核帖子中编辑申请内容。`
+            content: `✅ **申请提交成功！**\n\n📋 **申请ID：** \`${applicationId}\`\n🛤️ **轨道：** ${trackName}\n🔗 **审核帖子：** ${reviewThread.url}\n\n您的申请已提交到审核论坛，请等待管理员审核。您可以在审核帖子中编辑申请内容。`
         });
         
     } catch (error) {

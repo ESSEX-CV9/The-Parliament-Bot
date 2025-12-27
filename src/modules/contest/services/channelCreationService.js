@@ -93,12 +93,24 @@ async function createContestChannel(client, guild, applicationData, channelName,
     try {
         const settings = await getContestSettings(guild.id);
         
-        if (!settings || !settings.contestCategoryId) {
-            throw new Error('未设置赛事分类，无法创建频道');
+        // ========== 从申请数据获取轨道ID ==========
+        const trackId = applicationData.trackId || settings?.defaultTrackId || 'default';
+        console.log(`创建赛事频道 - 申请ID: ${applicationData.id}, 轨道: ${trackId}`);
+        
+        if (!settings || !settings.tracks || !settings.tracks[trackId]) {
+            throw new Error(`轨道 ${trackId} 未配置或不存在`);
+        }
+        
+        // 从轨道获取赛事分类ID
+        const track = settings.tracks[trackId];
+        const contestCategoryId = track.contestCategoryId;
+        
+        if (!contestCategoryId) {
+            throw new Error(`轨道 ${trackId} 未设置赛事分类，无法创建频道`);
         }
         
         // 获取分类频道
-        const category = await guild.channels.fetch(settings.contestCategoryId);
+        const category = await guild.channels.fetch(contestCategoryId);
         if (!category || category.type !== ChannelType.GuildCategory) {
             throw new Error('指定的赛事分类不存在或类型错误');
         }
@@ -135,9 +147,10 @@ async function createContestChannel(client, guild, applicationData, channelName,
             allowExternalServers
         );
         
-        // 保存频道数据
+        // 保存频道数据（包含trackId）
         const channelData = {
             channelId: contestChannel.id,
+            trackId: trackId, // 记录所属轨道
             applicationId: applicationData.id,
             applicantId: applicationData.applicantId,
             guildId: guild.id,
@@ -155,7 +168,7 @@ async function createContestChannel(client, guild, applicationData, channelName,
         
         await saveContestChannel(channelData);
         
-        console.log(`赛事频道数据已保存 - 频道: ${contestChannel.id} (年龄限制已启用), 外部服务器: ${allowExternalServers}`);
+        console.log(`赛事频道数据已保存 - 频道: ${contestChannel.id} (年龄限制已启用), 轨道: ${trackId}, 外部服务器: ${allowExternalServers}`);
         
         return contestChannel;
         
