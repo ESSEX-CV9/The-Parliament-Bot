@@ -224,8 +224,8 @@ async function interactionCreateHandler(interaction) {
                 await handleWithdrawRegistration(interaction);
             }
             // === 赛事系统按钮处理 ===
-            else if (interaction.customId === 'contest_application') {
-                // 赛事申请按钮
+            else if (interaction.customId.startsWith('contest_application') && !interaction.customId.startsWith('contest_edit_')) {
+                // 赛事申请按钮（支持旧格式 contest_application 和新格式 contest_application_{trackId}）
                 const contestSettings = await getContestSettings(interaction.guild.id);
                 const hasPermission = checkContestApplicationPermission(interaction.member, contestSettings);
                 
@@ -248,7 +248,16 @@ async function interactionCreateHandler(interaction) {
                     });
                 }
                 
-                const modal = createContestApplicationModal();
+                // 提取轨道ID
+                let trackId;
+                if (interaction.customId.startsWith('contest_application_')) {
+                    trackId = interaction.customId.replace('contest_application_', '');
+                } else {
+                    // 旧格式按钮，使用默认轨道
+                    trackId = contestSettings?.defaultTrackId || 'default';
+                }
+                
+                const modal = createContestApplicationModal(trackId);
                 await interaction.showModal(modal);
             } else if (interaction.customId.startsWith('contest_edit_')) {
                 // 编辑申请按钮
@@ -529,8 +538,8 @@ async function interactionCreateHandler(interaction) {
                 await handleAdminEditInfo(interaction);
             }
             // === 赛事系统模态窗口处理 ===
-            else if (interaction.customId === 'contest_application') {
-                // 赛事申请表单提交
+            else if (interaction.customId.startsWith('contest_application')) {
+                // 赛事申请表单提交（支持旧格式 contest_application 和新格式 contest_application_{trackId}）
                 await processContestApplication(interaction);
             } else if (interaction.customId === 'contest_edit_application') {
                 // 编辑申请表单提交

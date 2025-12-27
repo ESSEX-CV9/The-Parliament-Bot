@@ -63,6 +63,7 @@ const manageSelfModerationBlacklistCommand = require('../modules/selfModeration/
 
 // 赛事系统命令
 const setupContestApplicationCommand = require('../modules/contest/commands/setupContestApplication');
+const manageTrackCommand = require('../modules/contest/commands/manageTrack');
 const setContestReviewersCommand = require('../modules/contest/commands/setContestReviewers');
 const reviewContestApplicationCommand = require('../modules/contest/commands/reviewContestApplication');
 const updateContestInfoCommand = require('../modules/contest/commands/updateContestInfo');
@@ -207,6 +208,7 @@ client.commands.set(manageSelfModerationBlacklistCommand.data.name, manageSelfMo
 
 // 赛事系统命令
 client.commands.set(setupContestApplicationCommand.data.name, setupContestApplicationCommand);
+client.commands.set(manageTrackCommand.data.name, manageTrackCommand);
 client.commands.set(setContestReviewersCommand.data.name, setContestReviewersCommand);
 client.commands.set(reviewContestApplicationCommand.data.name, reviewContestApplicationCommand);
 client.commands.set(updateContestInfoCommand.data.name, updateContestInfoCommand);

@@ -6,9 +6,12 @@ const {
     ActionRowBuilder 
 } = require('discord.js');
 
-function createContestApplicationModal() {
+function createContestApplicationModal(trackId) {
+    // 支持轨道ID参数，向后兼容旧调用（不传参数时使用固定ID）
+    const customId = trackId ? `contest_application_${trackId}` : 'contest_application';
+    
     const modal = new ModalBuilder()
-        .setCustomId('contest_application')
+        .setCustomId(customId)
         .setTitle('赛事申请表单');
     
     const titleInput = new TextInputBuilder()
