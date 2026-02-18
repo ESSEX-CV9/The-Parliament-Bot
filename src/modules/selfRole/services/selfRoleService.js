@@ -261,7 +261,12 @@ async function createApprovalPanel(interaction, roleConfig, reasonText) {
         .setLabel('❌ 反对')
         .setStyle(ButtonStyle.Danger);
 
-    const row = new ActionRowBuilder().addComponents(approveButton, rejectButton);
+    const rejectWithReasonButton = new ButtonBuilder()
+        .setCustomId(`self_role_reason_reject_${roleConfig.roleId}_${applicant.id}`)
+        .setLabel('📝 反对并说明')
+        .setStyle(ButtonStyle.Secondary);
+
+    const row = new ActionRowBuilder().addComponents(approveButton, rejectButton, rejectWithReasonButton);
 
     // 根据频道类型发送：支持 文字频道/论坛/子区
     let panelMessageId = null;
@@ -294,6 +299,7 @@ async function createApprovalPanel(interaction, roleConfig, reasonText) {
         status: 'pending',
         approvers: [],
         rejecters: [],
+        rejectReasons: {},
         reason: reasonText || null,
     });
     

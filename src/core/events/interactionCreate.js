@@ -11,7 +11,7 @@ const { processCourtVote } = require('../../modules/court/services/courtVotingSy
 // 自助管理相关处理
 const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
 const { handleSelfRoleButton, handleSelfRoleSelect, handleReasonModalSubmit } = require('../../modules/selfRole/services/selfRoleService');
-const { processApprovalVote } = require('../../modules/selfRole/services/approvalService');
+const { processApprovalVote, showRejectReasonModal, processRejectReasonModalSubmit } = require('../../modules/selfRole/services/approvalService');
 const {
     handleAddRoleButton,
     handleRemoveRoleButton,
@@ -464,6 +464,8 @@ async function interactionCreateHandler(interaction) {
                 await displayService.handleFinalConfirmCancel(interaction, contestChannelId);
             } else if (interaction.customId === 'self_role_apply_button') {
                 await handleSelfRoleButton(interaction);
+            } else if (interaction.customId.startsWith('self_role_reason_reject_')) {
+                await showRejectReasonModal(interaction);
             } else if (interaction.customId.startsWith('self_role_approve_') || interaction.customId.startsWith('self_role_reject_')) {
                 await processApprovalVote(interaction);
             } else if (interaction.customId === 'admin_add_role_button') {
@@ -554,6 +556,8 @@ async function interactionCreateHandler(interaction) {
             // 新增：获奖作品设置模态框
             if (interaction.customId.startsWith('award_modal_')) {
                 await displayService.handleAwardModalSubmission(interaction);
+            } else if (interaction.customId.startsWith('self_role_reason_reject_modal_')) {
+                await processRejectReasonModalSubmit(interaction);
             } else if (interaction.customId.startsWith('self_role_reason_modal_')) {
                 // 自助身份组申请理由窗口提交
                 await handleReasonModalSubmit(interaction);
