@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const xlsx = require('xlsx');
-const { PermissionFlagsBits, PermissionsBitField, Routes } = require('discord.js');
+const { PermissionFlagsBits, PermissionsBitField } = require('discord.js');
 
 const {
     getSyncLinkById,
@@ -25,6 +25,7 @@ const {
     upsertGuild,
     upsertGuildMemberPresenceBatch,
     deactivateAllGuildMembers,
+    extractRolesJson,
 } = require('../utils/roleSyncDatabase');
 const {
     reconcileLinkMember,
@@ -789,25 +790,12 @@ function resolveBootstrapGuildIds(link, side) {
     return [link.source_guild_id, link.target_guild_id];
 }
 
-async function fetchGuildMembersPage(client, guildId, { limit, after }) {
-    const query = { limit: Math.max(1, Math.min(1000, limit || 1000)) };
-    if (after) query.after = after;
-
-    const rows = await withRetry(
-        () => client.rest.get(Routes.guildMembers(guildId), { query }),
-        { retries: 3, baseDelayMs: 500, label: `bootstrap_members_${guildId}` }
-    );
-
-    return Array.isArray(rows) ? rows : [];
-}
-
 async function bootstrapGuildMembers(client, guildId, options = {}) {
     const maxMembers = Math.max(0, Number(options.maxMembers || 0));
-    const pageLimit = Math.max(100, Math.min(1000, Number(options.pageLimit || 1000)));
     const markMissingInactive = options.markMissingInactive === true;
 
     if (markMissingInactive && maxMembers > 0) {
-        throw new Error('开启“写入离开状态”时，数量上限必须为 0（全量）');
+        throw new Error('开启”写入离开状态”时，数量上限必须为 0（全量）');
     }
 
     const guild = await withRetry(
@@ -817,54 +805,47 @@ async function bootstrapGuildMembers(client, guildId, options = {}) {
 
     upsertGuild(guild.id, guild.name, 0);
 
+    // Use Gateway-based guild.members.fetch() for reliable full member retrieval
+    // This sends a GUILD_MEMBERS_CHUNK request via WebSocket, which is far more
+    // reliable than the REST API paginated endpoint, especially for large guilds.
+    const fetchOptions = {};
+    if (maxMembers > 0) {
+        fetchOptions.limit = maxMembers;
+        fetchOptions.query = '';
+    }
+
+    const members = await withRetry(
+        () => guild.members.fetch(fetchOptions),
+        { retries: 2, baseDelayMs: 1000, label: `bootstrap_gateway_members_${guildId}` }
+    );
+
     let deactivated = 0;
     if (markMissingInactive) {
         deactivated = deactivateAllGuildMembers(guild.id);
     }
 
-    let after = null;
+    // Write fetched members in batches of 1000
+    const BATCH_SIZE = 1000;
+    const allMembers = [...members.values()];
     let scanned = 0;
     let pages = 0;
-    let completed = false;
-    let limitReached = false;
 
-    while (true) {
-        const remain = maxMembers > 0 ? (maxMembers - scanned) : pageLimit;
-        if (maxMembers > 0 && remain <= 0) {
-            limitReached = true;
-            break;
-        }
-
-        const currentLimit = maxMembers > 0 ? Math.min(pageLimit, remain) : pageLimit;
-        const rawRows = await fetchGuildMembersPage(client, guild.id, { limit: currentLimit, after });
-        if (rawRows.length === 0) {
-            completed = true;
-            break;
-        }
-
-        const batchRows = rawRows
-            .map((it) => ({
-                userId: String(it?.user?.id || '').trim(),
-                joinedAt: it?.joined_at || null,
+    for (let i = 0; i < allMembers.length; i += BATCH_SIZE) {
+        const chunk = allMembers.slice(i, i + BATCH_SIZE);
+        const batchRows = chunk
+            .map((member) => ({
+                userId: member.id,
+                joinedAt: member.joinedAt ? member.joinedAt.toISOString() : null,
                 isActive: true,
                 leftAt: null,
+                rolesJson: extractRolesJson(member.roles.cache, guild.id),
             }))
             .filter((it) => it.userId);
 
-        if (batchRows.length === 0) {
-            completed = true;
-            break;
-        }
-
-        upsertGuildMemberPresenceBatch(guild.id, batchRows);
-
-        scanned += batchRows.length;
-        pages += 1;
-        after = batchRows[batchRows.length - 1].userId;
-
-        if (rawRows.length < currentLimit) {
-            completed = true;
-            break;
+        if (batchRows.length > 0) {
+            upsertGuildMemberPresenceBatch(guild.id, batchRows);
+            scanned += batchRows.length;
+            pages += 1;
         }
     }
 
@@ -873,8 +854,8 @@ async function bootstrapGuildMembers(client, guildId, options = {}) {
         guildName: guild.name,
         scanned,
         pages,
-        completed,
-        limitReached,
+        completed: true,
+        limitReached: maxMembers > 0 && scanned >= maxMembers,
         deactivated,
     };
 }

@@ -45,18 +45,18 @@ async function execute(interaction) {
         console.log('权限详情:', permissionDetails);
         
         // 安全构建调试信息
-        const safeUserRoleNames = permissionDetails.userRoleNames || [];
+        const safeUserRoles = permissionDetails.userRoles || [];
         const safeAllowedUserRoles = permissionDetails.allowedUserRoles || [];
         const safeAllowedRolesList = permissionDetails.allowedRolesList || [];
-        
+
         const debugInfo = `**🔍 权限调试信息**\n\n` +
             `**用户：** ${permissionDetails.userTag || '未知'} (${permissionDetails.userId || '未知'})\n` +
             `**是否为服务器所有者：** ${permissionDetails.isOwner ? '✅ 是' : '❌ 否'}\n` +
             `**是否有原生权限：** ${permissionDetails.hasNativePermissions ? '✅ 是' : '❌ 否'}\n` +
             `**最终权限结果：** ${permissionDetails.hasPermission ? '✅ 有权限' : '❌ 无权限'}\n\n` +
-            `**用户所有身份组（${safeUserRoleNames.length}个）：**\n${safeUserRoleNames.length > 0 ? safeUserRoleNames.map(role => `• \`${role}\``).join('\n') : '• 无身份组'}\n\n` +
-            `**匹配的允许身份组（${safeAllowedUserRoles.length}个）：**\n${safeAllowedUserRoles.length > 0 ? safeAllowedUserRoles.map(role => `• \`${role}\``).join('\n') : '• 无匹配'}\n\n` +
-            `**系统允许的身份组（${safeAllowedRolesList.length}个）：**\n${safeAllowedRolesList.map(role => `• \`${role}\``).join('\n')}`;
+            `**用户所有身份组（${safeUserRoles.length}个）：**\n${safeUserRoles.length > 0 ? safeUserRoles.map(r => `• \`${r.name}\` (${r.id})`).join('\n') : '• 无身份组'}\n\n` +
+            `**匹配的允许身份组ID（${safeAllowedUserRoles.length}个）：**\n${safeAllowedUserRoles.length > 0 ? safeAllowedUserRoles.map(id => `• \`${id}\``).join('\n') : '• 无匹配'}\n\n` +
+            `**系统允许的身份组ID（${safeAllowedRolesList.length}个）：**\n${safeAllowedRolesList.map(id => `• \`${id}\``).join('\n')}`;
         
         await interaction.reply({
             content: debugInfo,

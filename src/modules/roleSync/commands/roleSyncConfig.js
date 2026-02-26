@@ -4,6 +4,7 @@ const {
 } = require('discord.js');
 
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
+const { getRoleSyncDb } = require('../utils/roleSyncDatabase');
 const {
     importPlanFile,
     previewImportJob,
@@ -146,7 +147,17 @@ module.exports = {
                 .addIntegerOption((opt) =>
                     opt.setName('数量上限').setDescription('0=不限（建议先小批量测试）').setRequired(false))
                 .addBooleanOption((opt) =>
-                    opt.setName('写入离开状态').setDescription('仅在数量上限=0时可开启').setRequired(false))),
+                    opt.setName('写入离开状态').setDescription('仅在数量上限=0时可开启').setRequired(false)))
+        .addSubcommand((sub) =>
+            sub
+                .setName('导出成员数据')
+                .setDescription('导出 guild_members 数据为 CSV 附件')
+                .addStringOption((opt) =>
+                    opt.setName('link_id').setDescription('可选：按链路筛选（导出交集成员所在的两个服务器）'))
+                .addStringOption((opt) =>
+                    opt.setName('guild_id').setDescription('可选：指定服务器ID'))
+                .addBooleanOption((opt) =>
+                    opt.setName('仅活跃').setDescription('仅导出活跃成员'))),
 
     async execute(interaction) {
         if (!checkAdminPermission(interaction.member)) {
@@ -219,6 +230,11 @@ module.exports = {
 
             if (sub === '全量采集成员') {
                 await handleBootstrapMembers(interaction);
+                return;
+            }
+
+            if (sub === '导出成员数据') {
+                await handleExportMembers(interaction);
                 return;
             }
 
@@ -474,4 +490,70 @@ async function handleBootstrapMembers(interaction) {
         `- 耗时: ${result.tookMs}ms`,
         ...details.map((d) => `  • ${d.guildName}(${d.guildId}) scanned=${d.scanned}, pages=${d.pages}, completed=${d.completed}, limitReached=${d.limitReached}, deactivated=${d.deactivated}`),
     ].join('\n'));
+}
+
+async function handleExportMembers(interaction) {
+    const db = getRoleSyncDb();
+    const linkId = interaction.options.getString('link_id', false);
+    const guildId = interaction.options.getString('guild_id', false);
+    const activeOnly = interaction.options.getBoolean('仅活跃', false) ?? false;
+
+    const conditions = [];
+    const params = {};
+
+    if (linkId) {
+        const link = db.prepare('SELECT source_guild_id, target_guild_id FROM sync_links WHERE link_id = ?').get(linkId);
+        if (!link) {
+            return interaction.editReply(`❌ 未找到链路 \`${linkId}\`。`);
+        }
+        conditions.push('gm.guild_id IN ($srcGuild, $tgtGuild)');
+        params.$srcGuild = link.source_guild_id;
+        params.$tgtGuild = link.target_guild_id;
+    }
+
+    if (guildId) {
+        conditions.push('gm.guild_id = $guildId');
+        params.$guildId = guildId;
+    }
+
+    if (activeOnly) {
+        conditions.push('gm.is_active = 1');
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const countRow = db.prepare(`SELECT COUNT(1) AS total FROM guild_members gm ${where}`).get(params);
+
+    if (countRow.total === 0) {
+        return interaction.editReply('❌ 没有符合条件的成员数据。');
+    }
+
+    // Build CSV
+    const csvParts = ['\ufeffguild_id,guild_name,user_id,is_active,joined_at,left_at,updated_at\n'];
+    const stmt = db.prepare(`SELECT gm.*, g.guild_name FROM guild_members gm LEFT JOIN guilds g ON gm.guild_id = g.guild_id ${where} ORDER BY gm.guild_id, gm.user_id`);
+
+    for (const row of stmt.iterate(params)) {
+        csvParts.push([
+            row.guild_id,
+            `"${(row.guild_name || '').replace(/"/g, '""')}"`,
+            row.user_id,
+            row.is_active,
+            row.joined_at || '',
+            row.left_at || '',
+            row.updated_at || '',
+        ].join(',') + '\n');
+    }
+
+    const csvString = csvParts.join('');
+    const csvBuffer = Buffer.from(csvString, 'utf8');
+
+    if (csvBuffer.length > 24 * 1024 * 1024) {
+        return interaction.editReply(`⚠️ 数据量过大（${(csvBuffer.length / 1024 / 1024).toFixed(1)}MB，共 ${countRow.total} 条），超过 Discord 25MB 附件上限。请使用 Web 面板导出或添加筛选条件缩小范围。`);
+    }
+
+    const fileName = `members_export_${Date.now()}.csv`;
+    await interaction.editReply({
+        content: `✅ 已导出 ${countRow.total} 条成员记录。`,
+        files: [new AttachmentBuilder(csvBuffer, { name: fileName })],
+    });
 }

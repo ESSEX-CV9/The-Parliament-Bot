@@ -16,6 +16,12 @@ function nowIso() {
     return new Date().toISOString();
 }
 
+function extractRolesJson(rolesCache, guildId) {
+    if (!rolesCache || typeof rolesCache.filter !== 'function') return null;
+    const roleIds = rolesCache.filter(r => r.id !== guildId).map(r => r.id).sort();
+    return JSON.stringify(roleIds);
+}
+
 function ensureColumnIfMissing(tableName, columnName, definitionSql) {
     const rows = roleSyncDb.prepare(`PRAGMA table_info(${tableName})`).all();
     const exists = rows.some((row) => row.name === columnName);
@@ -156,6 +162,7 @@ function initializeRoleSyncDatabase() {
         CREATE INDEX IF NOT EXISTS idx_role_change_log_time ON role_change_log(created_at);
         CREATE INDEX IF NOT EXISTS idx_role_change_log_user ON role_change_log(user_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_role_change_log_role ON role_change_log(target_role_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_role_change_log_user_result ON role_change_log(user_id, result);
 
         CREATE TABLE IF NOT EXISTS sync_operation_marks (
             mark_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -202,6 +209,8 @@ function initializeRoleSyncDatabase() {
 
     ensureColumnIfMissing('sync_jobs', 'lane', "TEXT NOT NULL DEFAULT 'normal'");
     roleSyncDb.exec("CREATE INDEX IF NOT EXISTS idx_sync_jobs_lane_status_due ON sync_jobs(lane, status, not_before_ms, priority)");
+
+    ensureColumnIfMissing('guild_members', 'roles_json', 'TEXT DEFAULT NULL');
 
     initialized = true;
     console.log('[RoleSync] ✅ roleSync.sqlite 初始化完成。');
@@ -501,21 +510,35 @@ function bootstrapSyncLinksFromEnv() {
     return { total: links.length, applied: links.length };
 }
 
-function upsertGuildMemberPresence(guildId, userId, { isActive, joinedAt = null, leftAt = null }) {
+function upsertGuildMemberPresence(guildId, userId, { isActive, joinedAt = null, leftAt = null, rolesJson }) {
     initializeRoleSyncDatabase();
 
     const now = nowIso();
-    const stmt = roleSyncDb.prepare(`
-        INSERT INTO guild_members (guild_id, user_id, is_active, joined_at, left_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(guild_id, user_id) DO UPDATE SET
-            is_active = excluded.is_active,
-            joined_at = COALESCE(guild_members.joined_at, excluded.joined_at),
-            left_at = excluded.left_at,
-            updated_at = excluded.updated_at
-    `);
 
-    stmt.run(guildId, userId, isActive ? 1 : 0, joinedAt, leftAt, now);
+    if (rolesJson !== undefined) {
+        const stmt = roleSyncDb.prepare(`
+            INSERT INTO guild_members (guild_id, user_id, is_active, joined_at, left_at, roles_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                is_active = excluded.is_active,
+                joined_at = COALESCE(guild_members.joined_at, excluded.joined_at),
+                left_at = excluded.left_at,
+                roles_json = excluded.roles_json,
+                updated_at = excluded.updated_at
+        `);
+        stmt.run(guildId, userId, isActive ? 1 : 0, joinedAt, leftAt, rolesJson, now);
+    } else {
+        const stmt = roleSyncDb.prepare(`
+            INSERT INTO guild_members (guild_id, user_id, is_active, joined_at, left_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                is_active = excluded.is_active,
+                joined_at = COALESCE(guild_members.joined_at, excluded.joined_at),
+                left_at = excluded.left_at,
+                updated_at = excluded.updated_at
+        `);
+        stmt.run(guildId, userId, isActive ? 1 : 0, joinedAt, leftAt, now);
+    }
 }
 
 function upsertGuildMemberPresenceBatch(guildId, rows) {
@@ -525,12 +548,13 @@ function upsertGuildMemberPresenceBatch(guildId, rows) {
     }
 
     const stmt = roleSyncDb.prepare(`
-        INSERT INTO guild_members (guild_id, user_id, is_active, joined_at, left_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO guild_members (guild_id, user_id, is_active, joined_at, left_at, roles_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(guild_id, user_id) DO UPDATE SET
             is_active = excluded.is_active,
             joined_at = COALESCE(guild_members.joined_at, excluded.joined_at),
             left_at = excluded.left_at,
+            roles_json = COALESCE(excluded.roles_json, guild_members.roles_json),
             updated_at = excluded.updated_at
     `);
 
@@ -548,6 +572,7 @@ function upsertGuildMemberPresenceBatch(guildId, rows) {
                 item.isActive === false ? 0 : 1,
                 item.joinedAt || null,
                 item.leftAt || null,
+                item.rolesJson || null,
                 now,
             );
             changed += result.changes;
@@ -556,6 +581,17 @@ function upsertGuildMemberPresenceBatch(guildId, rows) {
     });
 
     return tx(rows);
+}
+
+function updateGuildMemberRoles(guildId, userId, rolesJson) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        UPDATE guild_members
+        SET roles_json = ?,
+            updated_at = ?
+        WHERE guild_id = ? AND user_id = ?
+    `);
+    return stmt.run(rolesJson, nowIso(), guildId, userId).changes;
 }
 
 function deactivateAllGuildMembers(guildId, leftAt = null) {
@@ -1060,8 +1096,10 @@ module.exports = {
     createConfigSnapshot,
     getConfigSnapshot,
     listConfigSnapshots,
+    extractRolesJson,
     upsertGuildMemberPresence,
     upsertGuildMemberPresenceBatch,
+    updateGuildMemberRoles,
     deactivateAllGuildMembers,
     getGuildMemberPresence,
     listEligibleMemberIdsForLink,

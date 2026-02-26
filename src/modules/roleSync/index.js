@@ -5,6 +5,7 @@ const {
 } = require('./utils/roleSyncDatabase');
 const { startRoleSyncWorker, stopRoleSyncWorker } = require('./services/syncWorkerService');
 const { startAutoReconcileScheduler, stopAutoReconcileScheduler } = require('./services/reconcileService');
+const { startDashboard, stopDashboard } = require('./dashboard/server');
 const { roleSyncGuildMemberAddHandler } = require('./events/guildMemberAdd');
 const { roleSyncGuildMemberRemoveHandler } = require('./events/guildMemberRemove');
 const { roleSyncGuildMemberUpdateHandler } = require('./events/guildMemberUpdate');
@@ -22,6 +23,7 @@ async function startRoleSyncSystem(client) {
     bootstrapSyncLinksFromEnv();
     startRoleSyncWorker(client);
     startAutoReconcileScheduler(client);
+    startDashboard(client);
 
     console.log('[RoleSync] ✅ 角色同步系统已启动（M0~M7）。');
 }
@@ -29,6 +31,7 @@ async function startRoleSyncSystem(client) {
 async function stopRoleSyncSystem() {
     stopRoleSyncWorker();
     stopAutoReconcileScheduler();
+    stopDashboard();
 }
 
 module.exports = {

@@ -1,4 +1,4 @@
-const { upsertGuildMemberPresence } = require('../utils/roleSyncDatabase');
+const { upsertGuildMemberPresence, extractRolesJson } = require('../utils/roleSyncDatabase');
 
 async function roleSyncGuildMemberAddHandler(member) {
     if (!member || !member.guild || !member.user) {
@@ -9,6 +9,7 @@ async function roleSyncGuildMemberAddHandler(member) {
         isActive: true,
         joinedAt: member.joinedAt ? member.joinedAt.toISOString() : null,
         leftAt: null,
+        rolesJson: extractRolesJson(member.roles.cache, member.guild.id),
     });
 }
 

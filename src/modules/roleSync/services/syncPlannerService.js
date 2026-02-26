@@ -6,6 +6,7 @@ const {
     consumeOperationMark,
     logRoleChange,
     upsertGuildMemberPresence,
+    extractRolesJson,
 } = require('../utils/roleSyncDatabase');
 
 function getLaneByDelay(maxDelaySeconds) {
@@ -134,11 +135,13 @@ async function handleGuildMemberUpdateForSync(oldMember, newMember) {
         return;
     }
 
-    // 先刷新成员存在状态
+    // 刷新成员存在状态 + 身份组快照
+    const rolesJson = extractRolesJson(newMember.roles.cache, newMember.guild.id);
     upsertGuildMemberPresence(newMember.guild.id, newMember.user.id, {
         isActive: true,
         joinedAt: newMember.joinedAt ? newMember.joinedAt.toISOString() : null,
         leftAt: null,
+        rolesJson,
     });
 
     // 一般不处理机器人身份组同步，避免跨服 bot 权限副作用
