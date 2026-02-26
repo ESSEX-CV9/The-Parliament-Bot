@@ -21,6 +21,7 @@ const {
     setLinkEnabled,
     listSyncLinks,
     bootstrapMembersForLink,
+    stopBootstrap,
 } = require('../services/configCsvService');
 
 module.exports = {
@@ -157,7 +158,13 @@ module.exports = {
                 .addStringOption((opt) =>
                     opt.setName('guild_id').setDescription('可选：指定服务器ID'))
                 .addBooleanOption((opt) =>
-                    opt.setName('仅活跃').setDescription('仅导出活跃成员'))),
+                    opt.setName('仅活跃').setDescription('仅导出活跃成员')))
+        .addSubcommand((sub) =>
+            sub
+                .setName('停止采集')
+                .setDescription('中断正在进行的全量采集任务')
+                .addStringOption((opt) =>
+                    opt.setName('guild_id').setDescription('要停止采集的服务器ID（默认当前服务器）').setRequired(false))),
 
     async execute(interaction) {
         if (!checkAdminPermission(interaction.member)) {
@@ -235,6 +242,11 @@ module.exports = {
 
             if (sub === '导出成员数据') {
                 await handleExportMembers(interaction);
+                return;
+            }
+
+            if (sub === '停止采集') {
+                await handleStopBootstrap(interaction);
                 return;
             }
 
@@ -500,15 +512,29 @@ async function handleBootstrapMembers(interaction) {
     });
 
     const details = result.details || [];
+    const hasAborted = details.some((d) => d.aborted);
+    const statusEmoji = hasAborted ? '⚠️' : '✅';
+    const statusText = hasAborted ? '成员采集已中断' : '成员采集完成';
+
     await progressMsg.edit([
-        `✅ 成员采集完成。<@${interaction.user.id}>`,
+        `${statusEmoji} ${statusText}。<@${interaction.user.id}>`,
         `- link: ${result.linkId}`,
         `- side: ${result.side}`,
         `- maxMembers: ${result.maxMembers}`,
         `- 写入离开状态: ${result.markMissingInactive}`,
         `- 耗时: ${result.tookMs}ms`,
-        ...details.map((d) => `  • ${d.guildName}(${d.guildId}) scanned=${d.scanned}, pages=${d.pages}, completed=${d.completed}, limitReached=${d.limitReached}, deactivated=${d.deactivated}`),
+        ...details.map((d) => `  • ${d.guildName}(${d.guildId}) scanned=${d.scanned}, pages=${d.pages}, completed=${d.completed}${d.aborted ? '(已中断)' : ''}, limitReached=${d.limitReached}, deactivated=${d.deactivated}`),
     ].join('\n'));
+}
+
+async function handleStopBootstrap(interaction) {
+    const guildId = interaction.options.getString('guild_id', false) || interaction.guildId;
+    const stopped = stopBootstrap(guildId);
+    if (stopped) {
+        await interaction.editReply(`🛑 已发送中断信号，服务器 ${guildId} 的采集将在当前页处理完后停止。`);
+    } else {
+        await interaction.editReply(`ℹ️ 服务器 ${guildId} 当前没有正在进行的采集任务。`);
+    }
 }
 
 async function handleExportMembers(interaction) {

@@ -790,6 +790,22 @@ function resolveBootstrapGuildIds(link, side) {
     return [link.source_guild_id, link.target_guild_id];
 }
 
+// 存储正在运行的采集任务 signal，用于中断
+const activeBootstraps = new Map();
+
+/**
+ * 中断指定服务器的采集任务。
+ * @returns {boolean} 是否找到并中断了任务
+ */
+function stopBootstrap(guildId) {
+    const signal = activeBootstraps.get(guildId);
+    if (signal) {
+        signal.shouldStop = true;
+        return true;
+    }
+    return false;
+}
+
 /**
  * 通过 REST API 分页拉取服务器成员，每页立即写入数据库。
  * 避免 Gateway 全量拉取在大服务器（22万+成员）超时的问题。
@@ -797,6 +813,7 @@ function resolveBootstrapGuildIds(link, side) {
 async function fetchMembersViaREST(guild, options = {}) {
     const maxMembers = Math.max(0, Number(options.maxMembers || 0));
     const onProgress = options.onProgress || (() => {});
+    const signal = options.signal || { shouldStop: false };
     const PAGE_SIZE = 1000;
 
     let afterCursor = '0';
@@ -805,6 +822,10 @@ async function fetchMembersViaREST(guild, options = {}) {
     let hasMore = true;
 
     while (hasMore) {
+        if (signal.shouldStop) {
+            return { scanned, pages, aborted: true };
+        }
+
         const fetchLimit = maxMembers > 0
             ? Math.min(PAGE_SIZE, maxMembers - scanned)
             : PAGE_SIZE;
@@ -822,9 +843,7 @@ async function fetchMembersViaREST(guild, options = {}) {
         }
 
         const batchRows = [];
-        let lastMemberId = afterCursor;
-
-        for (const [memberId, member] of members) {
+        for (const [, member] of members) {
             batchRows.push({
                 userId: member.id,
                 joinedAt: member.joinedAt ? member.joinedAt.toISOString() : null,
@@ -832,9 +851,6 @@ async function fetchMembersViaREST(guild, options = {}) {
                 leftAt: null,
                 rolesJson: extractRolesJson(member.roles.cache, guild.id),
             });
-            if (memberId > lastMemberId) {
-                lastMemberId = memberId;
-            }
         }
 
         const validRows = batchRows.filter((it) => it.userId);
@@ -844,7 +860,7 @@ async function fetchMembersViaREST(guild, options = {}) {
 
         scanned += validRows.length;
         pages += 1;
-        afterCursor = lastMemberId;
+        afterCursor = members.lastKey();
 
         onProgress(scanned, pages);
 
@@ -860,7 +876,7 @@ async function fetchMembersViaREST(guild, options = {}) {
         }
     }
 
-    return { scanned, pages };
+    return { scanned, pages, aborted: false };
 }
 
 async function bootstrapGuildMembers(client, guildId, options = {}) {
@@ -885,25 +901,36 @@ async function bootstrapGuildMembers(client, guildId, options = {}) {
         deactivated = deactivateAllGuildMembers(guild.id);
     }
 
-    const { scanned, pages } = await fetchMembersViaREST(guild, {
-        maxMembers,
-        onProgress: (currentScanned, currentPages) => {
-            onProgress({
-                guildId: guild.id,
-                guildName: guild.name,
-                scanned: currentScanned,
-                pages: currentPages,
-            });
-        },
-    });
+    // 注册中断 signal
+    const signal = { shouldStop: false };
+    activeBootstraps.set(guildId, signal);
+
+    let result;
+    try {
+        result = await fetchMembersViaREST(guild, {
+            maxMembers,
+            signal,
+            onProgress: (currentScanned, currentPages) => {
+                onProgress({
+                    guildId: guild.id,
+                    guildName: guild.name,
+                    scanned: currentScanned,
+                    pages: currentPages,
+                });
+            },
+        });
+    } finally {
+        activeBootstraps.delete(guildId);
+    }
 
     return {
         guildId: guild.id,
         guildName: guild.name,
-        scanned,
-        pages,
-        completed: true,
-        limitReached: maxMembers > 0 && scanned >= maxMembers,
+        scanned: result.scanned,
+        pages: result.pages,
+        completed: !result.aborted,
+        aborted: result.aborted,
+        limitReached: maxMembers > 0 && result.scanned >= maxMembers,
         deactivated,
     };
 }
@@ -980,4 +1007,5 @@ module.exports = {
     setLinkEnabled,
     listSyncLinks,
     bootstrapMembersForLink,
+    stopBootstrap,
 };
