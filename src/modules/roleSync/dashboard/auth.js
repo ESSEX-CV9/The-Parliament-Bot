@@ -113,7 +113,8 @@ function callbackRoute(client) {
                 expiresAt: Date.now() + SESSION_TTL_MS,
             });
 
-            res.setHeader('Set-Cookie', `rs_session=${sessionToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`);
+            const secure = process.env.DASHBOARD_SECURE_COOKIE !== 'false' ? '; Secure' : '';
+            res.setHeader('Set-Cookie', `rs_session=${sessionToken}; HttpOnly; SameSite=Lax${secure}; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`);
             res.redirect('/');
 
         } catch (error) {
@@ -185,7 +186,8 @@ function logoutRoute(req, res) {
             sessions.delete(token);
         }
     }
-    res.setHeader('Set-Cookie', 'rs_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+    const secure = process.env.DASHBOARD_SECURE_COOKIE !== 'false' ? '; Secure' : '';
+    res.setHeader('Set-Cookie', `rs_session=; HttpOnly; SameSite=Lax${secure}; Path=/; Max-Age=0`);
     res.redirect('/login');
 }
 
