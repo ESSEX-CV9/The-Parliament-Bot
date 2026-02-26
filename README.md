@@ -43,13 +43,16 @@
 
 1. 克隆仓库
 2. 安装依赖: `npm install`
-3. 配置环境变量，具体需要配置的环境变量为：
+3. 复制环境变量模板：`cp .env.sample .env`（Windows 可手动复制）
+4. 配置环境变量，具体需要配置的环境变量为：
 ```
 DISCORD_TOKEN=<从 Bot 栏获得的 Token>
 CLIENT_ID=<从 General Information 栏获得的 Application ID>
-GUILD_ID=<与这个 Bot 相关的服务器ID>
+GUILD_IDS=<必填，命令注册目标服务器ID列表，逗号分隔，例如 123...,456...>
 ```
-4. 启动机器人: `npm start`
+5. 启动机器人: `npm start`
+
+> 当前采用严格模式：必须配置 `GUILD_IDS`，否则启动会失败。
 
 ## 使用说明
 
