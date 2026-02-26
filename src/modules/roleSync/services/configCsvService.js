@@ -790,9 +790,83 @@ function resolveBootstrapGuildIds(link, side) {
     return [link.source_guild_id, link.target_guild_id];
 }
 
+/**
+ * 通过 REST API 分页拉取服务器成员，每页立即写入数据库。
+ * 避免 Gateway 全量拉取在大服务器（22万+成员）超时的问题。
+ */
+async function fetchMembersViaREST(guild, options = {}) {
+    const maxMembers = Math.max(0, Number(options.maxMembers || 0));
+    const onProgress = options.onProgress || (() => {});
+    const PAGE_SIZE = 1000;
+
+    let afterCursor = '0';
+    let scanned = 0;
+    let pages = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+        const fetchLimit = maxMembers > 0
+            ? Math.min(PAGE_SIZE, maxMembers - scanned)
+            : PAGE_SIZE;
+
+        if (fetchLimit <= 0) break;
+
+        const members = await withRetry(
+            () => guild.members.list({ limit: fetchLimit, after: afterCursor, cache: false }),
+            { retries: 3, baseDelayMs: 1000, label: `rest_list_members_${guild.id}_page${pages}` }
+        );
+
+        if (members.size === 0) {
+            hasMore = false;
+            break;
+        }
+
+        const batchRows = [];
+        let lastMemberId = afterCursor;
+
+        for (const [memberId, member] of members) {
+            batchRows.push({
+                userId: member.id,
+                joinedAt: member.joinedAt ? member.joinedAt.toISOString() : null,
+                isActive: true,
+                leftAt: null,
+                rolesJson: extractRolesJson(member.roles.cache, guild.id),
+            });
+            if (memberId > lastMemberId) {
+                lastMemberId = memberId;
+            }
+        }
+
+        const validRows = batchRows.filter((it) => it.userId);
+        if (validRows.length > 0) {
+            upsertGuildMemberPresenceBatch(guild.id, validRows);
+        }
+
+        scanned += validRows.length;
+        pages += 1;
+        afterCursor = lastMemberId;
+
+        onProgress(scanned, pages);
+
+        if (members.size < fetchLimit) {
+            hasMore = false;
+        }
+        if (maxMembers > 0 && scanned >= maxMembers) {
+            hasMore = false;
+        }
+
+        if (hasMore) {
+            await new Promise((r) => setTimeout(r, 200));
+        }
+    }
+
+    return { scanned, pages };
+}
+
 async function bootstrapGuildMembers(client, guildId, options = {}) {
     const maxMembers = Math.max(0, Number(options.maxMembers || 0));
     const markMissingInactive = options.markMissingInactive === true;
+    const onProgress = options.onProgress || (() => {});
 
     if (markMissingInactive && maxMembers > 0) {
         throw new Error('开启”写入离开状态”时，数量上限必须为 0（全量）');
@@ -805,49 +879,23 @@ async function bootstrapGuildMembers(client, guildId, options = {}) {
 
     upsertGuild(guild.id, guild.name, 0);
 
-    // Use Gateway-based guild.members.fetch() for reliable full member retrieval
-    // This sends a GUILD_MEMBERS_CHUNK request via WebSocket, which is far more
-    // reliable than the REST API paginated endpoint, especially for large guilds.
-    const fetchOptions = {};
-    if (maxMembers > 0) {
-        fetchOptions.limit = maxMembers;
-        fetchOptions.query = '';
-    }
-
-    const members = await withRetry(
-        () => guild.members.fetch(fetchOptions),
-        { retries: 2, baseDelayMs: 1000, label: `bootstrap_gateway_members_${guildId}` }
-    );
-
+    // 先标记全部不活跃，后续 upsert 会将拉取到的成员恢复为活跃
     let deactivated = 0;
     if (markMissingInactive) {
         deactivated = deactivateAllGuildMembers(guild.id);
     }
 
-    // Write fetched members in batches of 1000
-    const BATCH_SIZE = 1000;
-    const allMembers = [...members.values()];
-    let scanned = 0;
-    let pages = 0;
-
-    for (let i = 0; i < allMembers.length; i += BATCH_SIZE) {
-        const chunk = allMembers.slice(i, i + BATCH_SIZE);
-        const batchRows = chunk
-            .map((member) => ({
-                userId: member.id,
-                joinedAt: member.joinedAt ? member.joinedAt.toISOString() : null,
-                isActive: true,
-                leftAt: null,
-                rolesJson: extractRolesJson(member.roles.cache, guild.id),
-            }))
-            .filter((it) => it.userId);
-
-        if (batchRows.length > 0) {
-            upsertGuildMemberPresenceBatch(guild.id, batchRows);
-            scanned += batchRows.length;
-            pages += 1;
-        }
-    }
+    const { scanned, pages } = await fetchMembersViaREST(guild, {
+        maxMembers,
+        onProgress: (currentScanned, currentPages) => {
+            onProgress({
+                guildId: guild.id,
+                guildName: guild.name,
+                scanned: currentScanned,
+                pages: currentPages,
+            });
+        },
+    });
 
     return {
         guildId: guild.id,
@@ -869,6 +917,7 @@ async function bootstrapMembersForLink(client, linkId, options = {}) {
     const side = String(options.side || 'both').toLowerCase();
     const maxMembers = Math.max(0, Number(options.maxMembers || 0));
     const markMissingInactive = options.markMissingInactive === true;
+    const onProgress = options.onProgress || (() => {});
 
     const guildIds = resolveBootstrapGuildIds(link, side);
     const startedAt = Date.now();
@@ -877,8 +926,10 @@ async function bootstrapMembersForLink(client, linkId, options = {}) {
     for (const guildId of guildIds) {
         const item = await bootstrapGuildMembers(client, guildId, {
             maxMembers,
-            pageLimit: 1000,
             markMissingInactive,
+            onProgress: (progress) => {
+                onProgress({ ...progress, linkId, side, guildIndex: details.length, totalGuilds: guildIds.length });
+            },
         });
         details.push(item);
     }

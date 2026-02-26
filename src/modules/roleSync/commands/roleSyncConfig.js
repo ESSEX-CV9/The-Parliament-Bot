@@ -474,15 +474,34 @@ async function handleBootstrapMembers(interaction) {
     const maxMembers = interaction.options.getInteger('数量上限', false) ?? 0;
     const markMissingInactive = interaction.options.getBoolean('写入离开状态', false) ?? false;
 
+    await interaction.editReply('⏳ 已开始采集成员，进度将在频道中更新...');
+
+    // 在频道中发送独立的进度消息，不受交互 15 分钟超时限制
+    let progressMsg = await interaction.channel.send('⏳ 正在准备采集...');
+    let lastProgressUpdate = 0;
+    const PROGRESS_INTERVAL_MS = 8000;
+
     const result = await bootstrapMembersForLink(interaction.client, linkId, {
         side,
         maxMembers,
         markMissingInactive,
+        onProgress: (progress) => {
+            const now = Date.now();
+            if (now - lastProgressUpdate < PROGRESS_INTERVAL_MS) return;
+            lastProgressUpdate = now;
+
+            progressMsg.edit(
+                `⏳ 正在采集成员...\n` +
+                `- 服务器: ${progress.guildName || progress.guildId} (${progress.guildIndex + 1}/${progress.totalGuilds})\n` +
+                `- 已扫描: ${progress.scanned.toLocaleString()} 人\n` +
+                `- 已处理页数: ${progress.pages}`
+            ).catch(() => {});
+        },
     });
 
     const details = result.details || [];
-    await interaction.editReply([
-        '✅ 成员采集完成。',
+    await progressMsg.edit([
+        `✅ 成员采集完成。<@${interaction.user.id}>`,
         `- link: ${result.linkId}`,
         `- side: ${result.side}`,
         `- maxMembers: ${result.maxMembers}`,

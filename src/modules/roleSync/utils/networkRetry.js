@@ -6,7 +6,7 @@ function isNetworkError(error) {
     if (!error) return false;
 
     const code = String(error.code || '').toUpperCase();
-    if (['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT'].includes(code)) {
+    if (['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'GUILDMEMBERSTIMEOUT'].includes(code)) {
         return true;
     }
 
