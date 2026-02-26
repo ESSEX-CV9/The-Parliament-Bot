@@ -20,6 +20,14 @@ const { printTimeConfig } = require('./config/timeconfig');
 const { startActivityTracker } = require('../modules/selfRole/services/activityTracker');
 const { syncMissedActivity } = require('../modules/selfRole/services/autoSyncService');
 
+// 身份组同步系统（多服务器）
+const {
+    startRoleSyncSystem,
+    roleSyncGuildMemberAddHandler,
+    roleSyncGuildMemberRemoveHandler,
+    roleSyncGuildMemberUpdateHandler,
+} = require('../modules/roleSync');
+
 // 导入命令
 const pingCommand = require('../shared/commands/ping');
 // const debugPermissionsCommand = require('../shared/commands/debugPermissions');  // 需要使用再取消注释
@@ -151,10 +159,14 @@ const debugRolesCommand = require('../modules/selfRole/commands/debugRoles'); //
 const clearCooldownCommand = require('../modules/selfRole/commands/clearCooldown');
 const configureRolesCommand = require('../modules/selfRole/commands/configureRoles');
 
+// 身份组同步系统命令
+const roleSyncConfigCommand = require('../modules/roleSync/commands/roleSyncConfig');
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessageReactions, // 需要这个intent来监控reaction
         GatewayIntentBits.MessageContent,
     ],
@@ -293,6 +305,7 @@ client.commands.set(checkActivityCommand.data.name, checkActivityCommand);
 client.commands.set(debugRolesCommand.data.name, debugRolesCommand); // 调试命令
 client.commands.set(clearCooldownCommand.data.name, clearCooldownCommand);
 client.commands.set(configureRolesCommand.data.name, configureRolesCommand);
+client.commands.set(roleSyncConfigCommand.data.name, roleSyncConfigCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
@@ -324,6 +337,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     // 在机器人完全启动前，执行离线数据同步
     await syncMissedActivity(readyClient);
 
+    // 启动身份组同步系统
+    await startRoleSyncSystem(readyClient);
+
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
     console.log('🧹 自动消息清理系统已加载');
@@ -335,5 +351,8 @@ client.on(Events.InteractionCreate, interactionCreateHandler)
 
 // 添加消息创建事件处理器
 client.on(Events.MessageCreate, messageCreateHandler);
+client.on(Events.GuildMemberAdd, roleSyncGuildMemberAddHandler);
+client.on(Events.GuildMemberRemove, roleSyncGuildMemberRemoveHandler);
+client.on(Events.GuildMemberUpdate, roleSyncGuildMemberUpdateHandler);
 
 client.login(process.env.DISCORD_TOKEN);
