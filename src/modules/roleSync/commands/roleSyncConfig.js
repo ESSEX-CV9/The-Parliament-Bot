@@ -16,6 +16,9 @@ const {
     rollbackBySnapshot,
     reconcileSingleMember,
     reconcileBatch,
+    reconcileFull,
+    stopReconcile,
+    isReconcileRunning,
     runAutoReconcileManual,
     getReconcileRuntimeStatus,
     setLinkEnabled,
@@ -164,7 +167,27 @@ module.exports = {
                 .setName('停止采集')
                 .setDescription('中断正在进行的全量采集任务')
                 .addStringOption((opt) =>
-                    opt.setName('guild_id').setDescription('要停止采集的服务器ID（默认当前服务器）').setRequired(false))),
+                    opt.setName('guild_id').setDescription('要停止采集的服务器ID（默认当前服务器）').setRequired(false)))
+        .addSubcommand((sub) =>
+            sub
+                .setName('全量对账')
+                .setDescription('对链路所有交集成员进行全量对账（自动分批+进度+可中断）')
+                .addStringOption((opt) =>
+                    opt.setName('link_id').setDescription('同步链路ID').setRequired(true))
+                .addIntegerOption((opt) =>
+                    opt.setName('批次大小').setDescription('每批处理人数，默认50').setRequired(false))
+                .addIntegerOption((opt) =>
+                    opt.setName('成员间隔ms').setDescription('成员间延迟毫秒，默认200').setRequired(false))
+                .addIntegerOption((opt) =>
+                    opt.setName('批次间隔ms').setDescription('批次间延迟毫秒，默认2000').setRequired(false))
+                .addIntegerOption((opt) =>
+                    opt.setName('起始偏移').setDescription('从第几个成员开始，默认0').setRequired(false)))
+        .addSubcommand((sub) =>
+            sub
+                .setName('停止对账')
+                .setDescription('中断正在进行的全量对账任务')
+                .addStringOption((opt) =>
+                    opt.setName('link_id').setDescription('要停止的链路ID').setRequired(true))),
 
     async execute(interaction) {
         if (!checkAdminPermission(interaction.member)) {
@@ -247,6 +270,16 @@ module.exports = {
 
             if (sub === '停止采集') {
                 await handleStopBootstrap(interaction);
+                return;
+            }
+
+            if (sub === '全量对账') {
+                await handleReconcileFull(interaction);
+                return;
+            }
+
+            if (sub === '停止对账') {
+                await handleStopReconcile(interaction);
                 return;
             }
 
@@ -443,13 +476,32 @@ async function handleReconcileBatch(interaction) {
     const size = interaction.options.getInteger('数量', false) ?? 20;
     const offset = interaction.options.getInteger('偏移', false) ?? 0;
 
+    await interaction.editReply('⏳ 已开始批量对账，进度将在频道中更新...');
+
+    let progressMsg = await interaction.channel.send('⏳ 正在准备批量对账...');
+    let lastProgressUpdate = 0;
+    const PROGRESS_INTERVAL_MS = 8000;
+
     const result = await reconcileBatch(interaction.client, linkId, {
         maxMembers: size,
         offset,
+        onProgress: (progress) => {
+            const now = Date.now();
+            if (now - lastProgressUpdate < PROGRESS_INTERVAL_MS) return;
+            lastProgressUpdate = now;
+
+            progressMsg.edit([
+                '⏳ 正在批量对账...',
+                `- 进度: ${progress.processed}/${progress.scanned}`,
+                `- 已计划同步任务: ${progress.planned}`,
+                `- 已跳过: ${progress.skipped}`,
+                `- 失败: ${progress.failed}`,
+            ].join('\n')).catch(() => {});
+        },
     });
 
-    await interaction.editReply([
-        '✅ 批量对账完成。',
+    await progressMsg.edit([
+        `✅ 批量对账完成。<@${interaction.user.id}>`,
         `- link: ${result.linkId}`,
         `- 交集成员总量: ${result.totalEligible}`,
         `- 本次扫描: ${result.scanned}`,
@@ -534,6 +586,82 @@ async function handleStopBootstrap(interaction) {
         await interaction.editReply(`🛑 已发送中断信号，服务器 ${guildId} 的采集将在当前页处理完后停止。`);
     } else {
         await interaction.editReply(`ℹ️ 服务器 ${guildId} 当前没有正在进行的采集任务。`);
+    }
+}
+
+async function handleReconcileFull(interaction) {
+    const linkId = interaction.options.getString('link_id', true);
+    const batchSize = interaction.options.getInteger('批次大小', false) ?? 50;
+    const memberDelayMs = interaction.options.getInteger('成员间隔ms', false) ?? 200;
+    const batchDelayMs = interaction.options.getInteger('批次间隔ms', false) ?? 2000;
+    const offset = interaction.options.getInteger('起始偏移', false) ?? 0;
+
+    if (isReconcileRunning(linkId)) {
+        await interaction.editReply(`⚠️ 链路 ${linkId} 已有全量对账正在运行。使用 \`/身份组同步 停止对账\` 中断。`);
+        return;
+    }
+
+    await interaction.editReply('⏳ 已开始全量对账，进度将在频道中更新...');
+
+    let progressMsg = await interaction.channel.send('⏳ 正在准备全量对账...');
+    let lastProgressUpdate = 0;
+    const PROGRESS_INTERVAL_MS = 8000;
+
+    try {
+        const result = await reconcileFull(interaction.client, linkId, {
+            batchSize,
+            memberDelayMs,
+            batchDelayMs,
+            offset,
+            onProgress: (progress) => {
+                const now = Date.now();
+                if (now - lastProgressUpdate < PROGRESS_INTERVAL_MS) return;
+                lastProgressUpdate = now;
+
+                const pct = progress.totalEligible > 0
+                    ? ((progress.processed / progress.totalEligible) * 100).toFixed(1)
+                    : '?';
+
+                progressMsg.edit([
+                    '⏳ 正在全量对账...',
+                    `- 进度: ${progress.processed.toLocaleString()}/${progress.totalEligible.toLocaleString()} (${pct}%)`,
+                    `- 已计划同步任务: ${progress.planned}`,
+                    `- 已跳过: ${progress.skipped}`,
+                    `- 失败: ${progress.failed}`,
+                ].join('\n')).catch(() => {});
+            },
+        });
+
+        const statusEmoji = result.aborted ? '⚠️' : '✅';
+        const statusText = result.aborted ? '全量对账已中断' : '全量对账完成';
+
+        await progressMsg.edit([
+            `${statusEmoji} ${statusText}。<@${interaction.user.id}>`,
+            `- link: ${result.linkId}`,
+            `- 交集成员总量: ${result.totalEligible.toLocaleString()}`,
+            `- 已处理: ${result.processed.toLocaleString()}`,
+            `- 已跳过: ${result.skipped}`,
+            `- 已计划同步任务: ${result.planned}`,
+            `- 失败: ${result.failed}`,
+            result.aborted ? '- 状态: 已被手动中断' : '',
+            result.failures.length > 0
+                ? `- 失败示例: ${result.failures.slice(0, 5).map((f) => f.userId).join(', ')}`
+                : '',
+        ].filter(Boolean).join('\n'));
+    } catch (err) {
+        await progressMsg.edit(
+            `❌ 全量对账失败: ${err.message || err}`
+        ).catch(() => {});
+    }
+}
+
+async function handleStopReconcile(interaction) {
+    const linkId = interaction.options.getString('link_id', true);
+    const stopped = stopReconcile(linkId);
+    if (stopped) {
+        await interaction.editReply(`🛑 已发送中断信号，链路 ${linkId} 的全量对账将在当前成员处理完后停止。`);
+    } else {
+        await interaction.editReply(`ℹ️ 链路 ${linkId} 当前没有正在进行的全量对账任务。`);
     }
 }
 

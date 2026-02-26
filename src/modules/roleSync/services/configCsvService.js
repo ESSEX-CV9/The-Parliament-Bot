@@ -30,6 +30,9 @@ const {
 const {
     reconcileLinkMember,
     reconcileLinkMembersBatch,
+    reconcileLinkMembersFull,
+    stopReconcile,
+    isReconcileRunning,
     runAutoReconcileOnce,
     getAutoReconcileStatus,
 } = require('./reconcileService');
@@ -980,6 +983,18 @@ async function reconcileBatch(client, linkId, options = {}) {
         maxMembers: options.maxMembers,
         offset: options.offset,
         reason: 'manual_reconcile_batch',
+        onProgress: options.onProgress,
+    });
+}
+
+async function reconcileFull(client, linkId, options = {}) {
+    return reconcileLinkMembersFull(client, linkId, {
+        batchSize: options.batchSize,
+        memberDelayMs: options.memberDelayMs,
+        batchDelayMs: options.batchDelayMs,
+        offset: options.offset,
+        reason: 'manual_reconcile_full',
+        onProgress: options.onProgress,
     });
 }
 
@@ -1002,6 +1017,9 @@ module.exports = {
     rollbackBySnapshot,
     reconcileSingleMember,
     reconcileBatch,
+    reconcileFull,
+    stopReconcile,
+    isReconcileRunning,
     runAutoReconcileManual,
     getReconcileRuntimeStatus,
     setLinkEnabled,

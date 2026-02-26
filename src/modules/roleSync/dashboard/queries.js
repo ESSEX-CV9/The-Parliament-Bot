@@ -191,7 +191,16 @@ function queryConfig() {
 
 function getGuildList() {
     const db = getRoleSyncDb();
-    return db.prepare(`SELECT guild_id, guild_name FROM guilds ORDER BY guild_name`).all();
+    return db.prepare(`
+        SELECT DISTINCT g.guild_id, g.guild_name
+        FROM guilds g
+        WHERE g.guild_id IN (
+            SELECT source_guild_id FROM sync_links
+            UNION
+            SELECT target_guild_id FROM sync_links
+        )
+        ORDER BY g.guild_name
+    `).all();
 }
 
 function getLinkList() {

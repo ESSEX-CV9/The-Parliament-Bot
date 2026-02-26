@@ -17,6 +17,22 @@ let autoTimer = null;
 let autoRunning = false;
 const reconcileCursorMap = new Map();
 
+// 全量对账中断信号（仿照 bootstrap 的 activeBootstraps 模式）
+const activeReconciles = new Map(); // key: linkId, value: { shouldStop: false }
+
+function stopReconcile(linkId) {
+    const signal = activeReconciles.get(linkId);
+    if (signal) {
+        signal.shouldStop = true;
+        return true;
+    }
+    return false;
+}
+
+function isReconcileRunning(linkId) {
+    return activeReconciles.has(linkId);
+}
+
 function normalizeDelay(value) {
     const num = Number(value);
     if (!Number.isFinite(num) || num <= 0) {
@@ -193,6 +209,195 @@ async function reconcileLinkMember(client, linkId, userId, options = {}) {
     };
 }
 
+async function reconcileLinkMemberWithGuilds(client, link, sourceGuild, targetGuild, userId, options = {}) {
+    const reason = options.reason || 'manual_reconcile';
+
+    if (!link.enabled) {
+        return { userId, skipped: true, reason: '链路已禁用', planned: 0 };
+    }
+
+    const sourceMember = await withRetry(
+        () => sourceGuild.members.fetch(userId),
+        { retries: 2, baseDelayMs: 300, label: `reconcile_source_member_${userId}` }
+    ).catch(() => null);
+    const targetMember = await withRetry(
+        () => targetGuild.members.fetch(userId),
+        { retries: 2, baseDelayMs: 300, label: `reconcile_target_member_${userId}` }
+    ).catch(() => null);
+
+    if (!sourceMember || !targetMember) {
+        return { userId, skipped: true, reason: '不在交集成员范围', planned: 0 };
+    }
+
+    const mappings = listRoleSyncMapByLink(link.link_id).filter((m) => m.enabled === 1);
+    let planned = 0;
+
+    for (const map of mappings) {
+        const syncMode = map.sync_mode || 'source_to_target';
+        const conflictPolicy = map.conflict_policy || link.default_conflict_policy || 'source_of_truth_main';
+        const direction = resolveReconcileDirection(syncMode, conflictPolicy);
+        if (direction === 'skip') {
+            continue;
+        }
+
+        const sourceHas = sourceMember.roles.cache.has(map.source_role_id);
+        const targetHas = targetMember.roles.cache.has(map.target_role_id);
+
+        let action = null;
+
+        if (direction === 'source_to_target') {
+            if (sourceHas && !targetHas) action = 'add';
+            else if (!sourceHas && targetHas) action = 'remove';
+        } else if (direction === 'target_to_source') {
+            if (targetHas && !sourceHas) action = 'add';
+            else if (!targetHas && sourceHas) action = 'remove';
+        }
+
+        if (!action) {
+            continue;
+        }
+
+        const payload = buildJobPayload({ link, map, userId, action, direction, reason });
+        const enqueueResult = enqueueSyncJob(payload);
+        if (enqueueResult.enqueued) {
+            planned += 1;
+        }
+    }
+
+    if (planned > 0) {
+        logRoleChange({
+            linkId: link.link_id,
+            sourceEvent: reason,
+            sourceGuildId: link.source_guild_id,
+            targetGuildId: link.target_guild_id,
+            userId,
+            result: 'planned',
+            errorMessage: `reconcile planned=${planned}`,
+        });
+    }
+
+    return { userId, skipped: false, planned };
+}
+
+async function reconcileLinkMembersFull(client, linkId, options = {}) {
+    const link = getSyncLinkById(linkId);
+    if (!link) {
+        throw new Error('link_id 不存在');
+    }
+    if (!link.enabled) {
+        throw new Error('链路已禁用');
+    }
+    if (activeReconciles.has(linkId)) {
+        throw new Error('该链路已有全量对账正在运行');
+    }
+
+    const batchSize = Math.max(1, Number(options.batchSize || 50));
+    const memberDelayMs = Math.max(0, Number(options.memberDelayMs ?? 200));
+    const batchDelayMs = Math.max(0, Number(options.batchDelayMs ?? 2000));
+    const reason = options.reason || 'manual_reconcile_full';
+    const onProgress = options.onProgress || (() => {});
+
+    const signal = { shouldStop: false };
+    activeReconciles.set(linkId, signal);
+
+    let sourceGuild, targetGuild;
+    try {
+        sourceGuild = await withRetry(
+            () => client.guilds.fetch(link.source_guild_id),
+            { retries: 2, baseDelayMs: 350, label: 'reconcile_full_source_guild' }
+        );
+        targetGuild = await withRetry(
+            () => client.guilds.fetch(link.target_guild_id),
+            { retries: 2, baseDelayMs: 350, label: 'reconcile_full_target_guild' }
+        );
+    } catch (err) {
+        activeReconciles.delete(linkId);
+        throw new Error(`无法访问 source/target guild: ${err.message}`);
+    }
+
+    const totalEligible = countEligibleMembersForLink(link.source_guild_id, link.target_guild_id);
+    let offset = Math.max(0, Number(options.offset || 0));
+    let processed = 0;
+    let skipped = 0;
+    let planned = 0;
+    let failed = 0;
+    const failures = [];
+    let aborted = false;
+
+    try {
+        while (true) {
+            if (signal.shouldStop) {
+                aborted = true;
+                break;
+            }
+
+            const userIds = listEligibleMemberIdsForLink(
+                link.source_guild_id, link.target_guild_id,
+                batchSize, offset
+            );
+            if (userIds.length === 0) break;
+
+            for (const userId of userIds) {
+                if (signal.shouldStop) {
+                    aborted = true;
+                    break;
+                }
+
+                try {
+                    const row = await reconcileLinkMemberWithGuilds(
+                        client, link, sourceGuild, targetGuild,
+                        userId, { reason }
+                    );
+                    processed += 1;
+                    if (row.skipped) {
+                        skipped += 1;
+                    } else {
+                        planned += row.planned;
+                    }
+                } catch (err) {
+                    failed += 1;
+                    if (failures.length < 50) {
+                        failures.push({ userId, error: err.message || String(err) });
+                    }
+                }
+
+                onProgress({
+                    totalEligible,
+                    processed,
+                    skipped,
+                    planned,
+                    failed,
+                    currentOffset: offset,
+                    aborted: false,
+                });
+
+                if (memberDelayMs > 0) {
+                    await new Promise((r) => setTimeout(r, memberDelayMs));
+                }
+            }
+
+            offset += userIds.length;
+
+            if (!signal.shouldStop && userIds.length === batchSize && batchDelayMs > 0) {
+                await new Promise((r) => setTimeout(r, batchDelayMs));
+            }
+        }
+    } finally {
+        activeReconciles.delete(linkId);
+    }
+
+    return {
+        linkId,
+        totalEligible,
+        processed,
+        skipped,
+        planned,
+        failed,
+        failures,
+        aborted,
+    };
+}
+
 async function reconcileLinkMembersBatch(client, linkId, options = {}) {
     const link = getSyncLinkById(linkId);
     if (!link) {
@@ -202,6 +407,7 @@ async function reconcileLinkMembersBatch(client, linkId, options = {}) {
     const maxMembers = Math.max(1, Number(options.maxMembers || 50));
     const offset = Math.max(0, Number(options.offset || 0));
     const reason = options.reason || 'manual_reconcile_batch';
+    const onProgress = options.onProgress || (() => {});
 
     const totalEligible = countEligibleMembersForLink(link.source_guild_id, link.target_guild_id);
     const userIds = listEligibleMemberIdsForLink(link.source_guild_id, link.target_guild_id, maxMembers, offset);
@@ -225,6 +431,8 @@ async function reconcileLinkMembersBatch(client, linkId, options = {}) {
             failed += 1;
             failures.push({ userId, error: err.message || String(err) });
         }
+
+        onProgress({ totalEligible, scanned: userIds.length, processed, skipped, planned, failed });
     }
 
     return {
@@ -337,6 +545,9 @@ function getAutoReconcileStatus() {
 module.exports = {
     reconcileLinkMember,
     reconcileLinkMembersBatch,
+    reconcileLinkMembersFull,
+    stopReconcile,
+    isReconcileRunning,
     runAutoReconcileOnce,
     startAutoReconcileScheduler,
     stopAutoReconcileScheduler,
