@@ -6,15 +6,30 @@ const {
     countEligibleMembersForLink,
     enqueueSyncJob,
     logRoleChange,
+    getRoleSyncSetting,
 } = require('../utils/roleSyncDatabase');
 const { withRetry } = require('../utils/networkRetry');
 
-const AUTO_RECONCILE_ENABLED = String(process.env.ROLE_SYNC_AUTO_RECONCILE_ENABLED || 'false').toLowerCase() === 'true';
-const AUTO_RECONCILE_INTERVAL_MS = Number(process.env.ROLE_SYNC_AUTO_RECONCILE_INTERVAL_MS || 15 * 60 * 1000);
-const AUTO_RECONCILE_MAX_MEMBERS_PER_LINK = Number(process.env.ROLE_SYNC_AUTO_RECONCILE_MAX_MEMBERS_PER_LINK || 20);
+const ENV_AUTO_RECONCILE_ENABLED = String(process.env.ROLE_SYNC_AUTO_RECONCILE_ENABLED || 'false').toLowerCase() === 'true';
+const ENV_AUTO_RECONCILE_INTERVAL_MS = Number(process.env.ROLE_SYNC_AUTO_RECONCILE_INTERVAL_MS || 15 * 60 * 1000);
+const ENV_AUTO_RECONCILE_MAX_MEMBERS_PER_LINK = Number(process.env.ROLE_SYNC_AUTO_RECONCILE_MAX_MEMBERS_PER_LINK || 20);
+
+function getAutoReconcileEnabled() {
+    const db = getRoleSyncSetting('auto_reconcile_enabled');
+    return db !== null ? db === 'true' : ENV_AUTO_RECONCILE_ENABLED;
+}
+
+function getAutoReconcileIntervalMs() {
+    return Number(getRoleSyncSetting('auto_reconcile_interval_ms', ENV_AUTO_RECONCILE_INTERVAL_MS));
+}
+
+function getAutoReconcileMaxMembers() {
+    return Number(getRoleSyncSetting('auto_reconcile_max_members', ENV_AUTO_RECONCILE_MAX_MEMBERS_PER_LINK));
+}
 
 let autoTimer = null;
 let autoRunning = false;
+let savedClient = null;
 const reconcileCursorMap = new Map();
 
 // 全量对账中断信号（仿照 bootstrap 的 activeBootstraps 模式）
@@ -470,7 +485,7 @@ async function runAutoReconcileOnce(client) {
             }
 
             const result = await reconcileLinkMembersBatch(client, link.link_id, {
-                maxMembers: AUTO_RECONCILE_MAX_MEMBERS_PER_LINK,
+                maxMembers: getAutoReconcileMaxMembers(),
                 offset,
                 reason: 'auto_reconcile',
             });
@@ -498,17 +513,19 @@ async function runAutoReconcileOnce(client) {
 }
 
 function startAutoReconcileScheduler(client) {
-    if (!AUTO_RECONCILE_ENABLED) {
-        console.log('[RoleSync] ℹ️ 自动对账未启用（ROLE_SYNC_AUTO_RECONCILE_ENABLED=false）。');
-        return;
-    }
+    savedClient = client;
 
     if (autoTimer) {
         return;
     }
 
+    const intervalMs = getAutoReconcileIntervalMs();
+
     autoTimer = setInterval(() => {
-        runAutoReconcileOnce(client)
+        if (!getAutoReconcileEnabled()) {
+            return;
+        }
+        runAutoReconcileOnce(savedClient)
             .then((res) => {
                 if (res?.skipped) {
                     return;
@@ -518,9 +535,10 @@ function startAutoReconcileScheduler(client) {
             .catch((err) => {
                 console.error('[RoleSync] ❌ 自动对账异常:', err);
             });
-    }, AUTO_RECONCILE_INTERVAL_MS);
+    }, intervalMs);
 
-    console.log(`[RoleSync] ✅ 自动对账已启动，间隔=${AUTO_RECONCILE_INTERVAL_MS}ms，每链路每轮最多=${AUTO_RECONCILE_MAX_MEMBERS_PER_LINK}成员。`);
+    const enabled = getAutoReconcileEnabled();
+    console.log(`[RoleSync] ✅ 自动对账定时器已启动，当前${enabled ? '启用' : '未启用'}，间隔=${intervalMs}ms，每链路每轮最多=${getAutoReconcileMaxMembers()}成员。`);
 }
 
 function stopAutoReconcileScheduler() {
@@ -530,12 +548,20 @@ function stopAutoReconcileScheduler() {
     }
 }
 
+function restartAutoReconcileScheduler() {
+    if (!savedClient) {
+        return;
+    }
+    stopAutoReconcileScheduler();
+    startAutoReconcileScheduler(savedClient);
+}
+
 function getAutoReconcileStatus() {
     return {
-        enabled: AUTO_RECONCILE_ENABLED,
+        enabled: getAutoReconcileEnabled(),
         running: !!autoTimer,
-        intervalMs: AUTO_RECONCILE_INTERVAL_MS,
-        maxMembersPerLink: AUTO_RECONCILE_MAX_MEMBERS_PER_LINK,
+        intervalMs: getAutoReconcileIntervalMs(),
+        maxMembersPerLink: getAutoReconcileMaxMembers(),
         cursors: Object.fromEntries(reconcileCursorMap.entries()),
     };
 }
@@ -549,5 +575,6 @@ module.exports = {
     runAutoReconcileOnce,
     startAutoReconcileScheduler,
     stopAutoReconcileScheduler,
+    restartAutoReconcileScheduler,
     getAutoReconcileStatus,
 };

@@ -20,6 +20,7 @@ const {
     stopReconcile,
     isReconcileRunning,
     runAutoReconcileManual,
+    restartAutoReconcileScheduler,
     getReconcileRuntimeStatus,
     setLinkEnabled,
     listSyncLinks,
@@ -214,6 +215,24 @@ module.exports = {
                     opt.setName('熔断冷却ms')
                         .setDescription('熔断后阻断时长（毫秒），默认300000')
                         .setMinValue(10000).setMaxValue(3600000)
+                        .setRequired(false)))
+        .addSubcommand((sub) =>
+            sub
+                .setName('自动对账设置')
+                .setDescription('查看或修改自动对账参数（启用开关、间隔、扫描数量）')
+                .addBooleanOption((opt) =>
+                    opt.setName('启用')
+                        .setDescription('开启或关闭自动对账')
+                        .setRequired(false))
+                .addIntegerOption((opt) =>
+                    opt.setName('间隔分钟')
+                        .setDescription('自动对账间隔（分钟），默认15')
+                        .setMinValue(1).setMaxValue(1440)
+                        .setRequired(false))
+                .addIntegerOption((opt) =>
+                    opt.setName('每轮扫描数')
+                        .setDescription('每链路每轮最多扫描成员数，默认20')
+                        .setMinValue(1).setMaxValue(500)
                         .setRequired(false))),
 
     async execute(interaction) {
@@ -312,6 +331,11 @@ module.exports = {
 
             if (sub === '防护设置') {
                 await handleProtectionSettings(interaction);
+                return;
+            }
+
+            if (sub === '自动对账设置') {
+                await handleAutoReconcileSettings(interaction);
                 return;
             }
 
@@ -852,6 +876,53 @@ async function handleProtectionSettings(interaction) {
         reply += `\n✅ 已更新: ${changes.join(', ')}`;
     } else {
         reply += '\n💡 传入参数可修改设置，例如:\n`/身份组同步 防护设置 添加告警频道:123456789 熔断阈值:15`';
+    }
+
+    await interaction.editReply({ content: reply });
+}
+
+async function handleAutoReconcileSettings(interaction) {
+    const enabledOpt = interaction.options.getBoolean('启用');
+    const intervalOpt = interaction.options.getInteger('间隔分钟');
+    const maxMembersOpt = interaction.options.getInteger('每轮扫描数');
+
+    const changes = [];
+    let needRestart = false;
+
+    if (enabledOpt !== null && enabledOpt !== undefined) {
+        setRoleSyncSetting('auto_reconcile_enabled', String(enabledOpt));
+        changes.push(`启用 → ${enabledOpt ? '是' : '否'}`);
+        needRestart = true;
+    }
+
+    if (intervalOpt !== null && intervalOpt !== undefined) {
+        setRoleSyncSetting('auto_reconcile_interval_ms', intervalOpt * 60 * 1000);
+        changes.push(`间隔 → ${intervalOpt}分钟`);
+        needRestart = true;
+    }
+
+    if (maxMembersOpt !== null && maxMembersOpt !== undefined) {
+        setRoleSyncSetting('auto_reconcile_max_members', maxMembersOpt);
+        changes.push(`每轮扫描数 → ${maxMembersOpt}`);
+    }
+
+    if (needRestart) {
+        restartAutoReconcileScheduler();
+    }
+
+    const runtime = getReconcileRuntimeStatus();
+    const status = runtime.auto;
+
+    let reply = '**♻️ 自动对账设置**\n\n';
+    reply += `状态: ${status.enabled ? '已启用' : '未启用'}\n`;
+    reply += `定时器: ${status.running ? '运行中' : '未运行'}\n`;
+    reply += `间隔: ${status.intervalMs}ms（${Math.round(status.intervalMs / 60000)}分钟）\n`;
+    reply += `每轮扫描数: ${status.maxMembersPerLink}\n`;
+
+    if (changes.length > 0) {
+        reply += `\n✅ 已更新: ${changes.join(', ')}`;
+    } else {
+        reply += '\n💡 传入参数可修改设置，例如:\n`/身份组同步 自动对账设置 启用:True 间隔分钟:10 每轮扫描数:50`';
     }
 
     await interaction.editReply({ content: reply });

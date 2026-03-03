@@ -34,6 +34,7 @@ const {
     stopReconcile,
     isReconcileRunning,
     runAutoReconcileOnce,
+    restartAutoReconcileScheduler,
     getAutoReconcileStatus,
 } = require('./reconcileService');
 const { withRetry } = require('../utils/networkRetry');
@@ -1021,6 +1022,7 @@ module.exports = {
     stopReconcile,
     isReconcileRunning,
     runAutoReconcileManual,
+    restartAutoReconcileScheduler,
     getReconcileRuntimeStatus,
     setLinkEnabled,
     listSyncLinks,
