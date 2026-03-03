@@ -9,8 +9,10 @@ const {
     enableRoleSyncMapById,
     updateRoleSyncMapRoleId,
     getMembersWithRole,
+    getAffectedUsersByDeletedRole,
     enqueueSyncJob,
     purgeOrphanMappingData,
+    setRoleSyncSetting,
 } = require('../../utils/roleSyncDatabase');
 const { layout, escapeHtml } = require('../views/layout');
 const { t, getLang } = require('../views/i18n');
@@ -929,8 +931,9 @@ module.exports = function createConfigRoutes(client) {
         const deletedGuildId = isSourceDeleted ? map.source_guild_id : map.target_guild_id;
         const deletedRoleId = isSourceDeleted ? map.source_role_id : map.target_role_id;
 
-        // Find members who had this role (from source guild snapshot for source deletion, target guild for target deletion)
-        const affectedUserIds = getMembersWithRole(deletedGuildId, deletedRoleId);
+        // 从历史日志中查找曾被分配过该身份组的成员（roles_json 可能已被 guildMemberUpdate 更新）
+        const logMembers = getAffectedUsersByDeletedRole(deletedGuildId, deletedRoleId);
+        const affectedUserIds = logMembers.length > 0 ? logMembers : getMembersWithRole(deletedGuildId, deletedRoleId);
 
         const colorHex = '#' + (deletedSnapshot.role_color || 0).toString(16).padStart(6, '0');
         const message = req.query.message || '';
@@ -1013,7 +1016,7 @@ module.exports = function createConfigRoutes(client) {
                 const createdRole = await guild.roles.create({
                     name: deletedSnapshot.role_name,
                     color: deletedSnapshot.role_color || 0,
-                    reason: '[RoleSync] 恢复被删角色',
+                    reason: '[RoleSync] 恢复被删身份组',
                 });
                 newRoleId = createdRole.id;
                 guildRolesCache.delete(deletedGuildId);
@@ -1026,36 +1029,47 @@ module.exports = function createConfigRoutes(client) {
                 }
             }
 
-            // 3. Re-enable the mapping
-            enableRoleSyncMapById(mapId);
+            // 3. 不立即启用映射，等所有恢复任务完成后由维护任务自动启用
+            //    防止对账在恢复期间发现不一致而错误移除目标身份组
 
             // 4. Batch enqueue add jobs for affected members
-            // 恢复任务：在被删角色所在的服务器重新分配新角色
-            const affectedUserIds = getMembersWithRole(deletedGuildId, deletedRoleId);
+            // 从历史日志中查找曾被分配过该身份组的成员
+            const logMembers = getAffectedUsersByDeletedRole(deletedGuildId, deletedRoleId);
+            const affectedUserIds = logMembers.length > 0 ? logMembers : getMembersWithRole(deletedGuildId, deletedRoleId);
             const jobTargetGuildId = deletedGuildId;
             const jobTargetRoleId = newRoleId;
             const jobSourceRoleId = isSourceDeleted ? map.target_role_id : map.source_role_id;
+            const recoveryOperationId = `recovery_${mapId}_${Date.now()}`;
 
             let enqueuedCount = 0;
             for (const userId of affectedUserIds) {
                 const result = enqueueSyncJob({
                     linkId: map.link_id,
-                    operationId: `recovery_${mapId}_${Date.now()}`,
+                    operationId: recoveryOperationId,
                     sourceGuildId: isSourceDeleted ? map.target_guild_id : map.source_guild_id,
                     targetGuildId: jobTargetGuildId,
                     userId,
                     sourceRoleId: jobSourceRoleId,
                     targetRoleId: jobTargetRoleId,
                     action: 'add',
-                    lane: 'normal',
-                    priority: 10,
+                    lane: 'fast',
+                    priority: 100,
                     maxAttempts: 3,
                     notBeforeMs: null,
                     conflictPolicy: null,
-                    maxDelaySeconds: 120,
+                    maxDelaySeconds: 20,
                     sourceEvent: 'recovery',
                 });
                 if (result.enqueued) enqueuedCount++;
+            }
+
+            // 记录恢复待完成状态，维护任务检测到所有恢复任务完成后自动启用映射
+            if (enqueuedCount > 0) {
+                setRoleSyncSetting(`recovery_pending_${mapId}`, recoveryOperationId);
+                console.log(`[RoleSync] 🔄 恢复任务已入队: mapId=${mapId}, operationId=${recoveryOperationId}, count=${enqueuedCount}`);
+            } else {
+                // 没有需要恢复的成员，直接启用映射
+                enableRoleSyncMapById(mapId);
             }
 
             res.redirect(`/config?lang=${lang}`);

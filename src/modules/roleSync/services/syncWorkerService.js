@@ -11,6 +11,12 @@ const {
     getSyncJobCountByStatus,
     getSyncJobCountByLane,
     upsertRoleSnapshot,
+    getRoleSyncSetting,
+    setRoleSyncSetting,
+    deleteRoleSyncSetting,
+    listRoleSyncSettingsByPrefix,
+    getRecoveryPendingJobCount,
+    enableRoleSyncMapById,
 } = require('../utils/roleSyncDatabase');
 const { ensureMemberExistsInGuild } = require('./eligibilityService');
 const { withRetry, isNetworkError } = require('../utils/networkRetry');
@@ -87,7 +93,7 @@ async function executeJob(client, job) {
         return;
     }
 
-    // 更新角色快照（名称+颜色），用于角色删除后恢复
+    // 更新身份组快照（名称+颜色），用于身份组删除后恢复
     upsertRoleSnapshot(job.target_guild_id, role.id, role.name, role.color || 0);
 
     const hasRole = member.roles.cache.has(job.target_role_id);
@@ -257,11 +263,27 @@ async function processSyncQueueOnce(client) {
     }
 }
 
+function checkRecoveryCompletion() {
+    const pendingEntries = listRoleSyncSettingsByPrefix('recovery_pending_');
+    for (const entry of pendingEntries) {
+        const mapId = parseInt(entry.key.replace('recovery_pending_', ''));
+        const operationId = entry.value;
+        const pendingCount = getRecoveryPendingJobCount(operationId);
+        if (pendingCount === 0) {
+            enableRoleSyncMapById(mapId);
+            deleteRoleSyncSetting(entry.key);
+            console.log(`[RoleSync] ✅ 恢复完成，已自动启用映射 mapId=${mapId}（operationId=${operationId}）`);
+        }
+    }
+}
+
 function runMaintenance() {
     const removedMarks = pruneExpiredOperationMarks();
     const removedLogs = pruneOldChangeLogs(90);
     const stats = getSyncJobCountByStatus();
     const laneStats = getSyncJobCountByLane();
+
+    checkRecoveryCompletion();
 
     console.log(`[RoleSync] 🧹 维护任务: 清理mark=${removedMarks}, 清理日志=${removedLogs}, 队列状态=${JSON.stringify(stats)}, 分通道=${JSON.stringify(laneStats)}`);
 }

@@ -512,7 +512,7 @@ function bootstrapSyncLinksFromEnv() {
     initializeRoleSyncDatabase();
     const links = parseSyncLinksFromEnv();
     if (links.length === 0) {
-        console.log('[RoleSync] ℹ️ 未检测到 ROLE_SYNC_LINKS_JSON，角色同步链路暂未自动创建。');
+        console.log('[RoleSync] ℹ️ 未检测到 ROLE_SYNC_LINKS_JSON，身份组同步链路暂未自动创建。');
         return { total: 0, applied: 0 };
     }
 
@@ -1096,7 +1096,7 @@ function getSyncJobCountByLane() {
     return result;
 }
 
-// ─── 角色快照（用于角色删除后恢复） ───
+// ─── 身份组快照（用于身份组删除后恢复） ───
 
 function upsertRoleSnapshot(guildId, roleId, roleName, roleColor) {
     initializeRoleSyncDatabase();
@@ -1142,7 +1142,7 @@ function getDeletedRoleSnapshots(guildId) {
     return stmt.all(guildId);
 }
 
-// ─── 角色删除防护 ───
+// ─── 身份组删除防护 ───
 
 function getMappingsByRoleId(guildId, roleId) {
     initializeRoleSyncDatabase();
@@ -1244,6 +1244,26 @@ function getMembersWithRole(guildId, roleId) {
     }).map(row => row.user_id);
 }
 
+function getAffectedUsersByDeletedRole(guildId, roleId) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        SELECT DISTINCT user_id FROM role_change_log
+        WHERE source_guild_id = ? AND source_role_id = ?
+          AND action = 'add' AND result IN ('success', 'noop')
+    `);
+    return stmt.all(guildId, roleId).map(r => r.user_id);
+}
+
+function getRecoveryPendingJobCount(operationIdPrefix) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        SELECT COUNT(*) AS cnt FROM sync_jobs
+        WHERE operation_id LIKE ? AND source_event = 'recovery'
+          AND status IN ('pending', 'processing')
+    `);
+    return stmt.get(operationIdPrefix + '%').cnt;
+}
+
 function purgeOrphanMappingData(mapIds) {
     initializeRoleSyncDatabase();
     if (!Array.isArray(mapIds) || mapIds.length === 0) return { mappings: 0, logs: 0, snapshots: 0 };
@@ -1280,6 +1300,17 @@ function setRoleSyncSetting(key, value) {
     roleSyncDb.prepare(
         'INSERT OR REPLACE INTO role_sync_settings (key, value) VALUES (?, ?)'
     ).run(key, String(value));
+}
+
+function deleteRoleSyncSetting(key) {
+    initializeRoleSyncDatabase();
+    return roleSyncDb.prepare('DELETE FROM role_sync_settings WHERE key = ?').run(key).changes;
+}
+
+function listRoleSyncSettingsByPrefix(prefix) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare('SELECT key, value FROM role_sync_settings WHERE key LIKE ?');
+    return stmt.all(prefix + '%');
 }
 
 module.exports = {
@@ -1327,12 +1358,12 @@ module.exports = {
     pruneOldChangeLogs,
     getSyncJobCountByStatus,
     getSyncJobCountByLane,
-    // 角色快照
+    // 身份组快照
     upsertRoleSnapshot,
     markRoleSnapshotDeleted,
     getRoleSnapshot,
     getDeletedRoleSnapshots,
-    // 角色删除防护
+    // 身份组删除防护
     getMappingsByRoleId,
     disableRoleSyncMapByIds,
     cancelPendingJobsByTargetRoleId,
@@ -1342,8 +1373,12 @@ module.exports = {
     updateRoleSyncMapRoleId,
     enableRoleSyncMapById,
     getMembersWithRole,
+    getAffectedUsersByDeletedRole,
+    getRecoveryPendingJobCount,
     purgeOrphanMappingData,
     // 运行时设置
     getRoleSyncSetting,
     setRoleSyncSetting,
+    deleteRoleSyncSetting,
+    listRoleSyncSettingsByPrefix,
 };

@@ -23,7 +23,7 @@ async function handleGuildRoleDeleteForSync(role) {
     const roleName = role.name || roleId;
     const roleColor = role.color || 0;
 
-    // 先保存角色快照（名称+颜色），再标记为已删除
+    // 先保存身份组快照（名称+颜色），再标记为已删除
     upsertRoleSnapshot(guildId, roleId, roleName, roleColor);
     markRoleSnapshotDeleted(guildId, roleId);
 
@@ -63,7 +63,7 @@ async function handleGuildRoleDeleteForSync(role) {
     });
 
     console.warn(
-        `[RoleSync] 🛡️ 角色删除防护: guild=${guildId} role=${roleName}(${roleId}) ` +
+        `[RoleSync] 🛡️ 身份组删除防护: guild=${guildId} role=${roleName}(${roleId}) ` +
         `isSource=${isSourceRole} isTarget=${isTargetRole} ` +
         `mappings_disabled=${disabledCount} jobs_cancelled=${cancelledJobCount}`
     );

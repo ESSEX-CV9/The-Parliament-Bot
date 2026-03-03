@@ -48,11 +48,13 @@ async function resolveRoleName(client, guildId, roleId) {
 const memberRolesCache = new Map();
 const MEMBER_ROLES_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-async function fetchMemberGuildRoles(client, guildId, userId) {
+async function fetchMemberGuildRoles(client, guildId, userId, skipCache = false) {
     const key = `${guildId}:${userId}`;
-    const cached = memberRolesCache.get(key);
-    if (cached && Date.now() - cached.fetchedAt < MEMBER_ROLES_CACHE_TTL) {
-        return cached.roles;
+    if (!skipCache) {
+        const cached = memberRolesCache.get(key);
+        if (cached && Date.now() - cached.fetchedAt < MEMBER_ROLES_CACHE_TTL) {
+            return cached.roles;
+        }
     }
     try {
         const guild = await client.guilds.fetch(guildId);
@@ -366,10 +368,10 @@ module.exports = function createMembersRouter(client) {
             const guildRolesMap = new Map();
 
             if (forceRefresh) {
-                // Refresh: fetch from Discord API, update DB
+                // Refresh: fetch from Discord API, update DB (skip cache)
                 await Promise.all(
                     activeGuilds.map(async (p) => {
-                        const roles = await fetchMemberGuildRoles(client, p.guild_id, userId);
+                        const roles = await fetchMemberGuildRoles(client, p.guild_id, userId, true);
                         if (roles) {
                             guildRolesMap.set(p.guild_id, roles);
                             const rolesJson = JSON.stringify(roles.map(r => r.id).sort());

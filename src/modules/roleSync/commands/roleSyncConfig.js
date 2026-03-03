@@ -34,12 +34,12 @@ module.exports = {
         .setDefaultMemberPermissions(0)
         .addSubcommand((sub) =>
             sub
-                .setName('导出当前服务器角色')
-                .setDescription('导出当前服务器角色快照为 CSV'))
+                .setName('导出当前服务器身份组')
+                .setDescription('导出当前服务器身份组快照为 CSV'))
         .addSubcommand((sub) =>
             sub
-                .setName('导出链路角色')
-                .setDescription('按 link_id 导出 source/target 两侧角色快照')
+                .setName('导出链路身份组')
+                .setDescription('按 link_id 导出 source/target 两侧身份组快照')
                 .addStringOption((opt) =>
                     opt
                         .setName('link_id')
@@ -48,7 +48,7 @@ module.exports = {
         .addSubcommand((sub) =>
             sub
                 .setName('导入计划')
-                .setDescription('导入角色同步计划 CSV/Excel 文件')
+                .setDescription('导入身份组同步计划 CSV/Excel 文件')
                 .addAttachmentOption((opt) =>
                     opt
                         .setName('计划文件')
@@ -66,7 +66,7 @@ module.exports = {
         .addSubcommand((sub) =>
             sub
                 .setName('应用')
-                .setDescription('应用导入计划（会写入映射并可创建缺失角色）')
+                .setDescription('应用导入计划（会写入映射并可创建缺失身份组）')
                 .addStringOption((opt) =>
                     opt
                         .setName('job_id')
@@ -191,7 +191,7 @@ module.exports = {
         .addSubcommand((sub) =>
             sub
                 .setName('防护设置')
-                .setDescription('查看或修改角色删除防护参数（告警频道、熔断器）')
+                .setDescription('查看或修改身份组删除防护参数（告警频道、熔断器）')
                 .addStringOption((opt) =>
                     opt.setName('添加告警频道')
                         .setDescription('添加告警频道（频道ID，支持跨服）')
@@ -225,12 +225,12 @@ module.exports = {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            if (sub === '导出当前服务器角色') {
+            if (sub === '导出当前服务器身份组') {
                 await handleExportCurrentGuild(interaction);
                 return;
             }
 
-            if (sub === '导出链路角色') {
+            if (sub === '导出链路身份组') {
                 await handleExportLinkGuilds(interaction);
                 return;
             }
@@ -335,7 +335,7 @@ async function handleExportCurrentGuild(interaction) {
     const fileName = `roles_export_${interaction.guild.id}_${Date.now()}.csv`;
 
     await interaction.editReply({
-        content: `✅ 已导出当前服务器角色快照（${interaction.guild.name}）。`,
+        content: `✅ 已导出当前服务器身份组快照（${interaction.guild.name}）。`,
         files: [new AttachmentBuilder(Buffer.from(csv, 'utf8'), { name: fileName })],
     });
 }
@@ -395,7 +395,7 @@ async function handlePreviewJob(interaction) {
         `- 基础校验失败: ${preview.baseInvalidRows}`,
         `- 预检通过: ${preview.previewValidRows}`,
         `- 预检失败: ${preview.previewInvalidRows}`,
-        `- 将创建缺失角色: ${preview.willCreateRoles}`,
+        `- 将创建缺失身份组: ${preview.willCreateRoles}`,
         `- UPSERT: ${preview.upsertActions} / DISABLE: ${preview.disableActions} / DELETE: ${preview.deleteActions}`,
         '确认无误后执行：`/身份组同步 应用 job_id:<...> 确认执行:true`',
         invalidText,
@@ -421,7 +421,7 @@ async function handleApplyJob(interaction) {
     await interaction.editReply([
         '✅ 应用完成。',
         `- 实际应用行数: ${result.applied}`,
-        `- 新建角色数: ${result.createdRoles}`,
+        `- 新建身份组数: ${result.createdRoles}`,
         `- UPSERT: ${result.upserted}`,
         `- DISABLE: ${result.disabled}`,
         `- DELETE: ${result.deleted}`,
@@ -842,7 +842,7 @@ async function handleProtectionSettings(interaction) {
         ? channelIds.map(id => `<#${id}>`).join(', ')
         : '未设置（仅控制台）';
 
-    let reply = '**🛡️ 角色删除防护设置**\n\n';
+    let reply = '**🛡️ 身份组删除防护设置**\n\n';
     reply += `告警频道: ${channelDisplay}\n`;
     reply += `熔断窗口: ${currentWindow}ms\n`;
     reply += `熔断阈值: ${currentThresh} 次/窗口\n`;

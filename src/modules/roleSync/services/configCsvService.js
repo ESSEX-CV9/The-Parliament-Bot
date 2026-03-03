@@ -197,7 +197,7 @@ function validateRowBasic(row) {
     }
 
     if (row.targetRolePosition !== -1 && row.targetRolePosition < 0) {
-        errors.push('target_role_position 必须 >= 0（留空或 -1 表示使用源角色位置）');
+        errors.push('target_role_position 必须 >= 0（留空或 -1 表示使用源身份组位置）');
     }
 
     return errors;
@@ -379,7 +379,7 @@ async function previewImportJob(client, jobId) {
         }
 
         if (sourceRole.managed || sourceRole.id === sourceGuild.id) {
-            rowResult.messages.push('source 角色为托管角色或 @everyone，不允许同步');
+            rowResult.messages.push('source 身份组为托管身份组或 @everyone，不允许同步');
             summary.previewInvalidRows += 1;
             summary.rows.push(rowResult);
             continue;
@@ -451,7 +451,7 @@ async function ensureTargetRole({ row, sourceRole, targetGuild }) {
 
     const createPayload = {
         name: row.targetRoleNameIfCreate || sourceRole.name,
-        reason: `[RoleSync] CSV导入自动创建角色 link=${row.linkId} sourceRole=${row.sourceRoleId}`,
+        reason: `[RoleSync] CSV导入自动创建身份组 link=${row.linkId} sourceRole=${row.sourceRoleId}`,
     };
 
     if (row.copyVisual) {
@@ -487,7 +487,7 @@ async function applyCreatedRolePositions(client, createdRoleEntries) {
         // 按文件行序排列（靠前 = 更高位置）
         entries.sort((a, b) => a.fileOrder - b.fileOrder);
 
-        // 找锚点：第一个指定了 target_role_position 的角色
+        // 找锚点：第一个指定了 target_role_position 的身份组
         const anchorIdx = entries.findIndex((e) => e.targetRolePosition >= 0);
         if (anchorIdx === -1) {
             // 全部没填位置，跳过
@@ -496,7 +496,7 @@ async function applyCreatedRolePositions(client, createdRoleEntries) {
 
         const anchorPos = entries[anchorIdx].targetRolePosition;
 
-        // 从锚点向两边推算位置：锚点上方的角色 position 更大，下方更小
+        // 从锚点向两边推算位置：锚点上方的身份组 position 更大，下方更小
         const positionUpdates = [];
         for (let i = 0; i < entries.length; i++) {
             const pos = anchorPos - (i - anchorIdx);
@@ -518,9 +518,9 @@ async function applyCreatedRolePositions(client, createdRoleEntries) {
                 () => guild.roles.setPositions(positionUpdates),
                 { retries: 2, baseDelayMs: 500, label: `position_set_roles_${guildId}` }
             );
-            console.log(`[RoleSync] ✅ 已为 ${guild.name} 批量设置 ${positionUpdates.length} 个新角色位置`);
+            console.log(`[RoleSync] ✅ 已为 ${guild.name} 批量设置 ${positionUpdates.length} 个新身份组位置`);
         } catch (err) {
-            console.error(`[RoleSync] ⚠️ 设置角色位置失败（guild=${guildId}）:`, err.message || err);
+            console.error(`[RoleSync] ⚠️ 设置身份组位置失败（guild=${guildId}）:`, err.message || err);
         }
     }
 }
@@ -659,7 +659,7 @@ async function applyImportJob(client, jobId, operatorId) {
         }
     }
 
-    // 批量设置新创建角色的位置（锚点 + 文件顺序）
+    // 批量设置新创建身份组的位置（锚点 + 文件顺序）
     await applyCreatedRolePositions(client, createdRoleEntries);
 
     if (results.failed > 0) {

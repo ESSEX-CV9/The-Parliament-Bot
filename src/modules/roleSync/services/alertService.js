@@ -54,31 +54,31 @@ function buildAlertEmbed(payload) {
     let title, description, color;
 
     if (type === 'source_role_deleted') {
-        title = '🚨 源服务器角色被删除 — 同步保护已触发';
+        title = '🚨 源服务器身份组被删除 — 同步保护已触发';
         color = 0xFF0000;
         description =
-            `源服务器 **${guildName || guildId}** 中的角色被删除。\n` +
-            `已阻止向目标服务器批量移除对应角色。\n\n` +
-            `**被删角色：** ${roleName} (\`${roleId}\`)\n` +
+            `源服务器 **${guildName || guildId}** 中的身份组被删除。\n` +
+            `已阻止向目标服务器批量移除对应身份组。\n\n` +
+            `**被删身份组：** ${roleName} (\`${roleId}\`)\n` +
             `**已禁用映射：** ${disabledCount}\n` +
             `**已取消待执行任务：** ${cancelledJobCount}`;
     } else if (type === 'target_role_deleted') {
-        title = '⚠️ 目标服务器角色被删除 — 映射已禁用';
+        title = '⚠️ 目标服务器身份组被删除 — 映射已禁用';
         color = 0xFF8C00;
         description =
-            `目标服务器 **${guildName || guildId}** 中的角色被删除。\n\n` +
-            `**被删角色：** ${roleName} (\`${roleId}\`)\n` +
+            `目标服务器 **${guildName || guildId}** 中的身份组被删除。\n\n` +
+            `**被删身份组：** ${roleName} (\`${roleId}\`)\n` +
             `**已禁用映射：** ${disabledCount}\n` +
             `**已取消待执行任务：** ${cancelledJobCount}`;
     } else if (type === 'circuit_breaker_tripped') {
         title = '🔴 熔断器触发 — 批量移除已阻断';
         color = 0xFF0000;
         description =
-            `检测到短时间内对角色 \`${roleId}\` 的异常大量 **remove** 操作。\n` +
+            `检测到短时间内对身份组 \`${roleId}\` 的异常大量 **remove** 操作。\n` +
             `同步操作已暂停。\n\n` +
-            `**需要操作：** 检查源服务器是否有角色被删除，确认后在管理面板中处理。`;
+            `**需要操作：** 检查源服务器是否有身份组被删除，确认后在管理面板中处理。`;
     } else {
-        title = '📢 角色同步告警';
+        title = '📢 身份组同步告警';
         color = 0x5865F2;
         description = JSON.stringify(payload);
     }
@@ -100,7 +100,7 @@ function buildAlertEmbed(payload) {
     embed.addFields({
         name: '处置建议',
         value:
-            `1. 调查角色删除原因\n` +
+            `1. 调查身份组删除原因\n` +
             `2. 如需恢复，请访问管理面板：${dashboardUrl}\n` +
             `3. 如确认删除，可在管理面板中清除孤儿映射数据`,
     });
