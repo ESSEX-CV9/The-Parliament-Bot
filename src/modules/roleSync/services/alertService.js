@@ -1,10 +1,19 @@
 const { EmbedBuilder } = require('discord.js');
+const { getRoleSyncSetting } = require('../utils/roleSyncDatabase');
 
-const ALERT_CHANNEL_ID = process.env.ROLE_SYNC_ALERT_CHANNEL_ID || null;
+const ENV_ALERT_CHANNEL_IDS = process.env.ROLE_SYNC_ALERT_CHANNEL_ID || '';
 const DASHBOARD_PORT = process.env.ROLE_SYNC_DASHBOARD_PORT || 3847;
 
+function getAlertChannelIds() {
+    const dbValue = getRoleSyncSetting('alert_channel_ids', null);
+    const raw = dbValue || ENV_ALERT_CHANNEL_IDS;
+    if (!raw) return [];
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
+
 async function sendRoleSyncAlert(client, payload) {
-    if (!ALERT_CHANNEL_ID) {
+    const channelIds = getAlertChannelIds();
+    if (channelIds.length === 0) {
         console.warn('[RoleSync] ALERT (未配置告警频道):', JSON.stringify(payload));
         return;
     }
@@ -14,17 +23,19 @@ async function sendRoleSyncAlert(client, payload) {
         return;
     }
 
-    try {
-        const channel = await client.channels.fetch(ALERT_CHANNEL_ID).catch(() => null);
-        if (!channel || !channel.isTextBased()) {
-            console.warn(`[RoleSync] 告警频道 ${ALERT_CHANNEL_ID} 不存在或非文本频道`);
-            return;
-        }
+    const embed = buildAlertEmbed(payload);
 
-        const embed = buildAlertEmbed(payload);
-        await channel.send({ embeds: [embed] });
-    } catch (err) {
-        console.error('[RoleSync] 发送告警失败:', err);
+    for (const channelId of channelIds) {
+        try {
+            const channel = await client.channels.fetch(channelId).catch(() => null);
+            if (!channel || !channel.isTextBased()) {
+                console.warn(`[RoleSync] 告警频道 ${channelId} 不存在或非文本频道`);
+                continue;
+            }
+            await channel.send({ embeds: [embed] });
+        } catch (err) {
+            console.error(`[RoleSync] 发送告警到 ${channelId} 失败:`, err);
+        }
     }
 }
 

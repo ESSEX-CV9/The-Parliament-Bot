@@ -4,7 +4,7 @@ const {
 } = require('discord.js');
 
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
-const { getRoleSyncDb } = require('../utils/roleSyncDatabase');
+const { getRoleSyncDb, getRoleSyncSetting, setRoleSyncSetting } = require('../utils/roleSyncDatabase');
 const {
     importPlanFile,
     previewImportJob,
@@ -187,7 +187,34 @@ module.exports = {
                 .setName('停止对账')
                 .setDescription('中断正在进行的全量对账任务')
                 .addStringOption((opt) =>
-                    opt.setName('link_id').setDescription('要停止的链路ID').setRequired(true))),
+                    opt.setName('link_id').setDescription('要停止的链路ID').setRequired(true)))
+        .addSubcommand((sub) =>
+            sub
+                .setName('防护设置')
+                .setDescription('查看或修改角色删除防护参数（告警频道、熔断器）')
+                .addStringOption((opt) =>
+                    opt.setName('添加告警频道')
+                        .setDescription('添加告警频道（频道ID，支持跨服）')
+                        .setRequired(false))
+                .addStringOption((opt) =>
+                    opt.setName('移除告警频道')
+                        .setDescription('移除告警频道（频道ID）')
+                        .setRequired(false))
+                .addIntegerOption((opt) =>
+                    opt.setName('熔断窗口ms')
+                        .setDescription('熔断器滚动窗口（毫秒），默认10000')
+                        .setMinValue(1000).setMaxValue(60000)
+                        .setRequired(false))
+                .addIntegerOption((opt) =>
+                    opt.setName('熔断阈值')
+                        .setDescription('窗口内remove次数阈值，默认10')
+                        .setMinValue(3).setMaxValue(100)
+                        .setRequired(false))
+                .addIntegerOption((opt) =>
+                    opt.setName('熔断冷却ms')
+                        .setDescription('熔断后阻断时长（毫秒），默认300000')
+                        .setMinValue(10000).setMaxValue(3600000)
+                        .setRequired(false))),
 
     async execute(interaction) {
         if (!checkAdminPermission(interaction.member)) {
@@ -280,6 +307,11 @@ module.exports = {
 
             if (sub === '停止对账') {
                 await handleStopReconcile(interaction);
+                return;
+            }
+
+            if (sub === '防护设置') {
+                await handleProtectionSettings(interaction);
                 return;
             }
 
@@ -729,4 +761,98 @@ async function handleExportMembers(interaction) {
         content: `✅ 已导出 ${countRow.total} 条成员记录。`,
         files: [new AttachmentBuilder(csvBuffer, { name: fileName })],
     });
+}
+
+const ENV_ALERT_CHANNEL_IDS = process.env.ROLE_SYNC_ALERT_CHANNEL_ID || '';
+const ENV_CB_WINDOW_MS = Number(process.env.ROLE_SYNC_CB_WINDOW_MS) || 10000;
+const ENV_CB_THRESHOLD = Number(process.env.ROLE_SYNC_CB_THRESHOLD) || 10;
+const ENV_CB_BLOCK_MS = Number(process.env.ROLE_SYNC_CB_BLOCK_MS) || 5 * 60 * 1000;
+
+function getAlertChannelIdsForDisplay() {
+    const dbValue = getRoleSyncSetting('alert_channel_ids', null);
+    const raw = dbValue || ENV_ALERT_CHANNEL_IDS;
+    if (!raw) return [];
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+async function handleProtectionSettings(interaction) {
+    const addChannelOpt = interaction.options.getString('添加告警频道');
+    const removeChannelOpt = interaction.options.getString('移除告警频道');
+    const windowOpt = interaction.options.getInteger('熔断窗口ms');
+    const threshOpt = interaction.options.getInteger('熔断阈值');
+    const blockOpt = interaction.options.getInteger('熔断冷却ms');
+
+    const changes = [];
+
+    // 处理告警频道增删
+    if (addChannelOpt || removeChannelOpt) {
+        const currentIds = getAlertChannelIdsForDisplay();
+        const idSet = new Set(currentIds);
+
+        if (addChannelOpt) {
+            const channelId = addChannelOpt.replace(/\D/g, '');
+            if (channelId) {
+                // 验证频道是否可达
+                const ch = await interaction.client.channels.fetch(channelId).catch(() => null);
+                if (!ch || !ch.isTextBased()) {
+                    await interaction.editReply(`❌ 频道 \`${channelId}\` 不存在或非文本频道（Bot 可能不在该服务器中）。`);
+                    return;
+                }
+                if (idSet.has(channelId)) {
+                    changes.push(`告警频道 <#${channelId}> 已存在，跳过`);
+                } else {
+                    idSet.add(channelId);
+                    changes.push(`添加告警频道 → <#${channelId}>`);
+                }
+            }
+        }
+
+        if (removeChannelOpt) {
+            const channelId = removeChannelOpt.replace(/\D/g, '');
+            if (channelId && idSet.has(channelId)) {
+                idSet.delete(channelId);
+                changes.push(`移除告警频道 → ${channelId}`);
+            } else if (channelId) {
+                changes.push(`频道 \`${channelId}\` 不在告警列表中`);
+            }
+        }
+
+        setRoleSyncSetting('alert_channel_ids', Array.from(idSet).join(','));
+    }
+
+    if (windowOpt !== null && windowOpt !== undefined) {
+        setRoleSyncSetting('cb_window_ms', windowOpt);
+        changes.push(`熔断窗口 → ${windowOpt}ms`);
+    }
+    if (threshOpt !== null && threshOpt !== undefined) {
+        setRoleSyncSetting('cb_threshold', threshOpt);
+        changes.push(`熔断阈值 → ${threshOpt}`);
+    }
+    if (blockOpt !== null && blockOpt !== undefined) {
+        setRoleSyncSetting('cb_block_ms', blockOpt);
+        changes.push(`熔断冷却 → ${blockOpt}ms`);
+    }
+
+    const channelIds = getAlertChannelIdsForDisplay();
+    const currentWindow = Number(getRoleSyncSetting('cb_window_ms', ENV_CB_WINDOW_MS));
+    const currentThresh = Number(getRoleSyncSetting('cb_threshold', ENV_CB_THRESHOLD));
+    const currentBlock = Number(getRoleSyncSetting('cb_block_ms', ENV_CB_BLOCK_MS));
+
+    const channelDisplay = channelIds.length > 0
+        ? channelIds.map(id => `<#${id}>`).join(', ')
+        : '未设置（仅控制台）';
+
+    let reply = '**🛡️ 角色删除防护设置**\n\n';
+    reply += `告警频道: ${channelDisplay}\n`;
+    reply += `熔断窗口: ${currentWindow}ms\n`;
+    reply += `熔断阈值: ${currentThresh} 次/窗口\n`;
+    reply += `熔断冷却: ${currentBlock}ms（${Math.round(currentBlock / 60000)}分钟）\n`;
+
+    if (changes.length > 0) {
+        reply += `\n✅ 已更新: ${changes.join(', ')}`;
+    } else {
+        reply += '\n💡 传入参数可修改设置，例如:\n`/身份组同步 防护设置 添加告警频道:123456789 熔断阈值:15`';
+    }
+
+    await interaction.editReply({ content: reply });
 }

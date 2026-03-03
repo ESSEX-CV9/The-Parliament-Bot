@@ -217,6 +217,13 @@ function initializeRoleSyncDatabase() {
         );
     `);
 
+    roleSyncDb.exec(`
+        CREATE TABLE IF NOT EXISTS role_sync_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    `);
+
     ensureColumnIfMissing('sync_jobs', 'lane', "TEXT NOT NULL DEFAULT 'normal'");
     roleSyncDb.exec("CREATE INDEX IF NOT EXISTS idx_sync_jobs_lane_status_due ON sync_jobs(lane, status, not_before_ms, priority)");
 
@@ -1260,6 +1267,21 @@ function purgeOrphanMappingData(mapIds) {
     return tx(mapIds);
 }
 
+// ─── 运行时设置（键值存储） ───
+
+function getRoleSyncSetting(key, defaultValue = null) {
+    initializeRoleSyncDatabase();
+    const row = roleSyncDb.prepare('SELECT value FROM role_sync_settings WHERE key = ?').get(key);
+    return row ? row.value : defaultValue;
+}
+
+function setRoleSyncSetting(key, value) {
+    initializeRoleSyncDatabase();
+    roleSyncDb.prepare(
+        'INSERT OR REPLACE INTO role_sync_settings (key, value) VALUES (?, ?)'
+    ).run(key, String(value));
+}
+
 module.exports = {
     getRoleSyncDb,
     initializeRoleSyncDatabase,
@@ -1321,4 +1343,7 @@ module.exports = {
     enableRoleSyncMapById,
     getMembersWithRole,
     purgeOrphanMappingData,
+    // 运行时设置
+    getRoleSyncSetting,
+    setRoleSyncSetting,
 };
