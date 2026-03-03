@@ -1,7 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, ChannelType } = require('discord.js');
 const { checkAdminPermission } = require('../../../core/utils/permissionManager');
 const { parseDuration } = require('../utils/timeParser');
-const { executeBan, executeUnban, executeMute, executeWarnRole } = require('../services/punishmentExecutor');
+const { executeBan, executeUnban, executeMute, executeWarnRole, executeUnmute } = require('../services/punishmentExecutor');
 const {
     setSetting,
     getSetting,
@@ -46,6 +46,13 @@ const data = new SlashCommandBuilder()
         .addUserOption(opt => opt.setName('用户').setDescription('目标用户').setRequired(true))
         .addStringOption(opt => opt.setName('时长').setDescription('时长格式：2h 或 3d').setRequired(true))
         .addStringOption(opt => opt.setName('原因').setDescription('原因').setRequired(false))
+        .addBooleanOption(opt => opt.setName('同步').setDescription('是否同步至关联服务器').setRequired(false))
+    )
+    .addSubcommand(sub => sub
+        .setName('解除禁言')
+        .setDescription('解除成员的禁言')
+        .addUserOption(opt => opt.setName('用户').setDescription('要解除禁言的用户').setRequired(true))
+        .addStringOption(opt => opt.setName('原因').setDescription('解除原因').setRequired(false))
         .addBooleanOption(opt => opt.setName('同步').setDescription('是否同步至关联服务器').setRequired(false))
     )
     .addSubcommand(sub => sub
@@ -165,6 +172,20 @@ async function execute(interaction) {
                 });
                 break;
             }
+            case '解除禁言': {
+                const targetUser = interaction.options.getUser('用户');
+                const reason = interaction.options.getString('原因');
+                const sync = interaction.options.getBoolean('同步') ?? false;
+
+                const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+                if (!targetMember) {
+                    await interaction.editReply('❌ 无法找到该用户');
+                    return;
+                }
+
+                await executeUnmute(client, interaction, { targetMember, reason, sync });
+                break;
+            }
             case '配置公告频道': {
                 const channel = interaction.options.getChannel('频道');
                 setSetting(interaction.guild.id, 'announcement_channel_id', channel.id);
@@ -231,6 +252,7 @@ async function execute(interaction) {
                     unban: '✅ 解封',
                     mute: '🔇 禁言',
                     warn_role: '⚠️ 警告',
+                    unmute: '🔊 解除禁言',
                 };
 
                 const lines = records.map(r => {

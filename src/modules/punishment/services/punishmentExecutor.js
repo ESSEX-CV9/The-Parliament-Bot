@@ -4,7 +4,7 @@ const {
     getWarnRoleForGuild,
     getSetting,
 } = require('./punishmentDatabase');
-const { syncBan, syncUnban, syncMute, syncWarnRole } = require('./syncService');
+const { syncBan, syncUnban, syncMute, syncWarnRole, syncUnmute } = require('./syncService');
 
 const MAX_TIMEOUT_MS = 28 * 24 * 3600 * 1000; // Discord timeout 上限 28 天
 
@@ -13,6 +13,7 @@ const COLORS = {
     unban: 0x00AA00,
     mute: 0xFF8C00,
     warn_role: 0xFFD700,
+    unmute: 0x00AA00,
 };
 
 const TITLES = {
@@ -20,6 +21,7 @@ const TITLES = {
     unban: '✅ 成员解封公告',
     mute: '🔇 成员禁言公告',
     warn_role: '⚠️ 成员警告公告',
+    unmute: '🔊 解除禁言公告',
 };
 
 const TYPE_LABELS = {
@@ -27,6 +29,7 @@ const TYPE_LABELS = {
     unban: '解除封禁',
     mute: '禁言',
     warn_role: '警告身份组',
+    unmute: '解除禁言',
 };
 
 // ========== 公告 ==========
@@ -287,9 +290,50 @@ async function addWarnRoleToMember(client, guild, targetMember, durationMs, dura
     return true;
 }
 
+// ========== 解除禁言 ==========
+
+async function executeUnmute(client, interaction, { targetMember, reason, sync }) {
+    const guild = interaction.guild;
+
+    try {
+        await targetMember.timeout(null, reason || undefined);
+    } catch (err) {
+        await interaction.editReply(`❌ 解除禁言失败: ${err.message}`);
+        return;
+    }
+
+    insertPunishmentRecord({
+        guildId: guild.id,
+        targetUserId: targetMember.id,
+        executorId: interaction.user.id,
+        type: 'unmute',
+        reason,
+    });
+
+    let syncResults = [];
+    if (sync) {
+        syncResults = await syncUnmute(client, guild.id, targetMember.id, reason);
+    }
+
+    await sendAnnouncement(client, guild.id, {
+        type: 'unmute',
+        targetUserId: targetMember.id,
+        executorId: interaction.user.id,
+        reason,
+        synced: sync,
+    });
+
+    await interaction.editReply(
+        `✅ 已解除用户 <@${targetMember.id}> 的禁言` +
+        (reason ? `\n原因: ${reason}` : '') +
+        formatSyncResults(syncResults)
+    );
+}
+
 module.exports = {
     executeBan,
     executeUnban,
     executeMute,
     executeWarnRole,
+    executeUnmute,
 };

@@ -155,4 +155,41 @@ async function syncWarnRole(client, sourceGuildId, userId, durationMs, reason) {
     return results;
 }
 
-module.exports = { syncBan, syncUnban, syncMute, syncWarnRole };
+/**
+ * 跨服务器同步解除禁言
+ */
+async function syncUnmute(client, sourceGuildId, userId, reason) {
+    const targets = getSyncTargets(sourceGuildId).filter(t => t.sync_mute);
+    const results = [];
+
+    for (const target of targets) {
+        try {
+            const guild = await client.guilds.fetch(target.target_guild_id).catch(() => null);
+            if (!guild) {
+                results.push({ guildId: target.target_guild_id, success: false, error: '无法获取服务器' });
+                continue;
+            }
+            const member = await guild.members.fetch(userId).catch(() => null);
+            if (!member) {
+                results.push({ guildId: target.target_guild_id, success: false, error: '用户不在服务器中' });
+                continue;
+            }
+            await member.timeout(null, `[跨服同步] ${reason || ''}`);
+            insertPunishmentRecord({
+                guildId: target.target_guild_id,
+                targetUserId: userId,
+                executorId: 'SYNC',
+                type: 'unmute',
+                reason: `[跨服同步] ${reason || ''}`,
+            });
+            results.push({ guildId: target.target_guild_id, guildName: guild.name, success: true });
+        } catch (err) {
+            console.error(`[Punishment] 跨服解除禁言失败 target=${target.target_guild_id}:`, err.message);
+            results.push({ guildId: target.target_guild_id, success: false, error: err.message });
+        }
+    }
+
+    return results;
+}
+
+module.exports = { syncBan, syncUnban, syncMute, syncWarnRole, syncUnmute };
