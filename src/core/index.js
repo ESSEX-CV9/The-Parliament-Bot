@@ -163,6 +163,10 @@ const configureRolesCommand = require('../modules/selfRole/commands/configureRol
 // 身份组同步系统命令
 const roleSyncConfigCommand = require('../modules/roleSync/commands/roleSyncConfig');
 
+// 处罚系统
+const { startPunishmentSystem } = require('../modules/punishment');
+const punishCommand = require('../modules/punishment/commands/punish');
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -308,6 +312,9 @@ client.commands.set(clearCooldownCommand.data.name, clearCooldownCommand);
 client.commands.set(configureRolesCommand.data.name, configureRolesCommand);
 client.commands.set(roleSyncConfigCommand.data.name, roleSyncConfigCommand);
 
+// 处罚系统命令
+client.commands.set(punishCommand.data.name, punishCommand);
+
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
     printTimeConfig();
@@ -340,6 +347,9 @@ client.once(Events.ClientReady, async (readyClient) => {
 
     // 启动身份组同步系统
     await startRoleSyncSystem(readyClient);
+
+    // 启动处罚系统
+    await startPunishmentSystem(readyClient);
 
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
