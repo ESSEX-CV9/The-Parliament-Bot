@@ -4,7 +4,9 @@
       "Bash(git checkout:*)",
       "Bash(git remote set-url:*)",
       "Bash(git add:*)",
-      "WebFetch(domain:docs.discord.com)"
+      "WebFetch(domain:docs.discord.com)",
+      "Bash(node -c src/modules/roleSync/dashboard/queries.js)",
+      "Bash(node -c src/modules/roleSync/dashboard/views/i18n.js)"
     ],
     "deny": [],
     "ask": []

@@ -206,7 +206,7 @@ function getGuildList() {
 function getLinkList() {
     const db = getRoleSyncDb();
     return db.prepare(`
-        SELECT sl.link_id, sg.guild_name AS source_guild_name, tg.guild_name AS target_guild_name
+        SELECT sl.link_id, sl.source_guild_id, sl.target_guild_id, sg.guild_name AS source_guild_name, tg.guild_name AS target_guild_name
         FROM sync_links sl
         LEFT JOIN guilds sg ON sl.source_guild_id = sg.guild_id
         LEFT JOIN guilds tg ON sl.target_guild_id = tg.guild_id
@@ -302,6 +302,11 @@ function getRoleSyncMapById(mapId) {
     return db.prepare(`SELECT * FROM role_sync_map WHERE map_id = ?`).get(mapId) || null;
 }
 
+function getDistinctRoleTypes() {
+    const db = getRoleSyncDb();
+    return db.prepare(`SELECT DISTINCT role_type FROM role_sync_map WHERE role_type IS NOT NULL AND role_type != '' ORDER BY role_type`).all().map(r => r.role_type);
+}
+
 module.exports = {
     queryMembers,
     getOverviewStats,
@@ -315,4 +320,5 @@ module.exports = {
     getMemberSyncHistory,
     getMemberRoleMappings,
     getRoleSyncMapById,
+    getDistinctRoleTypes,
 };

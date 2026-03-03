@@ -187,19 +187,18 @@ async function reconcileLinkMember(client, linkId, userId, options = {}) {
         const enqueueResult = enqueueSyncJob(payload);
         if (enqueueResult.enqueued) {
             planned += 1;
+            logRoleChange({
+                linkId: link.link_id,
+                sourceEvent: reason,
+                sourceGuildId: payload.sourceGuildId,
+                targetGuildId: payload.targetGuildId,
+                userId,
+                sourceRoleId: payload.sourceRoleId,
+                targetRoleId: payload.targetRoleId,
+                action,
+                result: 'planned',
+            });
         }
-    }
-
-    if (planned > 0) {
-        logRoleChange({
-            linkId: link.link_id,
-            sourceEvent: reason,
-            sourceGuildId: link.source_guild_id,
-            targetGuildId: link.target_guild_id,
-            userId,
-            result: 'planned',
-            errorMessage: `reconcile planned=${planned}`,
-        });
     }
 
     return {
@@ -261,19 +260,18 @@ async function reconcileLinkMemberWithGuilds(client, link, sourceGuild, targetGu
         const enqueueResult = enqueueSyncJob(payload);
         if (enqueueResult.enqueued) {
             planned += 1;
+            logRoleChange({
+                linkId: link.link_id,
+                sourceEvent: reason,
+                sourceGuildId: payload.sourceGuildId,
+                targetGuildId: payload.targetGuildId,
+                userId,
+                sourceRoleId: payload.sourceRoleId,
+                targetRoleId: payload.targetRoleId,
+                action,
+                result: 'planned',
+            });
         }
-    }
-
-    if (planned > 0) {
-        logRoleChange({
-            linkId: link.link_id,
-            sourceEvent: reason,
-            sourceGuildId: link.source_guild_id,
-            targetGuildId: link.target_guild_id,
-            userId,
-            result: 'planned',
-            errorMessage: `reconcile planned=${planned}`,
-        });
     }
 
     return { userId, skipped: false, planned };

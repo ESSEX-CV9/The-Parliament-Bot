@@ -7,7 +7,7 @@ module.exports = function createRoutes(client) {
     router.use('/', require('./members')(client));
     router.use('/', require('./jobs'));
     router.use('/', require('./logs'));
-    router.use('/', require('./config'));
+    router.use('/', require('./config')(client));
 
     return router;
 };

@@ -141,6 +141,19 @@ const TRANSLATIONS = {
         form_add_title: '新增身份组映射',
         form_edit_title: '编辑身份组映射',
         validation_error: '表单验证失败',
+
+        // Config form - enhanced
+        role_search_placeholder: '搜索身份组...',
+        target_mode_existing: '映射到现有身份组',
+        target_mode_create: '创建新身份组',
+        target_role_name_label: '新身份组名称',
+        target_role_name_placeholder: '留空则使用源身份组名称',
+        role_loading: '加载中...',
+        role_fetch_error: '获取身份组失败',
+        role_no_results: '无匹配结果',
+        create_role_error: '创建身份组失败',
+        target_mode_label: '目标身份组模式',
+        role_type_placeholder: '输入或选择类型...',
     },
     en: {
         // Nav
@@ -284,6 +297,19 @@ const TRANSLATIONS = {
         form_add_title: 'Add Role Mapping',
         form_edit_title: 'Edit Role Mapping',
         validation_error: 'Validation Error',
+
+        // Config form - enhanced
+        role_search_placeholder: 'Search roles...',
+        target_mode_existing: 'Map to existing role',
+        target_mode_create: 'Create new role',
+        target_role_name_label: 'New role name',
+        target_role_name_placeholder: 'Leave empty to copy source role name',
+        role_loading: 'Loading...',
+        role_fetch_error: 'Failed to fetch roles',
+        role_no_results: 'No matching roles',
+        create_role_error: 'Failed to create role',
+        target_mode_label: 'Target role mode',
+        role_type_placeholder: 'Type or select...',
     },
 };
 

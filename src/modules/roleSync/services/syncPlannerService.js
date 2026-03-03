@@ -124,6 +124,17 @@ async function planRoleChangeForMappings({ guildId, userId, roleId, action }) {
 
         if (result.enqueued) {
             enqueuedCount += 1;
+            logRoleChange({
+                linkId: map.link_id,
+                sourceEvent: 'guildMemberUpdate',
+                sourceGuildId,
+                targetGuildId,
+                userId,
+                sourceRoleId,
+                targetRoleId,
+                action,
+                result: 'planned',
+            });
         }
     }
 
@@ -176,15 +187,7 @@ async function handleGuildMemberUpdateForSync(oldMember, newMember) {
         totalEnqueued += result.enqueued;
     }
 
-    if (totalEnqueued > 0) {
-        logRoleChange({
-            sourceEvent: 'guildMemberUpdate',
-            sourceGuildId: newMember.guild.id,
-            userId: newMember.user.id,
-            result: 'planned',
-            errorMessage: `已入队任务数: ${totalEnqueued}`,
-        });
-    }
+    // Individual planned log entries are now recorded per-job in planRoleChangeForMappings
 }
 
 module.exports = {
