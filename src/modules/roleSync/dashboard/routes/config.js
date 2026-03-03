@@ -1,6 +1,17 @@
 const { Router } = require('express');
 const { queryConfig, getLinkList, getRoleSyncMapById, getDistinctRoleTypes } = require('../queries');
-const { upsertRoleSyncMap, removeRoleSyncMap, updateSyncLinkEnabled } = require('../../utils/roleSyncDatabase');
+const {
+    upsertRoleSyncMap,
+    removeRoleSyncMap,
+    updateSyncLinkEnabled,
+    getRoleSnapshot,
+    getRoleSyncMapById: getRoleSyncMapByIdFull,
+    enableRoleSyncMapById,
+    updateRoleSyncMapRoleId,
+    getMembersWithRole,
+    enqueueSyncJob,
+    purgeOrphanMappingData,
+} = require('../../utils/roleSyncDatabase');
 const { layout, escapeHtml } = require('../views/layout');
 const { t, getLang } = require('../views/i18n');
 
@@ -520,9 +531,11 @@ module.exports = function createConfigRoutes(client) {
         function renderRoleName(roleId) {
             const info = roleNameMap.get(roleId);
             if (!info) return `<span class="mono"><small>${escapeHtml(roleId)}</small></span>`;
-            return `<span class="role-name-cell">
-                <span class="role-color-dot" style="background:${escapeHtml(info.color || '#99aab5')}"></span>
-                <span>${escapeHtml(info.name)}</span>
+            return `<span class="role-name-cell" style="flex-direction:column;align-items:flex-start;gap:0.1rem;">
+                <span style="display:flex;align-items:center;gap:0.4rem;">
+                    <span class="role-color-dot" style="background:${escapeHtml(info.color || '#99aab5')}"></span>
+                    <span>${escapeHtml(info.name)}</span>
+                </span>
                 <small class="mono" style="color:var(--pico-muted-color)">${escapeHtml(roleId)}</small>
             </span>`;
         }
@@ -579,9 +592,16 @@ module.exports = function createConfigRoutes(client) {
                     </tr></thead><tbody>`;
 
                 for (const rm of maps) {
-                    html += `<tr>
-                        <td>${renderRoleName(rm.source_role_id)}</td>
-                        <td>${renderRoleName(rm.target_role_id)}</td>
+                    // Check if either role has been deleted (snapshot marked)
+                    const srcSnapshot = getRoleSnapshot(link.source_guild_id, rm.source_role_id);
+                    const tgtSnapshot = getRoleSnapshot(link.target_guild_id, rm.target_role_id);
+                    const srcDeleted = srcSnapshot && srcSnapshot.deleted_at;
+                    const tgtDeleted = tgtSnapshot && tgtSnapshot.deleted_at;
+                    const hasDeletedRole = srcDeleted || tgtDeleted;
+
+                    html += `<tr${hasDeletedRole ? ' style="background:rgba(255,0,0,0.08);"' : ''}>
+                        <td>${renderRoleName(rm.source_role_id)}${srcDeleted ? ` <span class="badge badge-danger">${t(lang, 'badge_role_deleted')}</span>` : ''}</td>
+                        <td>${renderRoleName(rm.target_role_id)}${tgtDeleted ? ` <span class="badge badge-danger">${t(lang, 'badge_role_deleted')}</span>` : ''}</td>
                         <td>${escapeHtml(rm.sync_mode)}</td>
                         <td>${rm.enabled ? `<span class="badge badge-success">${t(lang, 'lbl_yes')}</span>` : `<span class="badge badge-danger">${t(lang, 'lbl_no')}</span>`}</td>
                         <td>${rm.max_delay_seconds}s</td>
@@ -590,17 +610,23 @@ module.exports = function createConfigRoutes(client) {
                         <td>${escapeHtml(rm.copy_permissions_mode)}</td>
                         <td><small>${escapeHtml(rm.note || '-')}</small></td>
                         <td style="white-space:nowrap;">
-                            <form class="inline-form" method="POST" action="/config/map/${rm.map_id}/toggle">
-                                <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">
-                                <input type="hidden" name="lang" value="${escapeHtml(lang)}">
-                                <button type="submit" class="outline ${rm.enabled ? 'secondary' : ''}">${rm.enabled ? t(lang, 'btn_disable') : t(lang, 'btn_enable')}</button>
-                            </form>
-                            <a href="/config/map/${rm.map_id}/edit?lang=${lang}" role="button" class="outline btn-small">${t(lang, 'btn_edit')}</a>
-                            <form class="inline-form" method="POST" action="/config/map/${rm.map_id}/delete" onsubmit="return confirm('${escapeHtml(t(lang, 'confirm_delete'))}')">
-                                <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">
-                                <input type="hidden" name="lang" value="${escapeHtml(lang)}">
-                                <button type="submit" class="outline contrast">${t(lang, 'btn_delete')}</button>
-                            </form>
+                            <div style="display:flex;gap:0.2rem;margin-bottom:${hasDeletedRole ? '0.3rem' : '0'};">
+                                <form class="inline-form" method="POST" action="/config/map/${rm.map_id}/toggle">
+                                    <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">
+                                    <input type="hidden" name="lang" value="${escapeHtml(lang)}">
+                                    <button type="submit" class="outline ${rm.enabled ? 'secondary' : ''}">${rm.enabled ? t(lang, 'btn_disable') : t(lang, 'btn_enable')}</button>
+                                </form>
+                                <a href="/config/map/${rm.map_id}/edit?lang=${lang}" role="button" class="outline btn-small">${t(lang, 'btn_edit')}</a>
+                                <form class="inline-form" method="POST" action="/config/map/${rm.map_id}/delete" onsubmit="return confirm('${escapeHtml(t(lang, 'confirm_delete'))}')">
+                                    <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">
+                                    <input type="hidden" name="lang" value="${escapeHtml(lang)}">
+                                    <button type="submit" class="outline contrast">${t(lang, 'btn_delete')}</button>
+                                </form>
+                            </div>
+                            ${hasDeletedRole ? `<div style="display:flex;gap:0.2rem;">
+                                <a href="/config/recovery/${rm.map_id}?lang=${lang}" role="button" class="outline btn-small" style="border-color:var(--pico-primary);color:var(--pico-primary);">${t(lang, 'btn_recovery')}</a>
+                                <a href="/config/map/${rm.map_id}/purge-confirm?lang=${lang}" role="button" class="outline contrast btn-small">${t(lang, 'btn_purge')}</a>
+                            </div>` : ''}
                         </td>
                     </tr>`;
                 }
@@ -878,6 +904,256 @@ module.exports = function createConfigRoutes(client) {
         });
 
         res.redirect(`/config?lang=${lang}`);
+    });
+
+    // --- Recovery: show recovery page ---
+
+    router.get('/config/recovery/:mapId', (req, res) => {
+        const lang = getLang(req);
+        const mapId = parseInt(req.params.mapId);
+        const map = getRoleSyncMapByIdFull(mapId);
+        if (!map) return res.status(404).send(t(lang, 'recovery_map_not_found'));
+
+        const csrfToken = req.session.user.csrfToken;
+
+        // Determine which role is deleted
+        const srcSnapshot = getRoleSnapshot(map.source_guild_id, map.source_role_id);
+        const tgtSnapshot = getRoleSnapshot(map.target_guild_id, map.target_role_id);
+        const deletedSnapshot = (srcSnapshot && srcSnapshot.deleted_at) ? srcSnapshot : (tgtSnapshot && tgtSnapshot.deleted_at) ? tgtSnapshot : null;
+
+        if (!deletedSnapshot) {
+            return res.status(400).send(t(lang, 'recovery_no_snapshot'));
+        }
+
+        const isSourceDeleted = srcSnapshot && srcSnapshot.deleted_at;
+        const deletedGuildId = isSourceDeleted ? map.source_guild_id : map.target_guild_id;
+        const deletedRoleId = isSourceDeleted ? map.source_role_id : map.target_role_id;
+
+        // Find members who had this role (from source guild snapshot for source deletion, target guild for target deletion)
+        const affectedUserIds = getMembersWithRole(deletedGuildId, deletedRoleId);
+
+        const colorHex = '#' + (deletedSnapshot.role_color || 0).toString(16).padStart(6, '0');
+        const message = req.query.message || '';
+        const messageType = req.query.messageType || '';
+
+        let html = `<h2>${t(lang, 'recovery_title')}</h2>`;
+
+        if (message) {
+            const msgClass = messageType === 'error' ? 'badge-danger' : 'badge-success';
+            html += `<div style="padding:0.75rem;margin-bottom:1rem;border-radius:4px;background:${messageType === 'error' ? 'rgba(255,0,0,0.1)' : 'rgba(0,255,0,0.1)'};">
+                <span class="badge ${msgClass}">${escapeHtml(message)}</span>
+            </div>`;
+        }
+
+        html += `<h4>${t(lang, 'recovery_role_info')}</h4>
+            <table>
+                <tr><td><strong>${t(lang, 'recovery_role_name')}</strong></td><td>${escapeHtml(deletedSnapshot.role_name)}</td></tr>
+                <tr><td><strong>${t(lang, 'recovery_role_color')}</strong></td><td><span class="role-color-dot" style="background:${escapeHtml(colorHex)};display:inline-block;width:16px;height:16px;border-radius:50%;vertical-align:middle;"></span> ${escapeHtml(colorHex)}</td></tr>
+                <tr><td><strong>${t(lang, 'recovery_deleted_at')}</strong></td><td>${escapeHtml(deletedSnapshot.deleted_at)}</td></tr>
+                <tr><td><strong>${t(lang, 'purge_source_label')}</strong></td><td><code>${escapeHtml(map.source_role_id)}</code>${isSourceDeleted ? ` <span class="badge badge-danger">${t(lang, 'badge_role_deleted')}</span>` : ''}</td></tr>
+                <tr><td><strong>${t(lang, 'purge_target_label')}</strong></td><td><code>${escapeHtml(map.target_role_id)}</code>${!isSourceDeleted ? ` <span class="badge badge-danger">${t(lang, 'badge_role_deleted')}</span>` : ''}</td></tr>
+            </table>`;
+
+        html += `<h4>${t(lang, 'recovery_affected_members')}</h4>
+            <p><small>${t(lang, 'recovery_affected_members_desc')}</small></p>`;
+
+        if (affectedUserIds.length > 0) {
+            html += `<p>${affectedUserIds.length} ${lang === 'zh' ? '位成员' : 'members'}</p>`;
+            html += `<div style="max-height:200px;overflow-y:auto;border:1px solid var(--pico-muted-border-color);border-radius:4px;padding:0.5rem;margin-bottom:1rem;">`;
+            html += affectedUserIds.slice(0, 100).map(uid => `<code>${escapeHtml(uid)}</code>`).join(', ');
+            if (affectedUserIds.length > 100) html += ` … ${lang === 'zh' ? `及另外 ${affectedUserIds.length - 100} 位` : `and ${affectedUserIds.length - 100} more`}`;
+            html += `</div>`;
+        } else {
+            html += `<p><em>${t(lang, 'recovery_no_members')}</em></p>`;
+        }
+
+        html += `<p><small>${t(lang, 'recovery_action_desc')}</small></p>`;
+
+        html += `<div style="display:flex;gap:0.5rem;">
+            <form method="POST" action="/config/recovery/${mapId}/execute">
+                <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">
+                <input type="hidden" name="lang" value="${escapeHtml(lang)}">
+                <button type="submit">${t(lang, 'btn_execute_recovery')}</button>
+            </form>
+            <a href="/config?lang=${escapeHtml(lang)}" role="button" class="outline secondary">${t(lang, 'btn_cancel')}</a>
+        </div>`;
+
+        res.send(layout(t(lang, 'recovery_title'), html, req.session.user, lang, req.originalUrl));
+    });
+
+    // --- Recovery: execute ---
+
+    router.post('/config/recovery/:mapId/execute', async (req, res) => {
+        const lang = req.body.lang || 'zh';
+        const mapId = parseInt(req.params.mapId);
+        const map = getRoleSyncMapByIdFull(mapId);
+        if (!map) return res.status(404).send(t(lang, 'recovery_map_not_found'));
+
+        try {
+            const srcSnapshot = getRoleSnapshot(map.source_guild_id, map.source_role_id);
+            const tgtSnapshot = getRoleSnapshot(map.target_guild_id, map.target_role_id);
+            const isSourceDeleted = srcSnapshot && srcSnapshot.deleted_at;
+            const isTargetDeleted = tgtSnapshot && tgtSnapshot.deleted_at;
+            const deletedSnapshot = isSourceDeleted ? srcSnapshot : isTargetDeleted ? tgtSnapshot : null;
+
+            if (!deletedSnapshot) {
+                return res.redirect(`/config/recovery/${mapId}?lang=${lang}&message=${encodeURIComponent(t(lang, 'recovery_no_snapshot'))}&messageType=error`);
+            }
+
+            const deletedGuildId = isSourceDeleted ? map.source_guild_id : map.target_guild_id;
+            const deletedRoleId = isSourceDeleted ? map.source_role_id : map.target_role_id;
+
+            // 1. Check if role exists in Discord, create if not
+            const guild = await client.guilds.fetch(deletedGuildId);
+            let discordRole = await guild.roles.fetch(deletedRoleId).catch(() => null);
+            let newRoleId = deletedRoleId;
+
+            if (!discordRole) {
+                // Create new role with snapshot data
+                const createdRole = await guild.roles.create({
+                    name: deletedSnapshot.role_name,
+                    color: deletedSnapshot.role_color || 0,
+                    reason: '[RoleSync] 恢复被删角色',
+                });
+                newRoleId = createdRole.id;
+                guildRolesCache.delete(deletedGuildId);
+
+                // 2. Update mapping with new role ID
+                if (isSourceDeleted) {
+                    updateRoleSyncMapRoleId(mapId, { sourceRoleId: newRoleId });
+                } else {
+                    updateRoleSyncMapRoleId(mapId, { targetRoleId: newRoleId });
+                }
+            }
+
+            // 3. Re-enable the mapping
+            enableRoleSyncMapById(mapId);
+
+            // 4. Batch enqueue add jobs for affected members
+            // 恢复任务：在被删角色所在的服务器重新分配新角色
+            const affectedUserIds = getMembersWithRole(deletedGuildId, deletedRoleId);
+            const jobTargetGuildId = deletedGuildId;
+            const jobTargetRoleId = newRoleId;
+            const jobSourceRoleId = isSourceDeleted ? map.target_role_id : map.source_role_id;
+
+            let enqueuedCount = 0;
+            for (const userId of affectedUserIds) {
+                const result = enqueueSyncJob({
+                    linkId: map.link_id,
+                    operationId: `recovery_${mapId}_${Date.now()}`,
+                    sourceGuildId: isSourceDeleted ? map.target_guild_id : map.source_guild_id,
+                    targetGuildId: jobTargetGuildId,
+                    userId,
+                    sourceRoleId: jobSourceRoleId,
+                    targetRoleId: jobTargetRoleId,
+                    action: 'add',
+                    lane: 'normal',
+                    priority: 10,
+                    maxAttempts: 3,
+                    notBeforeMs: null,
+                    conflictPolicy: null,
+                    maxDelaySeconds: 120,
+                    sourceEvent: 'recovery',
+                });
+                if (result.enqueued) enqueuedCount++;
+            }
+
+            res.redirect(`/config?lang=${lang}`);
+        } catch (err) {
+            console.error('[RoleSync Config] Recovery failed:', err);
+            const msg = `${t(lang, 'recovery_error')}: ${err.message}`;
+            res.redirect(`/config/recovery/${mapId}?lang=${lang}&message=${encodeURIComponent(msg)}&messageType=error`);
+        }
+    });
+
+    // --- Purge: confirmation page ---
+
+    router.get('/config/map/:mapId/purge-confirm', (req, res) => {
+        const lang = getLang(req);
+        const mapId = parseInt(req.params.mapId);
+        const map = getRoleSyncMapByIdFull(mapId);
+        if (!map) return res.status(404).send(t(lang, 'recovery_map_not_found'));
+
+        const csrfToken = req.session.user.csrfToken;
+
+        // Determine the role name for confirmation
+        const srcSnapshot = getRoleSnapshot(map.source_guild_id, map.source_role_id);
+        const tgtSnapshot = getRoleSnapshot(map.target_guild_id, map.target_role_id);
+        const deletedSnapshot = (srcSnapshot && srcSnapshot.deleted_at) ? srcSnapshot : (tgtSnapshot && tgtSnapshot.deleted_at) ? tgtSnapshot : null;
+        const confirmName = deletedSnapshot ? deletedSnapshot.role_name : (srcSnapshot ? srcSnapshot.role_name : map.source_role_id);
+
+        const message = req.query.message || '';
+
+        let html = `<h2>${t(lang, 'purge_confirm_title')}</h2>`;
+
+        if (message) {
+            html += `<div style="padding:0.75rem;margin-bottom:1rem;border-radius:4px;background:rgba(255,0,0,0.1);">
+                <span class="badge badge-danger">${escapeHtml(message)}</span>
+            </div>`;
+        }
+
+        html += `<div style="padding:1rem;margin-bottom:1rem;border:2px solid var(--pico-del-color);border-radius:4px;background:rgba(255,0,0,0.05);">
+            <strong>⚠️ ${t(lang, 'purge_warning')}</strong>
+        </div>`;
+
+        html += `<h4>${t(lang, 'purge_role_info')}</h4>
+            <table>
+                <tr><td><strong>${t(lang, 'purge_source_label')}</strong></td><td><code>${escapeHtml(map.source_role_id)}</code>${srcSnapshot ? ` (${escapeHtml(srcSnapshot.role_name)})` : ''}</td></tr>
+                <tr><td><strong>${t(lang, 'purge_target_label')}</strong></td><td><code>${escapeHtml(map.target_role_id)}</code>${tgtSnapshot ? ` (${escapeHtml(tgtSnapshot.role_name)})` : ''}</td></tr>
+                <tr><td><strong>Link ID</strong></td><td><code>${escapeHtml(map.link_id)}</code></td></tr>
+            </table>`;
+
+        html += `<form method="POST" action="/config/map/${mapId}/purge" id="purgeForm">
+            <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">
+            <input type="hidden" name="lang" value="${escapeHtml(lang)}">
+            <label>${t(lang, 'purge_input_label', confirmName)}
+                <input type="text" name="confirmName" id="purgeConfirmInput" placeholder="${escapeHtml(t(lang, 'purge_input_placeholder'))}" autocomplete="off" required>
+            </label>
+            <div style="display:flex;gap:0.5rem;">
+                <button type="submit" id="purgeSubmitBtn" disabled style="background:var(--pico-del-color);border-color:var(--pico-del-color);">${t(lang, 'btn_confirm_purge')}</button>
+                <a href="/config?lang=${escapeHtml(lang)}" role="button" class="outline secondary">${t(lang, 'btn_cancel')}</a>
+            </div>
+        </form>
+        <script>
+        (function() {
+            var expected = ${JSON.stringify(confirmName)};
+            var input = document.getElementById('purgeConfirmInput');
+            var btn = document.getElementById('purgeSubmitBtn');
+            input.addEventListener('input', function() {
+                btn.disabled = input.value !== expected;
+            });
+        })();
+        </script>`;
+
+        res.send(layout(t(lang, 'purge_confirm_title'), html, req.session.user, lang, req.originalUrl));
+    });
+
+    // --- Purge: execute ---
+
+    router.post('/config/map/:mapId/purge', (req, res) => {
+        const lang = req.body.lang || 'zh';
+        const mapId = parseInt(req.params.mapId);
+        const map = getRoleSyncMapByIdFull(mapId);
+        if (!map) return res.status(404).send(t(lang, 'recovery_map_not_found'));
+
+        // Verify confirmation name
+        const srcSnapshot = getRoleSnapshot(map.source_guild_id, map.source_role_id);
+        const tgtSnapshot = getRoleSnapshot(map.target_guild_id, map.target_role_id);
+        const deletedSnapshot = (srcSnapshot && srcSnapshot.deleted_at) ? srcSnapshot : (tgtSnapshot && tgtSnapshot.deleted_at) ? tgtSnapshot : null;
+        const expectedName = deletedSnapshot ? deletedSnapshot.role_name : (srcSnapshot ? srcSnapshot.role_name : map.source_role_id);
+
+        if (req.body.confirmName !== expectedName) {
+            return res.redirect(`/config/map/${mapId}/purge-confirm?lang=${lang}&message=${encodeURIComponent(t(lang, 'purge_name_mismatch'))}`);
+        }
+
+        try {
+            const result = purgeOrphanMappingData([mapId]);
+            console.log(`[RoleSync Config] Purged mapping ${mapId}: ${JSON.stringify(result)}`);
+            res.redirect(`/config?lang=${lang}`);
+        } catch (err) {
+            console.error('[RoleSync Config] Purge failed:', err);
+            return res.redirect(`/config/map/${mapId}/purge-confirm?lang=${lang}&message=${encodeURIComponent(t(lang, 'purge_error') + ': ' + err.message)}`);
+        }
     });
 
     return router;

@@ -9,6 +9,50 @@ const {
     extractRolesJson,
 } = require('../utils/roleSyncDatabase');
 
+// ─── 熔断器：检测异常 remove 操作量 ───
+const CB_WINDOW_MS = Number(process.env.ROLE_SYNC_CB_WINDOW_MS) || 10000;
+const CB_THRESHOLD = Number(process.env.ROLE_SYNC_CB_THRESHOLD) || 10;
+const CB_BLOCK_DURATION_MS = Number(process.env.ROLE_SYNC_CB_BLOCK_MS) || 5 * 60 * 1000;
+
+// Map<targetRoleId, { timestamps: number[], trippedAt: number|null }>
+const circuitBreakerState = new Map();
+let _circuitBreakerAlertCallback = null;
+
+function setCircuitBreakerAlertCallback(fn) {
+    _circuitBreakerAlertCallback = fn;
+}
+
+function isCircuitBreakerTripped(targetRoleId) {
+    const state = circuitBreakerState.get(targetRoleId);
+    if (!state || state.trippedAt === null) return false;
+    if (Date.now() - state.trippedAt > CB_BLOCK_DURATION_MS) {
+        circuitBreakerState.delete(targetRoleId);
+        return false;
+    }
+    return true;
+}
+
+function recordCircuitBreakerRemove(targetRoleId) {
+    const now = Date.now();
+    let state = circuitBreakerState.get(targetRoleId);
+    if (!state) {
+        state = { timestamps: [], trippedAt: null };
+        circuitBreakerState.set(targetRoleId, state);
+    }
+    state.timestamps = state.timestamps.filter(t => now - t < CB_WINDOW_MS);
+    state.timestamps.push(now);
+
+    if (state.timestamps.length >= CB_THRESHOLD && state.trippedAt === null) {
+        state.trippedAt = now;
+        return true; // just tripped
+    }
+    return false;
+}
+
+function resetCircuitBreaker(targetRoleId) {
+    circuitBreakerState.delete(targetRoleId);
+}
+
 function getLaneByDelay(maxDelaySeconds) {
     return maxDelaySeconds <= 20 ? 'fast' : 'normal';
 }
@@ -104,6 +148,38 @@ async function planRoleChangeForMappings({ guildId, userId, roleId, action }) {
 
         const maxDelaySeconds = normalizeDelay(map.max_delay_seconds);
 
+        // 熔断器：检测异常 remove 操作量
+        if (action === 'remove') {
+            if (isCircuitBreakerTripped(targetRoleId)) {
+                logRoleChange({
+                    linkId: map.link_id,
+                    sourceEvent: 'circuit_breaker_blocked',
+                    sourceGuildId,
+                    targetGuildId,
+                    userId,
+                    sourceRoleId,
+                    targetRoleId,
+                    action,
+                    result: 'skipped',
+                    errorMessage: 'circuit_breaker_tripped',
+                });
+                continue;
+            }
+            const justTripped = recordCircuitBreakerRemove(targetRoleId);
+            if (justTripped) {
+                console.warn(`[RoleSync] ⚡ 熔断器触发: targetRoleId=${targetRoleId}, ${CB_THRESHOLD} 次 remove 在 ${CB_WINDOW_MS}ms 内`);
+                _circuitBreakerAlertCallback?.({
+                    targetRoleId,
+                    sourceGuildId,
+                    sourceRoleId,
+                    targetGuildId,
+                    linkId: map.link_id,
+                    windowMs: CB_WINDOW_MS,
+                    threshold: CB_THRESHOLD,
+                });
+            }
+        }
+
         const result = enqueueSyncJob({
             linkId: map.link_id,
             operationId: buildOperationId(),
@@ -192,4 +268,6 @@ async function handleGuildMemberUpdateForSync(oldMember, newMember) {
 
 module.exports = {
     handleGuildMemberUpdateForSync,
+    setCircuitBreakerAlertCallback,
+    resetCircuitBreaker,
 };

@@ -26,6 +26,7 @@ const {
     roleSyncGuildMemberAddHandler,
     roleSyncGuildMemberRemoveHandler,
     roleSyncGuildMemberUpdateHandler,
+    roleSyncGuildRoleDeleteHandler,
 } = require('../modules/roleSync');
 
 // 导入命令
@@ -354,5 +355,6 @@ client.on(Events.MessageCreate, messageCreateHandler);
 client.on(Events.GuildMemberAdd, roleSyncGuildMemberAddHandler);
 client.on(Events.GuildMemberRemove, roleSyncGuildMemberRemoveHandler);
 client.on(Events.GuildMemberUpdate, roleSyncGuildMemberUpdateHandler);
+client.on(Events.GuildRoleDelete, roleSyncGuildRoleDeleteHandler);
 
 client.login(process.env.DISCORD_TOKEN);

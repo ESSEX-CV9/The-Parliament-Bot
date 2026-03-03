@@ -10,6 +10,7 @@ const {
     pruneOldChangeLogs,
     getSyncJobCountByStatus,
     getSyncJobCountByLane,
+    upsertRoleSnapshot,
 } = require('../utils/roleSyncDatabase');
 const { ensureMemberExistsInGuild } = require('./eligibilityService');
 const { withRetry, isNetworkError } = require('../utils/networkRetry');
@@ -85,6 +86,9 @@ async function executeJob(client, job) {
         });
         return;
     }
+
+    // 更新角色快照（名称+颜色），用于角色删除后恢复
+    upsertRoleSnapshot(job.target_guild_id, role.id, role.name, role.color || 0);
 
     const hasRole = member.roles.cache.has(job.target_role_id);
 

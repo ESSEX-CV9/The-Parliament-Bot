@@ -205,6 +205,16 @@ function initializeRoleSyncDatabase() {
         );
 
         CREATE INDEX IF NOT EXISTS idx_config_import_jobs_created_at ON config_import_jobs(created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS role_snapshots (
+            guild_id    TEXT NOT NULL,
+            role_id     TEXT NOT NULL,
+            role_name   TEXT NOT NULL,
+            role_color  INTEGER NOT NULL DEFAULT 0,
+            deleted_at  TEXT,
+            updated_at  TEXT NOT NULL,
+            PRIMARY KEY (guild_id, role_id)
+        );
     `);
 
     ensureColumnIfMissing('sync_jobs', 'lane', "TEXT NOT NULL DEFAULT 'normal'");
@@ -1079,6 +1089,177 @@ function getSyncJobCountByLane() {
     return result;
 }
 
+// ─── 角色快照（用于角色删除后恢复） ───
+
+function upsertRoleSnapshot(guildId, roleId, roleName, roleColor) {
+    initializeRoleSyncDatabase();
+    const now = nowIso();
+    const stmt = roleSyncDb.prepare(`
+        INSERT INTO role_snapshots (guild_id, role_id, role_name, role_color, deleted_at, updated_at)
+        VALUES (?, ?, ?, ?, NULL, ?)
+        ON CONFLICT(guild_id, role_id) DO UPDATE SET
+            role_name = excluded.role_name,
+            role_color = excluded.role_color,
+            deleted_at = NULL,
+            updated_at = excluded.updated_at
+    `);
+    stmt.run(guildId, roleId, roleName, roleColor || 0, now);
+}
+
+function markRoleSnapshotDeleted(guildId, roleId) {
+    initializeRoleSyncDatabase();
+    const now = nowIso();
+    const stmt = roleSyncDb.prepare(`
+        UPDATE role_snapshots
+        SET deleted_at = ?, updated_at = ?
+        WHERE guild_id = ? AND role_id = ?
+    `);
+    return stmt.run(now, now, guildId, roleId).changes;
+}
+
+function getRoleSnapshot(guildId, roleId) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        SELECT * FROM role_snapshots WHERE guild_id = ? AND role_id = ? LIMIT 1
+    `);
+    return stmt.get(guildId, roleId) || null;
+}
+
+function getDeletedRoleSnapshots(guildId) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        SELECT * FROM role_snapshots
+        WHERE guild_id = ? AND deleted_at IS NOT NULL
+        ORDER BY deleted_at DESC
+    `);
+    return stmt.all(guildId);
+}
+
+// ─── 角色删除防护 ───
+
+function getMappingsByRoleId(guildId, roleId) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        SELECT
+            m.map_id, m.link_id,
+            m.source_role_id, m.target_role_id,
+            m.enabled, m.sync_mode,
+            l.source_guild_id, l.target_guild_id
+        FROM role_sync_map m
+        JOIN sync_links l ON l.link_id = m.link_id
+        WHERE
+            (l.source_guild_id = ? AND m.source_role_id = ?)
+            OR
+            (l.target_guild_id = ? AND m.target_role_id = ?)
+    `);
+    return stmt.all(guildId, roleId, guildId, roleId);
+}
+
+function disableRoleSyncMapByIds(mapIds) {
+    initializeRoleSyncDatabase();
+    if (!Array.isArray(mapIds) || mapIds.length === 0) return 0;
+    const updateStmt = roleSyncDb.prepare(`
+        UPDATE role_sync_map SET enabled = 0, updated_at = ? WHERE map_id = ?
+    `);
+    const tx = roleSyncDb.transaction((ids) => {
+        const now = nowIso();
+        let changed = 0;
+        for (const id of ids) {
+            changed += updateStmt.run(now, id).changes;
+        }
+        return changed;
+    });
+    return tx(mapIds);
+}
+
+function cancelPendingJobsByTargetRoleId(targetRoleId) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        UPDATE sync_jobs
+        SET status = 'cancelled', last_error = 'target_role_deleted', updated_at = ?
+        WHERE status = 'pending' AND target_role_id = ?
+    `);
+    return stmt.run(nowIso(), targetRoleId).changes;
+}
+
+function cancelPendingJobsBySourceRoleId(sourceRoleId) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        UPDATE sync_jobs
+        SET status = 'cancelled', last_error = 'source_role_deleted', updated_at = ?
+        WHERE status = 'pending' AND source_role_id = ?
+    `);
+    return stmt.run(nowIso(), sourceRoleId).changes;
+}
+
+// ─── 恢复与清理 ───
+
+function getRoleSyncMapById(mapId) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        SELECT m.*, l.source_guild_id, l.target_guild_id
+        FROM role_sync_map m
+        JOIN sync_links l ON l.link_id = m.link_id
+        WHERE m.map_id = ?
+        LIMIT 1
+    `);
+    return stmt.get(mapId) || null;
+}
+
+function updateRoleSyncMapRoleId(mapId, { sourceRoleId, targetRoleId }) {
+    initializeRoleSyncDatabase();
+    const now = nowIso();
+    if (sourceRoleId) {
+        roleSyncDb.prepare(`UPDATE role_sync_map SET source_role_id = ?, updated_at = ? WHERE map_id = ?`).run(sourceRoleId, now, mapId);
+    }
+    if (targetRoleId) {
+        roleSyncDb.prepare(`UPDATE role_sync_map SET target_role_id = ?, updated_at = ? WHERE map_id = ?`).run(targetRoleId, now, mapId);
+    }
+}
+
+function enableRoleSyncMapById(mapId) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`UPDATE role_sync_map SET enabled = 1, updated_at = ? WHERE map_id = ?`);
+    return stmt.run(nowIso(), mapId).changes;
+}
+
+function getMembersWithRole(guildId, roleId) {
+    initializeRoleSyncDatabase();
+    const stmt = roleSyncDb.prepare(`
+        SELECT user_id, roles_json
+        FROM guild_members
+        WHERE guild_id = ? AND is_active = 1 AND roles_json IS NOT NULL
+    `);
+    const rows = stmt.all(guildId);
+    return rows.filter(row => {
+        const roles = safeJsonParse(row.roles_json, []);
+        return Array.isArray(roles) && roles.includes(roleId);
+    }).map(row => row.user_id);
+}
+
+function purgeOrphanMappingData(mapIds) {
+    initializeRoleSyncDatabase();
+    if (!Array.isArray(mapIds) || mapIds.length === 0) return { mappings: 0, logs: 0, snapshots: 0 };
+
+    const tx = roleSyncDb.transaction((ids) => {
+        let mappings = 0;
+        let logs = 0;
+        const delMapStmt = roleSyncDb.prepare('DELETE FROM role_sync_map WHERE map_id = ?');
+        const selMapStmt = roleSyncDb.prepare('SELECT source_role_id, target_role_id, link_id FROM role_sync_map WHERE map_id = ?');
+        const delLogStmt = roleSyncDb.prepare('DELETE FROM role_change_log WHERE link_id = ? AND (source_role_id = ? OR target_role_id = ?)');
+
+        for (const id of ids) {
+            const map = selMapStmt.get(id);
+            if (map) {
+                logs += delLogStmt.run(map.link_id, map.source_role_id, map.target_role_id).changes;
+            }
+            mappings += delMapStmt.run(id).changes;
+        }
+        return { mappings, logs, snapshots: 0 };
+    });
+    return tx(mapIds);
+}
+
 module.exports = {
     getRoleSyncDb,
     initializeRoleSyncDatabase,
@@ -1124,4 +1305,20 @@ module.exports = {
     pruneOldChangeLogs,
     getSyncJobCountByStatus,
     getSyncJobCountByLane,
+    // 角色快照
+    upsertRoleSnapshot,
+    markRoleSnapshotDeleted,
+    getRoleSnapshot,
+    getDeletedRoleSnapshots,
+    // 角色删除防护
+    getMappingsByRoleId,
+    disableRoleSyncMapByIds,
+    cancelPendingJobsByTargetRoleId,
+    cancelPendingJobsBySourceRoleId,
+    // 恢复与清理
+    getRoleSyncMapById,
+    updateRoleSyncMapRoleId,
+    enableRoleSyncMapById,
+    getMembersWithRole,
+    purgeOrphanMappingData,
 };
