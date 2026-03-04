@@ -7,6 +7,7 @@ const {
     getConfigsByMainGuild,
     setSubInviteChannel,
     setLogChannel,
+    setEntryMessage,
     setInviteMaxAge,
     setCooldownSeconds,
     setEnabled,
@@ -195,6 +196,71 @@ async function checkBotPermissions(client, guildId) {
     } catch (err) {
         return { ok: false, error: `权限检查失败: ${err.message}` };
     }
+}
+
+/**
+ * 执行“我的状态”逻辑（供子命令和独立命令复用）
+ */
+async function executeMyStatus(interaction) {
+    const client = interaction.client;
+    const mainGuildId = interaction.guild.id;
+    const userId = interaction.user.id;
+    const configs = getConfigsByMainGuild(mainGuildId);
+
+    if (configs.length === 0) {
+        await interaction.editReply('当前主服没有绑定任何分服');
+        return;
+    }
+
+    const lines = [];
+
+    // 黑名单状态
+    const blacklistEntries = getBlacklistEntries(mainGuildId, userId);
+    if (blacklistEntries.length > 0) {
+        lines.push('🚫 **黑名单状态**: 已被拉黑');
+        for (const e of blacklistEntries) {
+            const scope = e.sub_guild_id ? `分服 \`${e.sub_guild_id}\`` : '全局';
+            lines.push(`  - ${scope}${e.reason ? `: ${e.reason}` : ''}`);
+        }
+    } else {
+        lines.push('✅ **黑名单状态**: 正常');
+    }
+
+    // 每个分服的冷却和活跃码
+    for (const config of configs) {
+        const subGuild = await client.guilds.fetch(config.sub_guild_id).catch(() => null);
+        const subName = subGuild ? subGuild.name : config.sub_guild_id;
+        lines.push(`\n**📌 分服: ${subName}**`);
+
+        // 冷却
+        const cooldownInfo = isOnCooldown(mainGuildId, config.sub_guild_id, userId);
+        if (cooldownInfo.onCooldown) {
+            const cdTs = Math.floor(new Date(cooldownInfo.nextAvailableAt).getTime() / 1000);
+            lines.push(`  ⏳ 冷却中，可用时间: <t:${cdTs}:R>`);
+        } else {
+            lines.push('  ✅ 无冷却');
+        }
+
+        // 活跃邀请码
+        const activeRequests = getActiveRequestsByOwnerAnySubGuild(mainGuildId, userId)
+            .filter(r => r.sub_guild_id === config.sub_guild_id);
+        if (activeRequests.length > 0) {
+            for (const r of activeRequests) {
+                const expiresTs = Math.floor(new Date(r.expires_at).getTime() / 1000);
+                lines.push(`  🔗 邀请码: \`${r.invite_code}\` | 过期: <t:${expiresTs}:R>`);
+            }
+        } else {
+            lines.push('  📭 无活跃邀请码');
+        }
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle('📊 我的受控邀请状态')
+        .setDescription(lines.join('\n'))
+        .setColor(0x5865F2)
+        .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
 }
 
 // ========== 命令执行 ==========
@@ -612,63 +678,7 @@ async function execute(interaction) {
 
             // ===== 我的状态 =====
             case '我的状态': {
-                const userId = interaction.user.id;
-                const configs = getConfigsByMainGuild(mainGuildId);
-
-                if (configs.length === 0) {
-                    await interaction.editReply('当前主服没有绑定任何分服');
-                    return;
-                }
-
-                const lines = [];
-
-                // 黑名单状态
-                const blacklistEntries = getBlacklistEntries(mainGuildId, userId);
-                if (blacklistEntries.length > 0) {
-                    lines.push('🚫 **黑名单状态**: 已被拉黑');
-                    for (const e of blacklistEntries) {
-                        const scope = e.sub_guild_id ? `分服 \`${e.sub_guild_id}\`` : '全局';
-                        lines.push(`  - ${scope}${e.reason ? `: ${e.reason}` : ''}`);
-                    }
-                } else {
-                    lines.push('✅ **黑名单状态**: 正常');
-                }
-
-                // 每个分服的冷却和活跃码
-                for (const config of configs) {
-                    const subGuild = await client.guilds.fetch(config.sub_guild_id).catch(() => null);
-                    const subName = subGuild ? subGuild.name : config.sub_guild_id;
-                    lines.push(`\n**📌 分服: ${subName}**`);
-
-                    // 冷却
-                    const cooldownInfo = isOnCooldown(mainGuildId, config.sub_guild_id, userId);
-                    if (cooldownInfo.onCooldown) {
-                        const cdTs = Math.floor(new Date(cooldownInfo.nextAvailableAt).getTime() / 1000);
-                        lines.push(`  ⏳ 冷却中，可用时间: <t:${cdTs}:R>`);
-                    } else {
-                        lines.push('  ✅ 无冷却');
-                    }
-
-                    // 活跃邀请码
-                    const activeRequests = getActiveRequestsByOwnerAnySubGuild(mainGuildId, userId)
-                        .filter(r => r.sub_guild_id === config.sub_guild_id);
-                    if (activeRequests.length > 0) {
-                        for (const r of activeRequests) {
-                            const expiresTs = Math.floor(new Date(r.expires_at).getTime() / 1000);
-                            lines.push(`  🔗 邀请码: \`${r.invite_code}\` | 过期: <t:${expiresTs}:R>`);
-                        }
-                    } else {
-                        lines.push('  📭 无活跃邀请码');
-                    }
-                }
-
-                const embed = new EmbedBuilder()
-                    .setTitle('📊 我的受控邀请状态')
-                    .setDescription(lines.join('\n'))
-                    .setColor(0x5865F2)
-                    .setTimestamp();
-
-                await interaction.editReply({ embeds: [embed] });
+                await executeMyStatus(interaction);
                 break;
             }
         }
@@ -706,4 +716,4 @@ async function tryUpdateEntryMessage(client, mainGuildId) {
     }
 }
 
-module.exports = { data, execute, tryUpdateEntryMessage };
+module.exports = { data, execute, tryUpdateEntryMessage, executeMyStatus };

@@ -154,17 +154,75 @@ async function handleInviteRequest(interaction) {
 }
 
 /**
+ * 根据日志内容判断重要程度颜色
+ */
+function resolveLogColor(message) {
+    if (!message) return 0x5865F2; // 默认蓝色
+
+    // 高危/错误
+    if (
+        message.includes('🔴') ||
+        message.includes('❌') ||
+        message.includes('封禁') ||
+        message.includes('拉黑') ||
+        message.includes('异常') ||
+        message.includes('非法')
+    ) {
+        return 0xED4245;
+    }
+
+    // 警告
+    if (
+        message.includes('⚠️') ||
+        message.includes('🟡') ||
+        message.includes('疑似') ||
+        message.includes('踢出')
+    ) {
+        return 0xFEE75C;
+    }
+
+    // 成功
+    if (message.includes('✅')) {
+        return 0x57F287;
+    }
+
+    // 信息
+    return 0x5865F2;
+}
+
+/**
  * 发送日志到配置的日志频道
  */
 async function sendLog(client, config, message) {
     if (!config.log_channel_id) return;
+
     try {
         const channel = await client.channels.fetch(config.log_channel_id).catch(() => null);
         if (channel) {
-            await channel.send(message);
+            const lines = String(message || '').split('\n');
+            const firstLine = lines[0] || '受控邀请日志';
+            const detail = lines.slice(1).join('\n').trim();
+
+            const title = firstLine.replace(/\*\*/g, '').trim() || '受控邀请日志';
+            const embed = new EmbedBuilder()
+                .setTitle(title)
+                .setDescription(detail || '（无详细内容）')
+                .setColor(resolveLogColor(message))
+                .setFooter({ text: `主服 ${config.main_guild_id} · 分服 ${config.sub_guild_id}` })
+                .setTimestamp();
+
+            await channel.send({ embeds: [embed] });
         }
     } catch (err) {
         console.error('[ControlledInvite] 发送日志失败:', err);
+
+        // 尝试降级为纯文本，避免日志完全丢失
+        try {
+            const channel = await client.channels.fetch(config.log_channel_id).catch(() => null);
+            if (channel) {
+                await channel.send(`【受控邀请日志发送失败，降级文本】\n${message}`);
+            }
+        } catch (_) {}
     }
 }
 
