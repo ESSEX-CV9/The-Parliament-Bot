@@ -188,6 +188,41 @@
 /分服受控邀请 刷新入口
 ```
 
+### Q5：高峰期有人提示“系统繁忙，请稍后重试”
+这是过载保护在生效，避免大量并发把交互拖到超时。
+
+可按需在 `.env` 调整：
+- `CI_OVERLOAD_GLOBAL_MAX_INFLIGHT`（全局并发上限，默认 120）
+- `CI_OVERLOAD_SUB_MAX_INFLIGHT`（单分服并发上限，默认 30）
+
+### Q6：为什么点两次按钮只处理一次？
+这是幂等保护在生效（防连点），避免重复创建邀请码。
+
+可按需在 `.env` 调整：
+- `CI_IDEMPOTENT_LOCK_TTL_MS`（默认 8000 毫秒）
+
+### Q7：创建邀请码失败后会自动重试吗？
+会。对于 429 / 5xx / 网络抖动，系统会做短退避重试。
+
+可按需在 `.env` 调整：
+- `CI_INVITE_CREATE_RETRY_MAX_ATTEMPTS`
+- `CI_INVITE_CREATE_RETRY_BASE_DELAY_MS`
+
+### Q8：日志会不会拖慢申请速度？
+不会。日志现在走**异步低优先级队列**，主流程不会等待日志发送完成。
+
+可按需在 `.env` 调整：
+- `CI_LOG_QUEUE_MAX_PENDING`（日志队列最大积压）
+- `CI_LOG_QUEUE_WARN_THRESHOLD`（日志队列告警阈值）
+
+### Q9：怎么知道系统是不是又接近“API墙”？
+系统会按周期输出指标（QPS、成功率、P95延迟、429、UnknownInteraction、队列积压等），超过阈值会触发告警。
+
+可按需在 `.env` 调整：
+- `CI_METRICS_REPORT_INTERVAL_MS`
+- `CI_ALERT_*` 系列阈值
+- `CI_METRICS_ALERT_CHANNEL_ID`（可选，填了会推送到 Discord 频道）
+
 ---
 
 ## 10. 给管理员的实用建议

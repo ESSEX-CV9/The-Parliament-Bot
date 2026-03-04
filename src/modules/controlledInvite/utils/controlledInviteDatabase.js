@@ -92,6 +92,16 @@ function initializeControlledInviteDatabase() {
             expires_at          TEXT,
             PRIMARY KEY (main_guild_id, user_id, sub_guild_id)
         );
+
+        -- 邀请请求预占位（并发一致性）
+        CREATE TABLE IF NOT EXISTS ci_request_reservations (
+            main_guild_id       TEXT NOT NULL,
+            sub_guild_id        TEXT NOT NULL,
+            user_id             TEXT NOT NULL,
+            reserved_at         TEXT NOT NULL,
+            expires_at          TEXT NOT NULL,
+            PRIMARY KEY (main_guild_id, sub_guild_id, user_id)
+        );
     `);
 
     // ========== ci_configs ==========
@@ -270,6 +280,41 @@ function initializeControlledInviteDatabase() {
         ORDER BY created_at DESC
     `);
 
+    // ========== ci_request_reservations ==========
+    stmts.clearExpiredReservations = db.prepare(`
+        DELETE FROM ci_request_reservations WHERE expires_at <= ?
+    `);
+    stmts.insertReservation = db.prepare(`
+        INSERT OR IGNORE INTO ci_request_reservations (main_guild_id, sub_guild_id, user_id, reserved_at, expires_at)
+        VALUES (@mainGuildId, @subGuildId, @userId, @reservedAt, @expiresAt)
+    `);
+    stmts.releaseReservation = db.prepare(`
+        DELETE FROM ci_request_reservations WHERE main_guild_id = ? AND sub_guild_id = ? AND user_id = ?
+    `);
+
+    stmts.reserveInviteRequestSlotTx = db.transaction(({ mainGuildId, subGuildId, userId, reservedAt, expiresAt, now }) => {
+        stmts.clearExpiredReservations.run(now);
+
+        const existingRequest = stmts.getActiveRequestByOwner.get(mainGuildId, subGuildId, userId) || null;
+        if (existingRequest) {
+            return {
+                ok: false,
+                reason: 'existing_active',
+                existingRequest,
+            };
+        }
+
+        const insertResult = stmts.insertReservation.run({ mainGuildId, subGuildId, userId, reservedAt, expiresAt });
+        if (insertResult.changes === 0) {
+            return {
+                ok: false,
+                reason: 'already_reserved',
+            };
+        }
+
+        return { ok: true };
+    });
+
     initialized = true;
     console.log('[ControlledInvite] 数据库初始化完成');
 }
@@ -357,6 +402,29 @@ function createInviteRequest({ mainGuildId, subGuildId, ownerUserId, inviteCode,
     return stmts.insertRequest.run({
         mainGuildId, subGuildId, ownerUserId, inviteCode, inviteUrl, createdAt: now, expiresAt,
     });
+}
+
+function tryReserveInviteRequestSlot(mainGuildId, subGuildId, userId, reservationTtlSeconds = 45) {
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
+    const expiresAt = new Date(nowMs + reservationTtlSeconds * 1000).toISOString();
+
+    return stmts.reserveInviteRequestSlotTx({
+        mainGuildId,
+        subGuildId,
+        userId,
+        reservedAt: now,
+        expiresAt,
+        now,
+    });
+}
+
+function releaseInviteRequestSlot(mainGuildId, subGuildId, userId) {
+    return stmts.releaseReservation.run(mainGuildId, subGuildId, userId);
+}
+
+function clearExpiredInviteRequestReservations() {
+    return stmts.clearExpiredReservations.run(nowIso());
 }
 
 function getActiveRequestByOwner(mainGuildId, subGuildId, ownerUserId) {
@@ -499,6 +567,9 @@ module.exports = {
 
     // Invite Requests
     createInviteRequest,
+    tryReserveInviteRequestSlot,
+    releaseInviteRequestSlot,
+    clearExpiredInviteRequestReservations,
     getActiveRequestByOwner,
     getActiveRequestByCode,
     getActiveRequestsByOwnerAnySubGuild,

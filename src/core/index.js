@@ -170,6 +170,7 @@ const punishCommand = require('../modules/punishment/commands/punish');
 // 分服受控邀请系统
 const { startControlledInviteSystem, controlledInviteGuildMemberAddHandler } = require('../modules/controlledInvite');
 const controlledInviteConfigCommand = require('../modules/controlledInvite/commands/controlledInviteConfig');
+const controlledInviteParamsCommand = require('../modules/controlledInvite/commands/controlledInviteParams');
 const viewMyControlledInviteStatusCommand = require('../modules/controlledInvite/commands/viewMyControlledInviteStatus');
 
 const client = new Client({
@@ -322,6 +323,7 @@ client.commands.set(punishCommand.data.name, punishCommand);
 
 // 分服受控邀请系统命令
 client.commands.set(controlledInviteConfigCommand.data.name, controlledInviteConfigCommand);
+client.commands.set(controlledInviteParamsCommand.data.name, controlledInviteParamsCommand);
 client.commands.set(viewMyControlledInviteStatusCommand.data.name, viewMyControlledInviteStatusCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
