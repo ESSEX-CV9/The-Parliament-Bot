@@ -70,6 +70,15 @@ const data = new SlashCommandBuilder()
                 { name: 'alertLogQueuePendingThreshold — 日志队列告警', value: 'alertLogQueuePendingThreshold' },
             )
         )
+    )
+    .addSubcommand(sub => sub
+        .setName('设置告警频道')
+        .setDescription('设置或清除指标告警推送频道')
+        .addChannelOption(opt => opt
+            .setName('频道')
+            .setDescription('告警推送目标频道（不填则清除）')
+            .setRequired(false)
+        )
     );
 
 // ========== 命令执行 ==========
@@ -176,6 +185,29 @@ async function execute(interaction) {
                     .setTimestamp();
 
                 await interaction.editReply({ embeds: [embed] });
+                break;
+            }
+
+            case '设置告警频道': {
+                const channel = interaction.options.getChannel('频道');
+
+                if (channel) {
+                    runtimeConfig.set('metricsAlertChannelId', channel.id);
+                    const embed = new EmbedBuilder()
+                        .setTitle('✅ 告警频道已设置')
+                        .setDescription(`告警将推送到: <#${channel.id}>`)
+                        .setColor(0x57F287)
+                        .setTimestamp();
+                    await interaction.editReply({ embeds: [embed] });
+                } else {
+                    runtimeConfig.reset('metricsAlertChannelId');
+                    const embed = new EmbedBuilder()
+                        .setTitle('🗑️ 告警频道已清除')
+                        .setDescription('告警将仅输出到控制台')
+                        .setColor(0xFEE75C)
+                        .setTimestamp();
+                    await interaction.editReply({ embeds: [embed] });
+                }
                 break;
             }
         }

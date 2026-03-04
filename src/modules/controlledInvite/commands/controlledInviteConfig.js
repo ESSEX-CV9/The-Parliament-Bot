@@ -295,8 +295,15 @@ async function execute(interaction) {
                     return;
                 }
 
+                // 检查是否已有（被禁用的）配置
+                const existingConfig = getConfig(mainId, subId);
                 bindGuilds(mainId, subId);
-                await interaction.editReply(`✅ 已绑定主服 \`${mainId}\` ↔ 分服 \`${subId}\`（${permCheck.guild.name}）\n⚠️ 请继续设置邀请码频道和资格角色`);
+
+                if (existingConfig) {
+                    await interaction.editReply(`✅ 已重新启用主服 \`${mainId}\` ↔ 分服 \`${subId}\`（${permCheck.guild.name}）\n📋 之前的配置已恢复`);
+                } else {
+                    await interaction.editReply(`✅ 已绑定主服 \`${mainId}\` ↔ 分服 \`${subId}\`（${permCheck.guild.name}）\n⚠️ 请继续设置邀请码频道和资格角色`);
+                }
                 break;
             }
 
@@ -305,7 +312,7 @@ async function execute(interaction) {
                 const subId = interaction.options.getString('分服务器id');
                 const result = unbindGuilds(mainGuildId, subId);
                 if (result.changes > 0) {
-                    await interaction.editReply(`✅ 已解除分服 \`${subId}\` 的绑定`);
+                    await interaction.editReply(`✅ 已禁用分服 \`${subId}\` 的受控邀请（配置数据已保留，重新绑定可恢复）`);
                 } else {
                     await interaction.editReply(`❌ 未找到分服 \`${subId}\` 的绑定记录`);
                 }

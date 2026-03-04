@@ -106,9 +106,9 @@ function initializeControlledInviteDatabase() {
 
     // ========== ci_configs ==========
     stmts.upsertConfig = db.prepare(`
-        INSERT INTO ci_configs (main_guild_id, sub_guild_id, updated_at)
-        VALUES (@mainGuildId, @subGuildId, @updatedAt)
-        ON CONFLICT(main_guild_id, sub_guild_id) DO UPDATE SET updated_at = @updatedAt
+        INSERT INTO ci_configs (main_guild_id, sub_guild_id, enabled, updated_at)
+        VALUES (@mainGuildId, @subGuildId, 1, @updatedAt)
+        ON CONFLICT(main_guild_id, sub_guild_id) DO UPDATE SET enabled = 1, updated_at = @updatedAt
     `);
     stmts.getConfig = db.prepare(`
         SELECT * FROM ci_configs WHERE main_guild_id = ? AND sub_guild_id = ?
@@ -123,7 +123,7 @@ function initializeControlledInviteDatabase() {
         SELECT * FROM ci_configs
     `);
     stmts.deleteConfig = db.prepare(`
-        DELETE FROM ci_configs WHERE main_guild_id = ? AND sub_guild_id = ?
+        UPDATE ci_configs SET enabled = 0, updated_at = ? WHERE main_guild_id = ? AND sub_guild_id = ?
     `);
     stmts.updateConfigField = db.prepare(`
         UPDATE ci_configs SET updated_at = @updatedAt
@@ -326,7 +326,7 @@ function bindGuilds(mainGuildId, subGuildId) {
 }
 
 function unbindGuilds(mainGuildId, subGuildId) {
-    return stmts.deleteConfig.run(mainGuildId, subGuildId);
+    return stmts.deleteConfig.run(nowIso(), mainGuildId, subGuildId);
 }
 
 function getConfig(mainGuildId, subGuildId) {

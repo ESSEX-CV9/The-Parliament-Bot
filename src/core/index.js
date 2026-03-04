@@ -88,21 +88,10 @@ const setExternalSubmissionOptInCommand = require('../modules/contest/commands/s
 const viewSubmissionsCommand = require('../modules/contest/commands/viewSubmissions');
 const viewSubmissionsContextCommand = require('../modules/contest/commands/viewSubmissionsContext');
 
-// 自动清理系统命令
-const addBannedKeywordCommand = require('../modules/autoCleanup/commands/addBannedKeyword');
-const removeBannedKeywordCommand = require('../modules/autoCleanup/commands/removeBannedKeyword');
-const listBannedKeywordsCommand = require('../modules/autoCleanup/commands/listBannedKeywords');
-const setCleanupChannelsCommand = require('../modules/autoCleanup/commands/setCleanupChannels');
-const cleanupHistoryCommand = require('../modules/autoCleanup/commands/cleanupHistory');
-const cleanupFullServerCommand = require('../modules/autoCleanup/commands/cleanupFullServer');
-const stopCleanupTaskCommand = require('../modules/autoCleanup/commands/stopCleanupTask');
-const cleanupStatusCommand = require('../modules/autoCleanup/commands/cleanupStatus');
-const toggleAutoCleanupCommand = require('../modules/autoCleanup/commands/toggleAutoCleanup');
-// 豁免频道命令
-const addExemptChannelCommand = require('../modules/autoCleanup/commands/addExemptChannel');
-const removeExemptChannelCommand = require('../modules/autoCleanup/commands/removeExemptChannel');
-const listExemptChannelsCommand = require('../modules/autoCleanup/commands/listExemptChannels');
-const cleanupSelectedChannelsCommand = require('../modules/autoCleanup/commands/cleanupSelectedChannels');
+// 自动清理系统命令（合并后）
+const keywordManagerCommand = require('../modules/autoCleanup/commands/keywordManager');
+const exemptManagerCommand = require('../modules/autoCleanup/commands/exemptManager');
+const cleanupManagerCommand = require('../modules/autoCleanup/commands/cleanupManager');
 
 // 频道总结系统命令
 const summarizeChannelCommand = require('../modules/channelSummary/commands/summarizeChannel');
@@ -171,6 +160,7 @@ const punishCommand = require('../modules/punishment/commands/punish');
 const { startControlledInviteSystem, controlledInviteGuildMemberAddHandler } = require('../modules/controlledInvite');
 const controlledInviteConfigCommand = require('../modules/controlledInvite/commands/controlledInviteConfig');
 const controlledInviteParamsCommand = require('../modules/controlledInvite/commands/controlledInviteParams');
+const controlledInviteToggleCommand = require('../modules/controlledInvite/commands/controlledInviteToggle');
 const viewMyControlledInviteStatusCommand = require('../modules/controlledInvite/commands/viewMyControlledInviteStatus');
 
 const client = new Client({
@@ -247,21 +237,10 @@ client.commands.set(setExternalSubmissionOptInCommand.data.name, setExternalSubm
 client.commands.set(viewSubmissionsCommand.data.name, viewSubmissionsCommand);
 client.commands.set(viewSubmissionsContextCommand.data.name, viewSubmissionsContextCommand);
 
-// 自动清理系统命令
-client.commands.set(addBannedKeywordCommand.data.name, addBannedKeywordCommand);
-client.commands.set(removeBannedKeywordCommand.data.name, removeBannedKeywordCommand);
-client.commands.set(listBannedKeywordsCommand.data.name, listBannedKeywordsCommand);
-client.commands.set(setCleanupChannelsCommand.data.name, setCleanupChannelsCommand);
-client.commands.set(cleanupHistoryCommand.data.name, cleanupHistoryCommand);
-client.commands.set(cleanupFullServerCommand.data.name, cleanupFullServerCommand);
-client.commands.set(stopCleanupTaskCommand.data.name, stopCleanupTaskCommand);
-client.commands.set(cleanupStatusCommand.data.name, cleanupStatusCommand);
-client.commands.set(toggleAutoCleanupCommand.data.name, toggleAutoCleanupCommand);
-// 豁免频道命令
-client.commands.set(addExemptChannelCommand.data.name, addExemptChannelCommand);
-client.commands.set(removeExemptChannelCommand.data.name, removeExemptChannelCommand);
-client.commands.set(listExemptChannelsCommand.data.name, listExemptChannelsCommand);
-client.commands.set(cleanupSelectedChannelsCommand.data.name, cleanupSelectedChannelsCommand);
+// 自动清理系统命令（合并后）
+client.commands.set(keywordManagerCommand.data.name, keywordManagerCommand);
+client.commands.set(exemptManagerCommand.data.name, exemptManagerCommand);
+client.commands.set(cleanupManagerCommand.data.name, cleanupManagerCommand);
 
 // 论坛重建系统命令
 client.commands.set(rebuildForumCommand.data.name, rebuildForumCommand);
@@ -324,6 +303,7 @@ client.commands.set(punishCommand.data.name, punishCommand);
 // 分服受控邀请系统命令
 client.commands.set(controlledInviteConfigCommand.data.name, controlledInviteConfigCommand);
 client.commands.set(controlledInviteParamsCommand.data.name, controlledInviteParamsCommand);
+client.commands.set(controlledInviteToggleCommand.data.name, controlledInviteToggleCommand);
 client.commands.set(viewMyControlledInviteStatusCommand.data.name, viewMyControlledInviteStatusCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {

@@ -107,11 +107,19 @@ const PARAM_DEFINITIONS = {
         label: '日志队列积压告警阈值',
         group: '告警阈值',
     },
+
+    // 告警频道
+    metricsAlertChannelId: {
+        defaultValue: '',
+        label: '告警推送频道 ID',
+        group: '告警频道',
+        type: 'string',
+    },
 };
 
 // ==================== 内存缓存 ====================
 
-/** @type {Map<string, number>} */
+/** @type {Map<string, number|string>} */
 const cache = new Map();
 
 // ==================== DB 操作 ====================
@@ -152,7 +160,12 @@ function loadAll() {
 
     const rows = stmts.all.all();
     for (const row of rows) {
-        if (PARAM_DEFINITIONS[row.key]) {
+        const def = PARAM_DEFINITIONS[row.key];
+        if (!def) continue;
+
+        if (def.type === 'string') {
+            cache.set(row.key, row.value);
+        } else {
             const parsed = Number(row.value);
             if (Number.isFinite(parsed) && parsed > 0) {
                 cache.set(row.key, parsed);
@@ -189,6 +202,18 @@ function set(key, value) {
     if (!PARAM_DEFINITIONS[key]) {
         return { ok: false, error: `未知参数: ${key}` };
     }
+
+    const def = PARAM_DEFINITIONS[key];
+
+    if (def.type === 'string') {
+        // 字符串类型：直接存储
+        ensureTable();
+        stmts.upsert.run(key, String(value), new Date().toISOString());
+        cache.set(key, String(value));
+        return { ok: true };
+    }
+
+    // 数字类型：验证正整数
     const num = Number(value);
     if (!Number.isFinite(num) || num <= 0 || !Number.isInteger(num)) {
         return { ok: false, error: `值必须为正整数，收到: ${value}` };

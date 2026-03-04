@@ -1,8 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const runtimeConfig = require('../utils/runtimeConfig');
 
-const METRICS_ALERT_CHANNEL_ID = process.env.CI_METRICS_ALERT_CHANNEL_ID || '';
-
 let reportInterval = null;
 let runtimeSnapshotProvider = null;
 let currentWindow = createWindow();
@@ -109,10 +107,11 @@ function recordLogQueueEvent(type) {
 }
 
 async function sendAlertEmbed(client, alerts, summaryLines) {
-    if (!METRICS_ALERT_CHANNEL_ID) return;
+    const alertChannelId = runtimeConfig.get('metricsAlertChannelId');
+    if (!alertChannelId) return;
 
     try {
-        const channel = await client.channels.fetch(METRICS_ALERT_CHANNEL_ID).catch(() => null);
+        const channel = await client.channels.fetch(alertChannelId).catch(() => null);
         if (!channel) return;
 
         const embed = new EmbedBuilder()
