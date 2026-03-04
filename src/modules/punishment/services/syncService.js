@@ -175,6 +175,16 @@ async function syncUnmute(client, sourceGuildId, userId, reason) {
                 continue;
             }
             await member.timeout(null, `[跨服同步] ${reason || ''}`);
+
+            const warnRoleId = getWarnRoleForGuild(target.target_guild_id);
+            if (warnRoleId && member.roles.cache.has(warnRoleId)) {
+                try {
+                    await member.roles.remove(warnRoleId, `[跨服同步] 解除禁言时同步移除警告身份组`);
+                } catch (err) {
+                    console.warn(`[Punishment] 跨服解除禁言后移除警告身份组失败 target=${target.target_guild_id}:`, err.message);
+                }
+            }
+
             insertPunishmentRecord({
                 guildId: target.target_guild_id,
                 targetUserId: userId,

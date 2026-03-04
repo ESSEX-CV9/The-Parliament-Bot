@@ -425,6 +425,19 @@ async function executeUnmute(client, interaction, { targetMember, reason, sync }
         return;
     }
 
+    let warnRoleRemoved = false;
+    const warnRoleId = getWarnRoleForGuild(guild.id);
+    if (warnRoleId && targetMember.roles.cache.has(warnRoleId)) {
+        try {
+            await targetMember.roles.remove(warnRoleId, reason || '解除禁言时同步移除警告身份组');
+            warnRoleRemoved = true;
+        } catch (err) {
+            console.warn(
+                `[Punishment] 解除禁言后移除警告身份组失败 guild=${guild.id} user=${targetMember.id}: ${err.message}`
+            );
+        }
+    }
+
     let originalPunishment = null;
     try {
         originalPunishment = findLatestActivePunishment(guild.id, targetMember.id, 'mute');
@@ -458,6 +471,7 @@ async function executeUnmute(client, interaction, { targetMember, reason, sync }
 
     await interaction.editReply(
         `✅ 已解除用户 <@${targetMember.id}> 的禁言` +
+        (warnRoleRemoved ? '\n已同时移除警告身份组' : '') +
         (reason ? `\n原因: ${reason}` : '') +
         formatSyncResults(syncResults)
     );
