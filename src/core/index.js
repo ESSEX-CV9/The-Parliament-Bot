@@ -167,6 +167,10 @@ const roleSyncConfigCommand = require('../modules/roleSync/commands/roleSyncConf
 const { startPunishmentSystem } = require('../modules/punishment');
 const punishCommand = require('../modules/punishment/commands/punish');
 
+// 分服受控邀请系统
+const { startControlledInviteSystem, controlledInviteGuildMemberAddHandler } = require('../modules/controlledInvite');
+const controlledInviteConfigCommand = require('../modules/controlledInvite/commands/controlledInviteConfig');
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -315,6 +319,9 @@ client.commands.set(roleSyncConfigCommand.data.name, roleSyncConfigCommand);
 // 处罚系统命令
 client.commands.set(punishCommand.data.name, punishCommand);
 
+// 分服受控邀请系统命令
+client.commands.set(controlledInviteConfigCommand.data.name, controlledInviteConfigCommand);
+
 client.once(Events.ClientReady, async (readyClient) => {
     await clientReadyHandler(readyClient);
     printTimeConfig();
@@ -351,6 +358,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     // 启动处罚系统
     await startPunishmentSystem(readyClient);
 
+    // 启动分服受控邀请系统
+    await startControlledInviteSystem(readyClient);
+
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
     console.log('🧹 自动消息清理系统已加载');
@@ -363,6 +373,7 @@ client.on(Events.InteractionCreate, interactionCreateHandler)
 // 添加消息创建事件处理器
 client.on(Events.MessageCreate, messageCreateHandler);
 client.on(Events.GuildMemberAdd, roleSyncGuildMemberAddHandler);
+client.on(Events.GuildMemberAdd, controlledInviteGuildMemberAddHandler);
 client.on(Events.GuildMemberRemove, roleSyncGuildMemberRemoveHandler);
 client.on(Events.GuildMemberUpdate, roleSyncGuildMemberUpdateHandler);
 client.on(Events.GuildRoleDelete, roleSyncGuildRoleDeleteHandler);

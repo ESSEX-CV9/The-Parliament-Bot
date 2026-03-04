@@ -19,3 +19,4 @@ src/modules/election/logs/vote_removal_logs.txt
 rename_json_files.py
 backupdata/
 backupdata/
+.limcode/

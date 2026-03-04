@@ -503,6 +503,12 @@ async function interactionCreateHandler(interaction) {
                     await listAllParticipants(interaction);
                 }
             }
+
+            // === 分服受控邀请系统按钮处理 ===
+            if (interaction.customId.startsWith('ci_request:')) {
+                const { handleInviteRequest } = require('../../modules/controlledInvite/services/inviteService');
+                await handleInviteRequest(interaction);
+            }
             
             return;
         }
