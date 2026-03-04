@@ -11,6 +11,7 @@ const PUNISHMENT_DB_FILE = path.join(DATA_DIR, 'punishment.sqlite');
 const db = new Database(PUNISHMENT_DB_FILE);
 
 let initialized = false;
+const stmts = {};
 
 function nowIso() {
     return new Date().toISOString();
@@ -56,6 +57,16 @@ function initializePunishmentDatabase() {
 
         CREATE INDEX IF NOT EXISTS idx_pst_source ON punishment_sync_targets(source_guild_id);
 
+        CREATE TABLE IF NOT EXISTS punishment_announcement_channels (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_guild_id TEXT NOT NULL,
+            channel_id      TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            UNIQUE(source_guild_id, channel_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pac_source ON punishment_announcement_channels(source_guild_id);
+
         CREATE TABLE IF NOT EXISTS punishment_warn_role_config (
             guild_id    TEXT PRIMARY KEY,
             role_id     TEXT NOT NULL,
@@ -71,21 +82,82 @@ function initializePunishmentDatabase() {
         );
     `);
 
+    db.exec(`
+        INSERT OR IGNORE INTO punishment_announcement_channels (source_guild_id, channel_id, created_at)
+        SELECT guild_id, value, COALESCE(updated_at, CURRENT_TIMESTAMP)
+        FROM punishment_settings
+        WHERE key = 'announcement_channel_id' AND value IS NOT NULL AND value != '';
+    `);
+
+    // 表创建完成后才 prepare statements
+    stmts.insertRecord = db.prepare(`
+        INSERT INTO punishment_records (guild_id, target_user_id, executor_id, type, reason, duration_ms, expires_at, status, created_at, updated_at)
+        VALUES (@guildId, @targetUserId, @executorId, @type, @reason, @durationMs, @expiresAt, @status, @createdAt, @updatedAt)
+    `);
+    stmts.getActiveByType = db.prepare(`
+        SELECT * FROM punishment_records WHERE status = 'active' AND type = ? AND expires_at IS NOT NULL
+    `);
+    stmts.markExpired = db.prepare(`
+        UPDATE punishment_records SET status = 'expired', updated_at = ? WHERE id = ?
+    `);
+    stmts.getRecords = db.prepare(`
+        SELECT * FROM punishment_records WHERE guild_id = ? AND target_user_id = ? ORDER BY created_at DESC LIMIT 20
+    `);
+    stmts.getSyncTargets = db.prepare(`
+        SELECT * FROM punishment_sync_targets WHERE source_guild_id = ? AND enabled = 1
+    `);
+    stmts.upsertSyncTarget = db.prepare(`
+        INSERT INTO punishment_sync_targets (source_guild_id, target_guild_id, created_at)
+        VALUES (@sourceGuildId, @targetGuildId, @createdAt)
+        ON CONFLICT(source_guild_id, target_guild_id) DO UPDATE SET enabled = 1
+    `);
+    stmts.removeSyncTarget = db.prepare(`
+        DELETE FROM punishment_sync_targets WHERE source_guild_id = ? AND target_guild_id = ?
+    `);
+    stmts.listSyncTargets = db.prepare(`
+        SELECT * FROM punishment_sync_targets WHERE source_guild_id = ?
+    `);
+    stmts.getWarnRole = db.prepare(`
+        SELECT role_id FROM punishment_warn_role_config WHERE guild_id = ?
+    `);
+    stmts.addAnnouncementChannel = db.prepare(`
+        INSERT INTO punishment_announcement_channels (source_guild_id, channel_id, created_at)
+        VALUES (@sourceGuildId, @channelId, @createdAt)
+        ON CONFLICT(source_guild_id, channel_id) DO NOTHING
+    `);
+    stmts.removeAnnouncementChannel = db.prepare(`
+        DELETE FROM punishment_announcement_channels WHERE source_guild_id = ? AND channel_id = ?
+    `);
+    stmts.listAnnouncementChannels = db.prepare(`
+        SELECT channel_id FROM punishment_announcement_channels WHERE source_guild_id = ? ORDER BY id ASC
+    `);
+    stmts.findLatestActivePunishment = db.prepare(`
+        SELECT * FROM punishment_records WHERE guild_id = ? AND target_user_id = ? AND type = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1
+    `);
+    stmts.setWarnRole = db.prepare(`
+        INSERT INTO punishment_warn_role_config (guild_id, role_id, updated_at)
+        VALUES (@guildId, @roleId, @updatedAt)
+        ON CONFLICT(guild_id) DO UPDATE SET role_id = @roleId, updated_at = @updatedAt
+    `);
+    stmts.getSetting = db.prepare(`
+        SELECT value FROM punishment_settings WHERE guild_id = ? AND key = ?
+    `);
+    stmts.setSetting = db.prepare(`
+        INSERT INTO punishment_settings (guild_id, key, value, updated_at)
+        VALUES (@guildId, @key, @value, @updatedAt)
+        ON CONFLICT(guild_id, key) DO UPDATE SET value = @value, updated_at = @updatedAt
+    `);
+
     initialized = true;
     console.log('[Punishment] 数据库初始化完成');
 }
 
 // ========== punishment_records ==========
 
-const stmtInsertRecord = db.prepare(`
-    INSERT INTO punishment_records (guild_id, target_user_id, executor_id, type, reason, duration_ms, expires_at, status, created_at, updated_at)
-    VALUES (@guildId, @targetUserId, @executorId, @type, @reason, @durationMs, @expiresAt, @status, @createdAt, @updatedAt)
-`);
-
 function insertPunishmentRecord({ guildId, targetUserId, executorId, type, reason, durationMs, expiresAt }) {
     const now = nowIso();
-    const status = (type === 'unban') ? 'completed' : 'active';
-    return stmtInsertRecord.run({
+    const status = (type === 'unban' || type === 'unmute') ? 'completed' : 'active';
+    return stmts.insertRecord.run({
         guildId,
         targetUserId,
         executorId,
@@ -99,106 +171,82 @@ function insertPunishmentRecord({ guildId, targetUserId, executorId, type, reaso
     });
 }
 
-const stmtGetActiveByType = db.prepare(`
-    SELECT * FROM punishment_records WHERE status = 'active' AND type = ? AND expires_at IS NOT NULL
-`);
-
 function getActiveExpirablePunishments(type) {
-    return stmtGetActiveByType.all(type);
+    return stmts.getActiveByType.all(type);
 }
-
-const stmtMarkExpired = db.prepare(`
-    UPDATE punishment_records SET status = 'expired', updated_at = ? WHERE id = ?
-`);
 
 function markPunishmentExpired(id) {
-    return stmtMarkExpired.run(nowIso(), id);
+    return stmts.markExpired.run(nowIso(), id);
 }
 
-const stmtGetRecords = db.prepare(`
-    SELECT * FROM punishment_records WHERE guild_id = ? AND target_user_id = ? ORDER BY created_at DESC LIMIT 20
-`);
-
 function getPunishmentRecords(guildId, targetUserId) {
-    return stmtGetRecords.all(guildId, targetUserId);
+    return stmts.getRecords.all(guildId, targetUserId);
 }
 
 // ========== punishment_sync_targets ==========
 
-const stmtGetSyncTargets = db.prepare(`
-    SELECT * FROM punishment_sync_targets WHERE source_guild_id = ? AND enabled = 1
-`);
-
 function getSyncTargets(sourceGuildId) {
-    return stmtGetSyncTargets.all(sourceGuildId);
+    return stmts.getSyncTargets.all(sourceGuildId);
 }
-
-const stmtUpsertSyncTarget = db.prepare(`
-    INSERT INTO punishment_sync_targets (source_guild_id, target_guild_id, created_at)
-    VALUES (@sourceGuildId, @targetGuildId, @createdAt)
-    ON CONFLICT(source_guild_id, target_guild_id) DO UPDATE SET enabled = 1
-`);
 
 function addSyncTarget(sourceGuildId, targetGuildId) {
-    return stmtUpsertSyncTarget.run({ sourceGuildId, targetGuildId, createdAt: nowIso() });
+    return stmts.upsertSyncTarget.run({ sourceGuildId, targetGuildId, createdAt: nowIso() });
 }
-
-const stmtRemoveSyncTarget = db.prepare(`
-    DELETE FROM punishment_sync_targets WHERE source_guild_id = ? AND target_guild_id = ?
-`);
 
 function removeSyncTarget(sourceGuildId, targetGuildId) {
-    return stmtRemoveSyncTarget.run(sourceGuildId, targetGuildId);
+    return stmts.removeSyncTarget.run(sourceGuildId, targetGuildId);
 }
 
-const stmtListSyncTargets = db.prepare(`
-    SELECT * FROM punishment_sync_targets WHERE source_guild_id = ?
-`);
-
 function listSyncTargets(sourceGuildId) {
-    return stmtListSyncTargets.all(sourceGuildId);
+    return stmts.listSyncTargets.all(sourceGuildId);
+}
+
+// ========== punishment_announcement_channels ==========
+
+function addAnnouncementChannel(sourceGuildId, channelId) {
+    return stmts.addAnnouncementChannel.run({ sourceGuildId, channelId, createdAt: nowIso() });
+}
+
+function removeAnnouncementChannel(sourceGuildId, channelId) {
+    return stmts.removeAnnouncementChannel.run(sourceGuildId, channelId);
+}
+
+function listAnnouncementChannels(sourceGuildId) {
+    return stmts.listAnnouncementChannels.all(sourceGuildId).map(row => row.channel_id);
+}
+
+function getAnnouncementChannels(sourceGuildId) {
+    const channels = listAnnouncementChannels(sourceGuildId);
+    if (channels.length > 0) return channels;
+
+    const legacyChannelId = getSetting(sourceGuildId, 'announcement_channel_id');
+    return legacyChannelId ? [legacyChannelId] : [];
+}
+
+function findLatestActivePunishment(guildId, targetUserId, type) {
+    return stmts.findLatestActivePunishment.get(guildId, targetUserId, type) || null;
 }
 
 // ========== punishment_warn_role_config ==========
 
-const stmtGetWarnRole = db.prepare(`
-    SELECT role_id FROM punishment_warn_role_config WHERE guild_id = ?
-`);
-
 function getWarnRoleForGuild(guildId) {
-    const row = stmtGetWarnRole.get(guildId);
+    const row = stmts.getWarnRole.get(guildId);
     return row ? row.role_id : null;
 }
 
-const stmtSetWarnRole = db.prepare(`
-    INSERT INTO punishment_warn_role_config (guild_id, role_id, updated_at)
-    VALUES (@guildId, @roleId, @updatedAt)
-    ON CONFLICT(guild_id) DO UPDATE SET role_id = @roleId, updated_at = @updatedAt
-`);
-
 function setWarnRoleForGuild(guildId, roleId) {
-    return stmtSetWarnRole.run({ guildId, roleId, updatedAt: nowIso() });
+    return stmts.setWarnRole.run({ guildId, roleId, updatedAt: nowIso() });
 }
 
 // ========== punishment_settings ==========
 
-const stmtGetSetting = db.prepare(`
-    SELECT value FROM punishment_settings WHERE guild_id = ? AND key = ?
-`);
-
 function getSetting(guildId, key) {
-    const row = stmtGetSetting.get(guildId, key);
+    const row = stmts.getSetting.get(guildId, key);
     return row ? row.value : null;
 }
 
-const stmtSetSetting = db.prepare(`
-    INSERT INTO punishment_settings (guild_id, key, value, updated_at)
-    VALUES (@guildId, @key, @value, @updatedAt)
-    ON CONFLICT(guild_id, key) DO UPDATE SET value = @value, updated_at = @updatedAt
-`);
-
 function setSetting(guildId, key, value) {
-    return stmtSetSetting.run({ guildId, key, value, updatedAt: nowIso() });
+    return stmts.setSetting.run({ guildId, key, value, updatedAt: nowIso() });
 }
 
 module.exports = {
@@ -211,6 +259,11 @@ module.exports = {
     addSyncTarget,
     removeSyncTarget,
     listSyncTargets,
+    addAnnouncementChannel,
+    removeAnnouncementChannel,
+    listAnnouncementChannels,
+    getAnnouncementChannels,
+    findLatestActivePunishment,
     getWarnRoleForGuild,
     setWarnRoleForGuild,
     getSetting,
