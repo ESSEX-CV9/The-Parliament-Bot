@@ -49,7 +49,7 @@ class DisplayService {
                 .slice(0, 5); // 只取最近的5个
 
             // 构建展示内容
-            const embed = await this.buildRecentDisplayEmbed(recentSubmissions, submissions.length);
+            const embed = await this.buildRecentDisplayEmbed(recentSubmissions, submissions.length, displayMessage.client);
             const components = this.buildRecentDisplayComponents(contestChannelId);
 
             await displayMessage.edit({
@@ -63,7 +63,7 @@ class DisplayService {
         }
     }
 
-    async buildRecentDisplayEmbed(recentSubmissions, totalSubmissions) {
+    async buildRecentDisplayEmbed(recentSubmissions, totalSubmissions, client) {
         const embed = new EmbedBuilder()
             .setTitle('🎨 最近投稿作品展示')
             .setColor('#87CEEB')
@@ -102,14 +102,17 @@ class DisplayService {
 
             // 检查是否为外部服务器投稿
             if (submission.isExternal) {
-                // 外部服务器投稿的特殊格式
+                // 获取来源服务器名称
+                const sourceGuild = client?.guilds?.cache?.get(submission.parsedInfo.guildId);
+                const sourceGuildName = sourceGuild?.name ?? `ID: ${submission.parsedInfo.guildId}`;
+
                 description += `${submissionNumber}. ${workUrl}\n`;
-                description += `👤投稿者: ${authorMention}\n`;
+                description += `👤投稿者: ${authorMention} · 📡 来自 ${sourceGuildName}\n`;
                 description += `📅投稿时间：<t:${publishTime}:f>\n`;
                 description += `📝作品介绍: ${content}\n`;
                 description += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
 
-                // 新增：获奖信息显示
+                // 获奖信息显示
                 if (submission.awardInfo && submission.awardInfo.awardName) {
                     description += `🏆 **获奖信息：** ${submission.awardInfo.awardName}\n`;
                     if (submission.awardInfo.awardMessage) {
@@ -117,7 +120,9 @@ class DisplayService {
                     }
                 }
 
-                description += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
+                if (!submission.contentVerified) {
+                    description += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
+                }
             } else {
                 // 本服务器投稿的正常格式
                 description += `${submissionNumber}.  ${workUrl}\n`;

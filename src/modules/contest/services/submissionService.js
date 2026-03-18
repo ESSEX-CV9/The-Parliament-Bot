@@ -62,11 +62,17 @@ async function processContestSubmission(interaction) {
             });
         }
         
-        // 如果是外部服务器投稿，显示警告
+        // 如果是外部服务器投稿，显示相应提示
         if (validationResult.isExternal) {
-            await interaction.editReply({
-                content: '⚠️ **外部服务器投稿警告**\n\n您提交的是外部服务器的链接。机器人无法验证外部服务器的内容，请确保：\n• 链接内容真实有效\n• 作品确实为您本人创作\n• 如有问题您将承担相应责任\n\n正在保存投稿信息...'
-            });
+            if (validationResult.contentVerified) {
+                await interaction.editReply({
+                    content: 'ℹ️ **分服务器投稿**\n\n您提交的是分服务器的作品，内容已由机器人验证。正在保存投稿信息...'
+                });
+            } else {
+                await interaction.editReply({
+                    content: '⚠️ **外部服务器投稿警告**\n\n您提交的是外部服务器的链接。机器人无法验证外部服务器的内容，请确保：\n• 链接内容真实有效\n• 作品确实为您本人创作\n• 如有问题您将承担相应责任\n\n正在保存投稿信息...'
+                });
+            }
         }
         
         // 检查是否重复投稿
@@ -106,7 +112,8 @@ async function processContestSubmission(interaction) {
             submissionDescription: submissionDescription,
             submittedAt: new Date().toISOString(),
             isValid: true,
-            isExternal: validationResult.isExternal || false
+            isExternal: validationResult.isExternal || false,
+            contentVerified: validationResult.contentVerified || false
         };
         
         const savedSubmission = await saveContestSubmission(submissionData);
@@ -129,7 +136,11 @@ async function processContestSubmission(interaction) {
         // 清除缓存以确保数据一致性
         displayService.clearCache(contestChannelId);
         
-        const externalWarning = validationResult.isExternal ? '\n\n⚠️ **注意：** 这是外部服务器投稿，机器人无法验证内容。' : '';
+        const externalWarning = validationResult.isExternal && !validationResult.contentVerified
+            ? '\n\n⚠️ **注意：** 这是外部服务器投稿，机器人无法验证内容。'
+            : validationResult.isExternal
+            ? '\n\nℹ️ 这是分服务器投稿，内容已验证。'
+            : '';
         
         await interaction.editReply({
             content: `✅ **投稿成功！**\n\n🎨 **作品：** ${validationResult.preview.title}\n📝 **投稿ID：** \`${contestSubmissionId}\`\n\n您的作品已添加到展示列表中。${externalWarning}`

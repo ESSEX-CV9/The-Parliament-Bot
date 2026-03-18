@@ -65,35 +65,71 @@ async function validateSubmissionLink(client, url, submitterId, expectedGuildId,
         
         // 检查是否为外部服务器链接
         const isExternalServer = parseResult.guildId !== expectedGuildId;
-        
+
         if (isExternalServer) {
-            // 检查比赛是否允许外部服务器投稿
             const { getContestChannel, getContestSettings } = require('../utils/contestDatabase');
-            const contestChannelData = await getContestChannel(contestChannelId);
-            
-            if (!contestChannelData || !contestChannelData.allowExternalServers) {
-                return {
-                    success: false,
-                    error: '此比赛不允许外部服务器投稿，只能投稿本服务器的作品。'
-                };
-            }
-            
-            // 检查外部服务器是否在允许列表中
             const settings = await getContestSettings(expectedGuildId);
-            const allowedExternalServers = settings?.allowedExternalServers || [];
-            
-            if (!allowedExternalServers.includes(parseResult.guildId)) {
-                return {
-                    success: false,
-                    error: '该外部服务器不在允许投稿的服务器列表中。'
-                };
+            const subServers = settings?.subServers || [];
+            const isSubServer = subServers.includes(parseResult.guildId);
+
+            if (!isSubServer) {
+                // 普通外部服务器：需要检查赛事 allowExternalServers 开关 + 白名单
+                const contestChannelData = await getContestChannel(contestChannelId);
+                if (!contestChannelData || !contestChannelData.allowExternalServers) {
+                    return {
+                        success: false,
+                        error: '此比赛不允许外部服务器投稿，只能投稿本服务器的作品。'
+                    };
+                }
+                const allowedExternalServers = settings?.allowedExternalServers || [];
+                if (!allowedExternalServers.includes(parseResult.guildId)) {
+                    return {
+                        success: false,
+                        error: '该外部服务器不在允许投稿的服务器列表中。'
+                    };
+                }
             }
-            
-            // 外部服务器投稿，无法验证内容，返回特殊标记
+            // 分服务器直接跳过以上检查，始终允许投稿
+
+            if (isSubServer) {
+                // 尝试从分服务器获取真实内容
+                const externalChannel = await client.channels.fetch(parseResult.channelId).catch(() => null);
+                if (externalChannel) {
+                    let targetMessage = null;
+                    if (parseResult.linkType === 'message') {
+                        targetMessage = await externalChannel.messages.fetch(parseResult.messageId).catch(() => null);
+                        if (!targetMessage) {
+                            return { success: false, error: '无法找到指定的消息，请检查链接。' };
+                        }
+                    } else {
+                        const messages = await externalChannel.messages.fetch({ limit: 50 }).catch(() => null);
+                        targetMessage = messages?.find(msg => msg.author.id === submitterId) ?? null;
+                        if (!targetMessage) {
+                            return { success: false, error: '在该频道中找不到您的消息。' };
+                        }
+                        parseResult.messageId = targetMessage.id;
+                    }
+                    // 验证作者（Discord 用户 ID 跨服务器一致）
+                    if (targetMessage.author.id !== submitterId) {
+                        return { success: false, error: '只能投稿自己的作品。' };
+                    }
+                    return {
+                        success: true,
+                        parsedInfo: parseResult,
+                        preview: extractMessagePreview(targetMessage),
+                        isExternal: true,
+                        contentVerified: true
+                    };
+                }
+                // bot 不在分服务器中（异常情况），回退到占位符
+            }
+
+            // 普通外部服务器（或分服务器 bot 无法访问）：占位符预览
             return {
                 success: true,
                 parsedInfo: parseResult,
                 isExternal: true,
+                contentVerified: false,
                 preview: {
                     title: '外部服务器作品',
                     content: '机器人无法验证外部服务器内容',
