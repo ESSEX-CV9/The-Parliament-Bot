@@ -87,6 +87,7 @@ const manageParticipantRoleCommand = require('../modules/contest/commands/manage
 const setExternalSubmissionOptInCommand = require('../modules/contest/commands/setExternalSubmissionOptIn');
 const viewSubmissionsCommand = require('../modules/contest/commands/viewSubmissions');
 const viewSubmissionsContextCommand = require('../modules/contest/commands/viewSubmissionsContext');
+const manageApplicationNotifyCommand = require('../modules/contest/commands/manageApplicationNotify');
 
 // 自动清理系统命令（合并后）
 const keywordManagerCommand = require('../modules/autoCleanup/commands/keywordManager');
@@ -135,10 +136,10 @@ const manageOptOutCommand = require('../modules/selfFileUpload/commands/manageOp
 const collectBackupsCommand = require('../modules/selfFileUpload/commands/collectBackups.js');
 
 // 补卡系统命令
-const processBackupCardsCommand = require('../modules/backupCards/commands/processBackupCards');
-const testBackupCardsCommand = require('../modules/backupCards/commands/testBackupCards');
-const archiveBackupThreadsCommand = require('../modules/backupCards/commands/archiveBackupThreads');
-const cleanupFuzzyMatchesCommand = require('../modules/backupCards/commands/cleanupFuzzyMatches');
+// const processBackupCardsCommand = require('../modules/backupCards/commands/processBackupCards');
+// const testBackupCardsCommand = require('../modules/backupCards/commands/testBackupCards');
+// const archiveBackupThreadsCommand = require('../modules/backupCards/commands/archiveBackupThreads');
+// const cleanupFuzzyMatchesCommand = require('../modules/backupCards/commands/cleanupFuzzyMatches');
 
 //// 自助身份组系统命令
 const setupRolePanelCommand = require('../modules/selfRole/commands/setupRolePanel');
@@ -236,6 +237,7 @@ client.commands.set(manageParticipantRoleCommand.data.name, manageParticipantRol
 client.commands.set(setExternalSubmissionOptInCommand.data.name, setExternalSubmissionOptInCommand);
 client.commands.set(viewSubmissionsCommand.data.name, viewSubmissionsCommand);
 client.commands.set(viewSubmissionsContextCommand.data.name, viewSubmissionsContextCommand);
+client.commands.set(manageApplicationNotifyCommand.data.name, manageApplicationNotifyCommand);
 
 // 自动清理系统命令（合并后）
 client.commands.set(keywordManagerCommand.data.name, keywordManagerCommand);
@@ -250,10 +252,10 @@ client.commands.set(rebuildThreadsCommand.data.name, rebuildThreadsCommand);
 client.commands.set(deleteRebuiltMessageCommand.data.name, deleteRebuiltMessageCommand);
 
 // 补卡系统命令
-client.commands.set(processBackupCardsCommand.data.name, processBackupCardsCommand);
-client.commands.set(testBackupCardsCommand.data.name, testBackupCardsCommand);
-client.commands.set(archiveBackupThreadsCommand.data.name, archiveBackupThreadsCommand);
-client.commands.set(cleanupFuzzyMatchesCommand.data.name, cleanupFuzzyMatchesCommand);
+// client.commands.set(processBackupCardsCommand.data.name, processBackupCardsCommand);
+// client.commands.set(testBackupCardsCommand.data.name, testBackupCardsCommand);
+// client.commands.set(archiveBackupThreadsCommand.data.name, archiveBackupThreadsCommand);
+// client.commands.set(cleanupFuzzyMatchesCommand.data.name, cleanupFuzzyMatchesCommand);
 
 // 频道总结系统命令
 client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);

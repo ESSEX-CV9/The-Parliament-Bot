@@ -165,7 +165,23 @@ ${formData.notes ? `📋 **注意事项和其他补充**\n${formData.notes}\n\n`
     
     // 设置帖子权限
     await setupReviewThreadPermissions(thread, applicant.id);
-    
+
+    // 发送申请通知 @ 身份组
+    try {
+        const { getContestSettings } = require('../utils/contestDatabase');
+        const notifySettings = await getContestSettings(reviewForum.guild.id);
+        const notifyRoles = notifySettings?.applicationNotifyRoles || [];
+        if (notifyRoles.length > 0) {
+            const mentions = notifyRoles.map(id => `<@&${id}>`).join(' ');
+            await thread.send({
+                content: `${mentions}\n📋 有新的赛事申请待审核，申请ID：\`${applicationId}\``
+            });
+        }
+    } catch (error) {
+        console.error('发送申请通知时出错:', error);
+        // 不影响主流程
+    }
+
     return thread;
 }
 
