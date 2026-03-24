@@ -94,7 +94,7 @@ module.exports = {
     .addSubcommand((sub) =>
       sub
         .setName('审核配置')
-        .setDescription('设置该身份组的社区审核参数与审核员列表')
+        .setDescription('设置该身份组的社区审核参数、审核员列表和私信模板')
         .addRoleOption((opt) =>
           opt
             .setName('目标身份组')
@@ -166,6 +166,18 @@ module.exports = {
           opt
             .setName('被拒后冷却天数')
             .setDescription('被拒绝后进入冷却期的天数（可选）')
+            .setRequired(false),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('通过私信模板')
+            .setDescription('申请通过后发送给申请人的私信模板，可用 {roleLabel} {roleName} {applicantMention}')
+            .setRequired(false),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('拒绝私信模板')
+            .setDescription('申请被拒后发送给申请人的私信模板，可用 {roleLabel} {roleName} {applicantMention} {cooldownDays} {cooldownNotice}')
             .setRequired(false),
         ),
     )
@@ -388,6 +400,8 @@ async function handleApprovalConfig(interaction) {
   const voter5 = interaction.options.getRole('审核员身份组5');
   const clearVoters = interaction.options.getBoolean('清空审核员') ?? false;
   const cooldownDays = interaction.options.getInteger('被拒后冷却天数') ?? null;
+  const approvedDmTemplate = interaction.options.getString('通过私信模板');
+  const rejectedDmTemplate = interaction.options.getString('拒绝私信模板');
 
   const allowedTypes = new Set([
     ChannelType.GuildText,
@@ -442,11 +456,18 @@ async function handleApprovalConfig(interaction) {
     }
   }
 
+  const previousApproval = current.conditions.approval || {};
+  const previousDmTemplates = previousApproval.dmTemplates || {};
+
   current.conditions.approval = {
+    ...previousApproval,
     channelId: approvalChannel.id,
     requiredApprovals,
     requiredRejections,
     allowedVoterRoles,
+    dmTemplates: {
+      ...previousDmTemplates,
+    },
   };
 
   if (cooldownDays && cooldownDays > 0) {
@@ -454,6 +475,14 @@ async function handleApprovalConfig(interaction) {
   } else {
     // 若未提供则移除该字段
     delete current.conditions.approval.cooldownDays;
+  }
+
+  if (approvedDmTemplate !== null) {
+    current.conditions.approval.dmTemplates.approved = approvedDmTemplate;
+  }
+
+  if (rejectedDmTemplate !== null) {
+    current.conditions.approval.dmTemplates.rejected = rejectedDmTemplate;
   }
 
   // 回写
@@ -474,7 +503,9 @@ async function handleApprovalConfig(interaction) {
         }\n` +
         (current.conditions.approval.cooldownDays
           ? `**被拒后冷却：** ${current.conditions.approval.cooldownDays} 天\n`
-          : ''),
+          : '') +
+        `**通过私信：** ${current.conditions.approval.dmTemplates?.approved ? '已配置' : '默认'}\n` +
+        `**拒绝私信：** ${current.conditions.approval.dmTemplates?.rejected ? '已配置' : '默认'}`,
     );
 
   await interaction.editReply({ embeds: [embed] });
@@ -650,6 +681,12 @@ async function handleListConfig(interaction) {
       }
       if (ap.cooldownDays && ap.cooldownDays > 0) {
         line += `；被拒后冷却 **${ap.cooldownDays}** 天`;
+      }
+      if (ap.dmTemplates?.approved) {
+        line += '；已配置通过私信';
+      }
+      if (ap.dmTemplates?.rejected) {
+        line += '；已配置拒绝私信';
       }
       conditionsLines.push(line);
     }
