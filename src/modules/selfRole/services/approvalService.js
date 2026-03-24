@@ -277,6 +277,35 @@ async function updateApprovalPanel(voteMessage, application, roleConfig) {
 }
 
 /**
+ * 渲染申请结果私信模板
+ * @param {string} template
+ * @param {Record<string, string|number>} variables
+ * @returns {string}
+ */
+function renderDmTemplate(template, variables = {}) {
+    if (!template || typeof template !== 'string') return '';
+
+    let rendered = template;
+    for (const [key, value] of Object.entries(variables)) {
+        const token = `{${key}}`;
+        rendered = rendered.split(token).join(value == null ? '' : String(value));
+    }
+    return rendered;
+}
+
+/**
+ * 获取默认审核结果私信模板
+ * @param {'approved'|'rejected'} status
+ * @returns {string}
+ */
+function getDefaultDmTemplate(status) {
+    if (status === 'approved') {
+        return '🎉 恭喜！您申请的身份组 **{roleLabel}** 已通过社区审核。';
+    }
+    return '很遗憾，您申请的身份组 **{roleLabel}** 未能通过社区审核。';
+}
+
+/**
  * 终结一个申请（批准或拒绝）
  * @param {import('discord.js').ButtonInteraction|import('discord.js').ModalSubmitInteraction} interaction
  * @param {import('discord.js').Message} voteMessage
@@ -290,7 +319,23 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
     await saveSelfRoleApplication(voteMessage.id, application);
 
     const applicant = await interaction.guild.members.fetch(application.applicantId).catch(() => null);
-    const role = await interaction.guild.roles.fetch(application.roleId);
+    const role = await interaction.guild.roles.fetch(application.roleId).catch(() => null);
+
+    const approvalConfig = roleConfig?.conditions?.approval || {};
+    const dmTemplates = approvalConfig.dmTemplates || {};
+    const cooldownDaysValue = typeof approvalConfig.cooldownDays === 'number' && approvalConfig.cooldownDays > 0
+        ? approvalConfig.cooldownDays
+        : null;
+    const cooldownNotice = cooldownDaysValue
+        ? `提示：您已进入 **${cooldownDaysValue}** 天冷却期，期间无法再次申请此身份组。`
+        : '';
+    const dmVariables = {
+        roleLabel: roleConfig.label,
+        roleName: role?.name || roleConfig.label || '',
+        applicantMention: applicant ? `<@${applicant.id}>` : `<@${application.applicantId}>`,
+        cooldownDays: cooldownDaysValue ?? '',
+        cooldownNotice,
+    };
 
     let finalDescription = `申请 **${roleConfig.label}** 的投票已结束。`;
     let finalColor = 0;
@@ -302,8 +347,11 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
     if (finalStatus === 'approved') {
         finalColor = 0x57F287; // Green
         finalStatusText = '✅ 已批准';
-        dmMessage = `🎉 恭喜！您申请的身份组 **${roleConfig.label}** 已通过社区审核。`;
-        if (applicant) {
+        dmMessage = renderDmTemplate(
+            dmTemplates.approved || getDefaultDmTemplate('approved'),
+            dmVariables,
+        );
+        if (applicant && role) {
             try {
                 await applicant.roles.add(role.id);
                 finalDescription += `\n\n用户 <@${applicant.id}> 已被授予 **${role.name}** 身份组。`;
@@ -313,12 +361,14 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
                 dmMessage += `\n\n但机器人授予身份组时失败，请联系管理员。`;
             }
         } else {
-            finalDescription += `\n\n⚠️ 无法找到申请人，未能授予身份组。`;
+            finalDescription += `\n\n⚠️ 无法找到申请人或身份组，未能授予身份组。`;
         }
     } else {
         finalColor = 0xED4245; // Red
         finalStatusText = '❌ 已拒绝';
-        dmMessage = `很遗憾，您申请的身份组 **${roleConfig.label}** 未能通过社区审核。`;
+        const rejectedTemplate = dmTemplates.rejected || getDefaultDmTemplate('rejected');
+        const usesCooldownPlaceholder = rejectedTemplate.includes('{cooldownDays}') || rejectedTemplate.includes('{cooldownNotice}');
+        dmMessage = renderDmTemplate(rejectedTemplate, dmVariables);
         finalDescription += `\n\n用户 <@${applicant?.id || application.applicantId}> 的申请已被拒绝。`;
 
         // 将“匿名拒绝理由”同步给申请人（不包含投票人身份，不做截断）
@@ -329,12 +379,13 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
 
         // 被拒绝后冷却期逻辑（仅当配置了 cooldownDays 时生效）
         try {
-            const cooldownDays = roleConfig?.conditions?.approval?.cooldownDays;
-            if (typeof cooldownDays === 'number' && cooldownDays > 0) {
+            if (cooldownDaysValue) {
                 // 写入“被拒后冷却期”记录，单位为天（内部转换为过期时间戳）
-                await setSelfRoleCooldown(interaction.guild.id, application.roleId, application.applicantId, cooldownDays);
-                console.log(`[SelfRole] 🧊 已为用户 ${application.applicantId} 设置身份组 ${application.roleId} 的被拒后冷却期: ${cooldownDays} 天`);
-                dmMessage += `\n\n提示：您已进入 **${cooldownDays}** 天冷却期，期间无法再次申请此身份组。`;
+                await setSelfRoleCooldown(interaction.guild.id, application.roleId, application.applicantId, cooldownDaysValue);
+                console.log(`[SelfRole] 🧊 已为用户 ${application.applicantId} 设置身份组 ${application.roleId} 的被拒后冷却期: ${cooldownDaysValue} 天`);
+                if (cooldownNotice && !usesCooldownPlaceholder) {
+                    dmMessage += `\n\n${cooldownNotice}`;
+                }
             }
         } catch (err) {
             console.error('[SelfRole] ❌ 设置被拒后冷却期时出错:', err);
