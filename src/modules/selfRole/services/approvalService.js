@@ -16,7 +16,13 @@ const {
     deleteSelfRoleApplication,
     getSelfRoleSettings,
     setSelfRoleCooldown,
+    getSelfRoleApplicationV2ByReviewMessageId,
+    resolveSelfRoleApplicationV2,
+    createSelfRoleGrant,
 } = require('../../../core/utils/database');
+
+const { scheduleActiveUserSelfRolePanelsRefresh } = require('./panelService');
+const { reportSelfRoleAlertOnce } = require('./alertReporter');
 
 /**
  * 处理审核投票按钮的交互（支持/反对无理由）
@@ -142,6 +148,37 @@ async function applyVote({ interaction, action, roleId, applicantId, voteMessage
     const guildId = interaction.guild.id;
     const member = interaction.member;
     const messageId = voteMessage.id;
+
+    // v2 申请状态校验：若已过期/撤回/结算，直接禁用面板并拒绝投票
+    try {
+        const v2 = await getSelfRoleApplicationV2ByReviewMessageId(messageId);
+        if (v2) {
+            const now = Date.now();
+            const isExpired = v2.status === 'pending' && v2.reservedUntil && v2.reservedUntil <= now;
+
+            if (isExpired) {
+                await resolveSelfRoleApplicationV2(v2.applicationId, 'expired', 'expired', now).catch(() => {});
+                await deleteSelfRoleApplication(messageId).catch(() => {});
+                await markVoteMessageInactive(voteMessage, '⌛ 已过期', '⌛ 该申请已过期，名额已自动释放。');
+                scheduleActiveUserSelfRolePanelsRefresh(interaction.client, guildId, 'application_expired');
+
+                await interaction.editReply({ content: '❌ 此申请已过期，无法继续投票。' });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
+
+            if (v2.status !== 'pending') {
+                await deleteSelfRoleApplication(messageId).catch(() => {});
+                await markVoteMessageInactive(voteMessage, '已结束', '该申请已结束或已失效，无法继续投票。');
+
+                await interaction.editReply({ content: '❌ 此申请已结束或已失效，无法继续投票。' });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
+        }
+    } catch (_) {
+        // 忽略 v2 校验失败，回退到 legacy 逻辑
+    }
 
     const settings = await getSelfRoleSettings(guildId);
     const roleConfig = settings?.roles?.find(r => r.roleId === roleId);
@@ -353,8 +390,29 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
         );
         if (applicant && role) {
             try {
-                await applicant.roles.add(role.id);
-                finalDescription += `\n\n用户 <@${applicant.id}> 已被授予 **${role.name}** 身份组。`;
+                const bundleRoleIds = Array.isArray(roleConfig.bundleRoleIds) ? roleConfig.bundleRoleIds : [];
+                const roleIdsToAdd = [...new Set([role.id, ...bundleRoleIds])];
+                await applicant.roles.add(roleIdsToAdd);
+
+                const bundleSuffix = bundleRoleIds.length > 0 ? '（含配套身份组）' : '';
+                finalDescription += `\n\n用户 <@${applicant.id}> 已被授予 **${role.name}** 身份组${bundleSuffix}。`;
+                if (bundleRoleIds.length > 0) {
+                    finalDescription += `\n配套身份组：${bundleRoleIds.map(rid => `<@&${rid}>`).join(' ')}`;
+                }
+
+                try {
+                    const v2 = await getSelfRoleApplicationV2ByReviewMessageId(voteMessage.id);
+                    await createSelfRoleGrant({
+                        guildId: interaction.guild.id,
+                        userId: applicant.id,
+                        primaryRoleId: role.id,
+                        applicationId: v2?.applicationId || null,
+                        grantedAt: Date.now(),
+                        bundleRoleIds,
+                    });
+                } catch (dbErr) {
+                    console.error('[SelfRole] ❌ 写入 grant 记录失败（审核通过）:', dbErr);
+                }
             } catch (error) {
                 console.error(`[SelfRole] ❌ 授予身份组时出错: ${error}`);
                 finalDescription += `\n\n⚠️ 授予身份组时出错，请检查机器人权限。`;
@@ -394,12 +452,36 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
 
     // 尝试给用户发送私信通知
     if (applicant) {
-        await applicant.send(dmMessage).catch(err => {
+        let dmOk = true;
+        try {
+            await applicant.send(dmMessage);
+        } catch (err) {
+            dmOk = false;
             console.error(`[SelfRole] ❌ 无法向 ${applicant.user.tag} 发送私信: ${err}`);
-        });
+
+            const v2 = await getSelfRoleApplicationV2ByReviewMessageId(voteMessage.id).catch(() => null);
+            const appIdForAlert = v2?.applicationId || voteMessage.id;
+
+            const reportChannelId = voteMessage.channel?.id;
+            if (reportChannelId) {
+                await reportSelfRoleAlertOnce({
+                    client: interaction.client,
+                    guildId: interaction.guild.id,
+                    channelId: reportChannelId,
+                    roleId: application.roleId,
+                    grantId: null,
+                    applicationId: appIdForAlert,
+                    alertType: 'application_result_dm_failed',
+                    severity: 'medium',
+                    title: '⚠️ 审核结果通知失败：无法发送私信',
+                    message: `无法向申请人 ${application.applicantId} 发送私信通知审核结果（${finalStatus}）。`,
+                    actionRequired: `请管理员在服务器内手动告知申请人审核结果，并提醒其开启私信（允许接收来自服务器成员的私信）。\n\n申请人：<@${application.applicantId}>\n身份组：<@&${application.roleId}>`,
+                }).catch(() => {});
+            }
+        }
 
         // 若拒绝理由较多，继续分条发送剩余内容（匿名）
-        if (finalStatus === 'rejected' && applicantRejectReasonChunks.length > 1) {
+        if (dmOk && finalStatus === 'rejected' && applicantRejectReasonChunks.length > 1) {
             for (const chunk of applicantRejectReasonChunks.slice(1)) {
                 await applicant.send(`匿名拒绝理由（续）：\n${chunk}`).catch(err => {
                     console.error(`[SelfRole] ❌ 向 ${applicant.user.tag} 发送追加匿名拒绝理由失败: ${err}`);
@@ -445,8 +527,56 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
     setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
     console.log(`[SelfRole] 🗳️ 申请 ${voteMessage.id} 已终结，状态: ${finalStatus}`);
 
+     // v2：终结申请并释放预留名额
+    try {
+        const v2 = await getSelfRoleApplicationV2ByReviewMessageId(voteMessage.id);
+        if (v2 && v2.status === 'pending') {
+            await resolveSelfRoleApplicationV2(v2.applicationId, finalStatus, finalStatus, Date.now());
+        }
+    } catch (err) {
+        console.error('[SelfRole] ❌ 终结 v2 申请记录时出错:', err);
+    }
+
+    scheduleActiveUserSelfRolePanelsRefresh(interaction.client, interaction.guild.id, 'application_finalized');
+
     // 在所有交互完成后再删除数据库记录
     await deleteSelfRoleApplication(voteMessage.id);
+}
+
+/**
+ * 将投票面板标记为不可用（过期/撤回/已结束等）
+ * @param {import('discord.js').Message} voteMessage
+ * @param {string} statusText
+ * @param {string} extraDescription
+ */
+async function markVoteMessageInactive(voteMessage, statusText, extraDescription) {
+    const disabledRows = buildDisabledRows(voteMessage);
+    const originalEmbed = voteMessage.embeds?.[0];
+
+    if (!originalEmbed) {
+        await voteMessage.edit({ components: disabledRows }).catch(() => {});
+        return;
+    }
+
+    const updated = new EmbedBuilder(originalEmbed.data)
+        .setColor(0x747F8D)
+        .setDescription(
+            (() => {
+                const base = (originalEmbed.description || '').trim();
+                const next = base ? `${base}\n\n${extraDescription}` : extraDescription;
+                return next.length > 4096 ? next.slice(0, 4093) + '…' : next;
+            })(),
+        )
+        .setFields(
+            ...originalEmbed.fields.map(field => {
+                if (field.name === '状态') {
+                    return { ...field, value: statusText };
+                }
+                return field;
+            }),
+        );
+
+    await voteMessage.edit({ embeds: [updated], components: disabledRows }).catch(() => {});
 }
 
 /**

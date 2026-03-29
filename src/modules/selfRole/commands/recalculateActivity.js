@@ -2,6 +2,7 @@
 
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ChannelType } = require('discord.js');
 const { saveUserActivityBatch, saveDailyUserActivityBatch, clearChannelActivity } = require('../../../core/utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -26,6 +27,10 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
+        if (!checkAdminPermission(interaction.member)) {
+            return interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true });
+        }
+
         await interaction.deferReply({ ephemeral: true });
 
         const channelId = interaction.options.getString('频道id');

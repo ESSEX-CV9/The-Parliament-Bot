@@ -5,7 +5,14 @@ const {
     Routes, 
 } = require('discord.js');
 
-const rest = new REST({ version: '10'}).setToken(process.env.DISCORD_TOKEN);
+function normalizeDiscordToken(raw) {
+    if (!raw) return '';
+    let token = String(raw).trim();
+    if (!token) return '';
+    // 兼容某些用户误填 "Bot <token>"
+    token = token.replace(/^Bot\s+/i, '').trim();
+    return token;
+}
 
 function parseRequiredGuildIdsFromEnv() {
     const raw = process.env.GUILD_IDS;
@@ -35,9 +42,33 @@ function parseRequiredGuildIdsFromEnv() {
 async function clientReadyHandler(client){
     console.log(`Logged in as ${client.user.tag}`);
 
+    const strictSync = String(process.env.STRICT_COMMAND_SYNC || '').toLowerCase() === 'true';
+    const clearGlobalCommands = String(process.env.CLEAR_GLOBAL_COMMANDS || '').toLowerCase() === 'true';
+
+    const token = normalizeDiscordToken(process.env.DISCORD_TOKEN);
+    const rest = new REST({ version: '10'}).setToken(token);
+
     try{
         const commandPayload = client.commands.map((command) => command.data.toJSON());
         const targetGuildIds = parseRequiredGuildIdsFromEnv();
+
+        // 可选：清空全局命令（之前用同一个 bot token/应用做过其它项目时，常会遗留全局命令）
+        // 注意：全局命令的传播/删除在 Discord 侧可能存在缓存延迟（通常可达 ~1 小时）。
+        if (clearGlobalCommands) {
+            console.log('🧹 CLEAR_GLOBAL_COMMANDS=true：准备清空该应用的全局命令（Global Commands）...');
+            try {
+                await rest.put(
+                    Routes.applicationCommands(process.env.CLIENT_ID),
+                    { body: [] }
+                );
+                console.log('✅ 已清空全局命令。');
+            } catch (globalError) {
+                console.error('❌ 清空全局命令失败：', globalError?.message || globalError);
+                if (strictSync) {
+                    throw new Error('STRICT_COMMAND_SYNC=true：清空全局命令失败，已中止启动。请检查 CLIENT_ID / Token 权限/网络。');
+                }
+            }
+        }
 
         console.log(`Start refreshing ${client.commands.size} commands for configured guilds...`);
         console.log(`目标服务器数量: ${targetGuildIds.length}`);
@@ -81,6 +112,10 @@ async function clientReadyHandler(client){
         }
 
         console.log(`Commands reload completed. Success: ${successCount}, Failed: ${failCount}, Total: ${targetGuildIds.length}`);
+
+        if (strictSync && failCount > 0) {
+            throw new Error(`STRICT_COMMAND_SYNC=true：命令同步失败（失败 ${failCount} 个服务器）。已中止启动，请检查网络/权限/GUILD_IDS/CLIENT_ID 配置。`);
+        }
     } catch(error){
         console.error('❌ 命令注册流程失败，启动中止：', error);
         throw error;

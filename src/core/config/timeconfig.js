@@ -23,6 +23,15 @@ const TEST_CONFIG = {
     SELF_MODERATION_VOTE_DURATION_MINUTES: 2,    // 投票持续时间：2分钟（测试）
     SELF_MODERATION_CHECK_INTERVAL_MINUTES: 0.5, // 检查间隔：30秒
     MUTE_STATUS_CHECK_INTERVAL_MINUTES: 1,       // 禁言状态检查间隔：1分钟（测试）
+
+    // SelfRole 申请检查（过期/预留名额释放）
+    SELF_ROLE_APPLICATION_CHECK_INTERVAL_MINUTES: 1,
+
+    // SelfRole grant 生命周期调度（周期询问/强制清退）
+    SELF_ROLE_LIFECYCLE_CHECK_INTERVAL_MINUTES: 0.5,
+
+    // SelfRole 一致性巡检
+    SELF_ROLE_CONSISTENCY_CHECK_INTERVAL_MINUTES: 1,
 };
 
 // 生产模式下的时间设置（以小时/天为单位，正常使用）
@@ -44,6 +53,15 @@ const PRODUCTION_CONFIG = {
     SELF_MODERATION_VOTE_DURATION_MINUTES: 10,   // 投票持续时间：10分钟
     SELF_MODERATION_CHECK_INTERVAL_MINUTES: 0.5,   // 检查间隔：1分钟
     MUTE_STATUS_CHECK_INTERVAL_MINUTES: 20,        // 禁言状态检查间隔：20分钟
+
+    // SelfRole 申请检查（过期/预留名额释放）
+    SELF_ROLE_APPLICATION_CHECK_INTERVAL_MINUTES: 30,
+
+    // SelfRole grant 生命周期调度（周期询问/强制清退）
+    SELF_ROLE_LIFECYCLE_CHECK_INTERVAL_MINUTES: 5,
+
+    // SelfRole 一致性巡检
+    SELF_ROLE_CONSISTENCY_CHECK_INTERVAL_MINUTES: 60,
 };
 
 // 白天/夜晚模式配置
@@ -297,6 +315,9 @@ function getCheckIntervals() {
         proposalCheck: config.PROPOSAL_CHECK_INTERVAL_MINUTES * 60 * 1000,
         courtApplicationCheck: config.COURT_APPLICATION_CHECK_INTERVAL_MINUTES * 60 * 1000,
         courtVoteCheck: config.COURT_VOTE_CHECK_INTERVAL_MINUTES * 60 * 1000,
+        selfRoleApplicationCheck: config.SELF_ROLE_APPLICATION_CHECK_INTERVAL_MINUTES * 60 * 1000,
+        selfRoleLifecycleCheck: config.SELF_ROLE_LIFECYCLE_CHECK_INTERVAL_MINUTES * 60 * 1000,
+        selfRoleConsistencyCheck: config.SELF_ROLE_CONSISTENCY_CHECK_INTERVAL_MINUTES * 60 * 1000,
         selfModerationCheck: config.SELF_MODERATION_CHECK_INTERVAL_MINUTES * 60 * 1000,
         muteStatusCheck: config.MUTE_STATUS_CHECK_INTERVAL_MINUTES * 60 * 1000,
     };

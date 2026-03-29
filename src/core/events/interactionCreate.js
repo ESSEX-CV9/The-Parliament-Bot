@@ -12,6 +12,13 @@ const { processCourtVote } = require('../../modules/court/services/courtVotingSy
 const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
 const { handleSelfRoleButton, handleSelfRoleSelect, handleReasonModalSubmit } = require('../../modules/selfRole/services/selfRoleService');
 const { processApprovalVote, showRejectReasonModal, processRejectReasonModalSubmit } = require('../../modules/selfRole/services/approvalService');
+const { handleSelfRoleRenewalDecision } = require('../../modules/selfRole/services/lifecycleScheduler');
+const { handleSelfRoleAlertResolveButton } = require('../../modules/selfRole/services/alertReporter');
+const {
+    handleSelfRoleConfigWizardButton,
+    handleSelfRoleConfigWizardSelect,
+    handleSelfRoleConfigWizardModal,
+} = require('../../modules/selfRole/services/configWizardService');
 const {
     handleAddRoleButton,
     handleRemoveRoleButton,
@@ -72,6 +79,8 @@ const { processEditProposal, processEditProposalSubmission } = require('../../mo
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../core/utils/database');
 
+const INTERACTION_DEBUG_LOG = String(process.env.INTERACTION_DEBUG_LOG || '').toLowerCase() === 'true';
+
 const {
     handleAnonymousVoteStart,
     handleAnonymousVoteSelect,
@@ -90,6 +99,19 @@ const {
 
 async function interactionCreateHandler(interaction) {
     try {
+        if (INTERACTION_DEBUG_LOG) {
+            const gid = interaction.guild?.id || 'dm';
+            const uid = interaction.user?.id || 'unknown';
+            if (interaction.isChatInputCommand()) {
+                console.log(`[Interaction][cmd] ${interaction.commandName} guild=${gid} user=${uid}`);
+            } else if (interaction.isButton()) {
+                console.log(`[Interaction][button] ${interaction.customId} guild=${gid} user=${uid}`);
+            } else if (interaction.isStringSelectMenu()) {
+                console.log(`[Interaction][select] ${interaction.customId} guild=${gid} user=${uid}`);
+            } else if (interaction.isModalSubmit()) {
+                console.log(`[Interaction][modal] ${interaction.customId} guild=${gid} user=${uid}`);
+            }
+        }
         // 处理自动补全
         if (interaction.isAutocomplete()) {
             const command = interaction.client.commands.get(interaction.commandName);
@@ -107,7 +129,17 @@ async function interactionCreateHandler(interaction) {
         if (interaction.isChatInputCommand()) {
             const command = interaction.client.commands.get(interaction.commandName);
             
-            if (!command) return;
+            if (!command) {
+                console.warn(`[Interaction] ⚠️ 未找到命令处理器: ${interaction.commandName} (guild=${interaction.guild?.id || 'dm'} user=${interaction.user?.id || 'unknown'})`);
+                // 避免“无反应”：给用户一个可操作的提示
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: '❌ 该命令在当前机器人版本中未加载或已被移除。\n\n可能原因：\n- 你看到的是旧的全局命令残留（建议测试环境设置 CLEAR_GLOBAL_COMMANDS=true 后重启一次）\n- 机器人刚重启但命令同步未完成（建议开启 STRICT_COMMAND_SYNC=true）\n\n请联系管理员检查启动日志并重新同步命令。',
+                        ephemeral: true,
+                    }).catch(() => {});
+                }
+                return;
+            }
             
             await command.execute(interaction);
             return;
@@ -117,7 +149,16 @@ async function interactionCreateHandler(interaction) {
         if (interaction.isMessageContextMenuCommand() || interaction.isUserContextMenuCommand()) {
             const command = interaction.client.commands.get(interaction.commandName);
             
-            if (!command) return;
+            if (!command) {
+                console.warn(`[Interaction] ⚠️ 未找到上下文菜单处理器: ${interaction.commandName} (guild=${interaction.guild?.id || 'dm'} user=${interaction.user?.id || 'unknown'})`);
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({
+                        content: '❌ 该指令在当前机器人版本中未加载或已被移除。请联系管理员重新同步命令。',
+                        ephemeral: true,
+                    }).catch(() => {});
+                }
+                return;
+            }
             
             await command.execute(interaction);
             return;
@@ -471,8 +512,14 @@ async function interactionCreateHandler(interaction) {
                 // 取消最终确认按钮
                 const contestChannelId = interaction.customId.replace('final_confirm_cancel_', '');
                 await displayService.handleFinalConfirmCancel(interaction, contestChannelId);
-            } else if (interaction.customId === 'self_role_apply_button') {
+            } else if (interaction.customId.startsWith('sr_alert_resolve_')) {
+                await handleSelfRoleAlertResolveButton(interaction);
+            } else if (interaction.customId.startsWith('sr_wiz:')) {
+                await handleSelfRoleConfigWizardButton(interaction);
+            } else if (interaction.customId === 'self_role_apply_button' || interaction.customId === 'sr2_apply_button') {
                 await handleSelfRoleButton(interaction);
+            } else if (interaction.customId.startsWith('sr5_renew_keep_') || interaction.customId.startsWith('sr5_renew_leave_')) {
+                await handleSelfRoleRenewalDecision(interaction);
             } else if (interaction.customId.startsWith('self_role_reason_reject_')) {
                 await showRejectReasonModal(interaction);
             } else if (interaction.customId.startsWith('self_role_approve_') || interaction.customId.startsWith('self_role_reject_')) {
@@ -576,14 +623,16 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('self_role_reason_modal_')) {
                 // 自助身份组申请理由窗口提交
                 await handleReasonModalSubmit(interaction);
+            } else if (interaction.customId.startsWith('sr_wiz:')) {
+                await handleSelfRoleConfigWizardModal(interaction);
             } else if (interaction.customId.startsWith('admin_add_role_modal_') || interaction.customId.startsWith('admin_edit_role_modal_')) {
                 await handleModalSubmit(interaction);
             }
             return;
         }
         
-        // 处理选择菜单
-        if (interaction.isStringSelectMenu()) {
+        // 处理选择菜单（包含 String/Role/Channel 等所有 SelectMenu）
+        if (interaction.isAnySelectMenu()) {
             if (interaction.customId.startsWith('submission_action_')) {
                 // 稿件管理操作选择
                 await processSubmissionAction(interaction);
@@ -627,6 +676,8 @@ async function interactionCreateHandler(interaction) {
                 await displayService.handleSubmissionSelect(interaction);
             } else if (interaction.customId === 'self_role_select_menu') {
                 await handleSelfRoleSelect(interaction);
+            } else if (interaction.customId.startsWith('sr_wiz:')) {
+                await handleSelfRoleConfigWizardSelect(interaction);
             } else if (interaction.customId === 'admin_add_role_select') {
                 await handleRoleSelectForAdd(interaction);
             } else if (interaction.customId === 'admin_remove_role_select') {

@@ -11,7 +11,13 @@ const {
   saveSelfRoleSettings,
 } = require('../../../core/utils/database');
 
+const {
+  checkAdminPermission,
+  getPermissionDeniedMessage,
+} = require('../../../core/utils/permissionManager');
+
 const { updateMonitoredChannels } = require('../services/activityTracker');
+const { scheduleActiveUserSelfRolePanelsRefresh } = require('../services/panelService');
 
 /**
  * 统一的“自助身份组申请-配置身份组”斜杠命令
@@ -87,6 +93,13 @@ module.exports = {
             .setName('活跃天数')
             .setDescription('近N天中每日发言达标的天数（需与「每日发言阈值」同时提供）')
             .setRequired(false),
+        )
+        .addIntegerOption((opt) =>
+          opt
+            .setName('人数上限')
+            .setDescription('该身份组可同时拥有的最大人数（0=不限制，不填=保持不变）')
+            .setMinValue(0)
+            .setRequired(false),
         ),
     )
 
@@ -101,19 +114,6 @@ module.exports = {
             .setDescription('要配置的身份组')
             .setRequired(true),
         )
-        .addChannelOption((opt) =>
-          opt
-            .setName('审核频道')
-            .setDescription('进行投票审核的频道（支持论坛和子区了）')
-            .addChannelTypes(
-              ChannelType.GuildText,
-              ChannelType.GuildForum,
-              ChannelType.PublicThread,
-              ChannelType.PrivateThread,
-              ChannelType.AnnouncementThread
-            )
-            .setRequired(true),
-        )
         .addIntegerOption((opt) =>
           opt
             .setName('支持票阈值')
@@ -125,6 +125,25 @@ module.exports = {
             .setName('反对票阈值')
             .setDescription('拒绝所需的反对票数')
             .setRequired(true),
+        )
+        .addChannelOption((opt) =>
+          opt
+            .setName('审核频道')
+            .setDescription('进行投票审核的频道（支持论坛和子区了）')
+            .addChannelTypes(
+              ChannelType.GuildText,
+              ChannelType.GuildForum,
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread
+            )
+            .setRequired(false),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('审核频道链接')
+            .setDescription('可粘贴频道/子区链接或ID（与“审核频道”二选一）')
+            .setRequired(false),
         )
         .addRoleOption((opt) =>
           opt
@@ -178,6 +197,112 @@ module.exports = {
           opt
             .setName('拒绝私信模板')
             .setDescription('申请被拒后发送给申请人的私信模板，可用 {roleLabel} {roleName} {applicantMention} {cooldownDays} {cooldownNotice}')
+            .setRequired(false),
+        ),
+    )
+
+    // 子命令：配套身份组配置
+    .addSubcommand((sub) =>
+      sub
+        .setName('配套身份组配置')
+        .setDescription('设置该身份组在「审核通过/直授」时会一并授予的配套身份组')
+        .addRoleOption((opt) =>
+          opt
+            .setName('目标身份组')
+            .setDescription('要配置的主身份组')
+            .setRequired(true),
+        )
+        .addRoleOption((opt) =>
+          opt
+            .setName('配套身份组1')
+            .setDescription('配套身份组（可选）')
+            .setRequired(false),
+        )
+        .addRoleOption((opt) =>
+          opt
+            .setName('配套身份组2')
+            .setDescription('配套身份组（可选）')
+            .setRequired(false),
+        )
+        .addRoleOption((opt) =>
+          opt
+            .setName('配套身份组3')
+            .setDescription('配套身份组（可选）')
+            .setRequired(false),
+        )
+        .addRoleOption((opt) =>
+          opt
+            .setName('配套身份组4')
+            .setDescription('配套身份组（可选）')
+            .setRequired(false),
+        )
+        .addRoleOption((opt) =>
+          opt
+            .setName('配套身份组5')
+            .setDescription('配套身份组（可选）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('清空配套身份组')
+            .setDescription('是否清空已有配套身份组列表后再添加本次给定的')
+            .setRequired(false),
+        ),
+    )
+
+    // 子命令：周期清退配置
+    .addSubcommand((sub) =>
+      sub
+        .setName('周期清退配置')
+        .setDescription('配置周期询问留任/退出、强制清退与 onlyWhenFull 行为')
+        .addRoleOption((opt) =>
+          opt
+            .setName('目标身份组')
+            .setDescription('要配置的身份组')
+            .setRequired(true),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('启用')
+            .setDescription('是否启用周期管理（不填则保持不变）')
+            .setRequired(false),
+        )
+        .addIntegerOption((opt) =>
+          opt
+            .setName('询问周期天数')
+            .setDescription('每隔 N 天询问一次留任/退出（0=不询问，不填=保持不变）')
+            .setMinValue(0)
+            .setRequired(false),
+        )
+        .addIntegerOption((opt) =>
+          opt
+            .setName('强制清退天数')
+            .setDescription('从授予起 N 天后强制退出（0=不强制，不填=保持不变）')
+            .setMinValue(0)
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('满员才执行')
+            .setDescription('onlyWhenFull：仅在身份组满员时才执行询问/清退（不填=保持不变）')
+            .setRequired(false),
+        )
+        .addChannelOption((opt) =>
+          opt
+            .setName('报告频道')
+            .setDescription('发送周期询问/清退报告消息的频道（可选）')
+            .addChannelTypes(
+              ChannelType.GuildText,
+              ChannelType.PublicThread,
+              ChannelType.PrivateThread,
+              ChannelType.AnnouncementThread,
+            )
+            .setRequired(false),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('报告频道链接')
+            .setDescription('可粘贴频道/子区链接或ID（可选；优先级低于“报告频道”）')
             .setRequired(false),
         ),
     )
@@ -243,6 +368,11 @@ module.exports = {
    * @param {import('discord.js').ChatInputCommandInteraction} interaction
    */
   async execute(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+      await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true });
+      return;
+    }
+
     const sub = interaction.options.getSubcommand();
     await interaction.deferReply({ ephemeral: true });
 
@@ -251,6 +381,10 @@ module.exports = {
         await handleBasicConfig(interaction);
       } else if (sub === '审核配置') {
         await handleApprovalConfig(interaction);
+      } else if (sub === '配套身份组配置') {
+        await handleBundleRolesConfig(interaction);
+      } else if (sub === '周期清退配置') {
+        await handleLifecycleConfig(interaction);
       } else if (sub === '申请理由配置') {
         await handleReasonConfig(interaction);
       } else if (sub === '移除配置') {
@@ -267,6 +401,29 @@ module.exports = {
   },
 };
 
+function extractChannelIdFromText(raw) {
+  if (raw == null) return null;
+  const text = String(raw).trim();
+  if (!text) return null;
+
+  // <#channelId>
+  const mention = text.match(/^<#(\d{17,20})>$/);
+  if (mention) return mention[1];
+
+  // https://discord.com/channels/<guildId>/<channelId>/<messageId?>
+  const link = text.match(/channels\/(\d{17,20})\/(\d{17,20})(?:\/(\d{17,20}))?/);
+  if (link) return link[2];
+
+  // pure id
+  if (/^\d{17,20}$/.test(text)) return text;
+
+  // fallback: pick the 2nd snowflake (guildId, channelId, messageId)
+  const ids = text.match(/\d{17,20}/g);
+  if (!ids || ids.length === 0) return null;
+  if (ids.length >= 2) return ids[1];
+  return ids[0];
+}
+
 /**
  * 处理“基础配置”
  */
@@ -280,6 +437,7 @@ async function handleBasicConfig(interaction) {
   const requiredMentioning = interaction.options.getInteger('主动提及数阈值') ?? 0;
   const dailyThreshold = interaction.options.getInteger('每日发言阈值') ?? null;
   const activeDays = interaction.options.getInteger('活跃天数') ?? null;
+  const maxMembersOpt = interaction.options.getInteger('人数上限');
 
   // 若未设置统计频道，但填写了任何活跃度阈值，提示错误
   const anyThresholdSet =
@@ -343,6 +501,15 @@ async function handleBasicConfig(interaction) {
     if (activity) {
       newConditions.activity = activity; // 仅当本次提供了统计频道时才覆盖
     }
+
+    // 人数上限：不填则保持不变；填 0 表示取消上限
+    if (maxMembersOpt !== null && maxMembersOpt !== undefined) {
+      if (maxMembersOpt > 0) {
+        newConditions.capacity = { maxMembers: maxMembersOpt };
+      } else {
+        delete newConditions.capacity;
+      }
+    }
     settings.roles[idx] = {
       roleId,
       label,
@@ -360,14 +527,27 @@ async function handleBasicConfig(interaction) {
     if (activity) {
       base.conditions.activity = activity;
     }
+
+    if (maxMembersOpt !== null && maxMembersOpt !== undefined && maxMembersOpt > 0) {
+      base.conditions.capacity = { maxMembers: maxMembersOpt };
+    }
     settings.roles.push(base);
   }
 
   await saveSelfRoleSettings(interaction.guild.id, settings);
   await updateMonitoredChannels(interaction.guild.id);
+  scheduleActiveUserSelfRolePanelsRefresh(interaction.client, interaction.guild.id, 'role_basic_config_updated');
 
   // 组装回执
   let desc = `**身份组：** <@&${roleId}>\n` + `**显示名称：** ${label}\n` + (description ? `**描述：** ${description}\n` : '');
+  if (maxMembersOpt !== null && maxMembersOpt !== undefined) {
+    desc += `**人数上限：** ${maxMembersOpt > 0 ? maxMembersOpt : '不限制'}\n`;
+  } else {
+    const prevCap = idx >= 0 ? settings.roles[idx]?.conditions?.capacity?.maxMembers : null;
+    if (typeof prevCap === 'number' && prevCap > 0) {
+      desc += `**人数上限：** ${prevCap}\n`;
+    }
+  }
   if (channel) {
     desc += `**统计频道：** <#${channel.id}>\n`;
     desc += `**发言数阈值：** ${Math.max(0, requiredMessages)}\n`;
@@ -390,7 +570,29 @@ async function handleBasicConfig(interaction) {
  */
 async function handleApprovalConfig(interaction) {
   const role = interaction.options.getRole('目标身份组', true);
-  const approvalChannel = interaction.options.getChannel('审核频道', true);
+  const approvalChannelOpt = interaction.options.getChannel('审核频道');
+  const approvalChannelLink = interaction.options.getString('审核频道链接');
+  let approvalChannel = approvalChannelOpt;
+
+  if (!approvalChannel) {
+    const cid = extractChannelIdFromText(approvalChannelLink);
+    if (!cid) {
+      await interaction.editReply({ content: '❌ 请设置“审核频道”或填写“审核频道链接”。' });
+      return;
+    }
+    approvalChannel = await interaction.guild.channels.fetch(cid).catch(() => null);
+    if (!approvalChannel) {
+      await interaction.editReply({ content: '❌ 无法通过“审核频道链接”找到频道/子区，请确认链接或ID正确。' });
+      return;
+    }
+  }
+
+  // 额外校验：避免跨服链接
+  if (approvalChannel.guildId && approvalChannel.guildId !== interaction.guild.id) {
+    await interaction.editReply({ content: '❌ 审核频道不属于当前服务器，请检查链接。' });
+    return;
+  }
+
   const requiredApprovals = interaction.options.getInteger('支持票阈值', true);
   const requiredRejections = interaction.options.getInteger('反对票阈值', true);
   const voter1 = interaction.options.getRole('审核员身份组1');
@@ -490,6 +692,7 @@ async function handleApprovalConfig(interaction) {
   settings.roles[writeIdx] = current;
 
   await saveSelfRoleSettings(interaction.guild.id, settings);
+  scheduleActiveUserSelfRolePanelsRefresh(interaction.client, interaction.guild.id, 'role_approval_config_updated');
 
   const embed = new EmbedBuilder()
     .setTitle('✅ 审核配置成功')
@@ -511,9 +714,163 @@ async function handleApprovalConfig(interaction) {
   await interaction.editReply({ embeds: [embed] });
 }
 
+
+/**
+ * 处理“配套身份组配置”
+ */
+async function handleBundleRolesConfig(interaction) {
+  const role = interaction.options.getRole('目标身份组', true);
+  const bundle1 = interaction.options.getRole('配套身份组1');
+  const bundle2 = interaction.options.getRole('配套身份组2');
+  const bundle3 = interaction.options.getRole('配套身份组3');
+  const bundle4 = interaction.options.getRole('配套身份组4');
+  const bundle5 = interaction.options.getRole('配套身份组5');
+  const clear = interaction.options.getBoolean('清空配套身份组') ?? false;
+
+  let settings = await getSelfRoleSettings(interaction.guild.id);
+  if (!settings) settings = { roles: [] };
+
+  const roleId = role.id;
+  const idx = settings.roles.findIndex((r) => r.roleId === roleId);
+  if (idx < 0) {
+    await interaction.editReply({ content: '❌ 找不到该身份组的配置，请先完成「基础配置」。' });
+    return;
+  }
+
+  const current = settings.roles[idx];
+  const prevList = Array.isArray(current.bundleRoleIds) ? current.bundleRoleIds : [];
+  const next = clear ? [] : [...prevList];
+
+  const incoming = [bundle1, bundle2, bundle3, bundle4, bundle5].filter(Boolean);
+  for (const r of incoming) {
+    if (r.id === roleId) continue;
+    if (!next.includes(r.id)) next.push(r.id);
+  }
+
+  current.bundleRoleIds = next;
+  settings.roles[idx] = current;
+
+  await saveSelfRoleSettings(interaction.guild.id, settings);
+  scheduleActiveUserSelfRolePanelsRefresh(interaction.client, interaction.guild.id, 'role_bundle_config_updated');
+
+  const bundleText = next.length > 0 ? next.map((rid) => `<@&${rid}>`).join('，') : '（无）';
+
+  const embed = new EmbedBuilder()
+    .setTitle('✅ 配套身份组配置成功')
+    .setColor(0x57F287)
+    .setDescription(`**主身份组：** <@&${roleId}>\n**配套身份组：** ${bundleText}`);
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
 /**
  * 处理“申请理由配置”
  */
+
+/**
+ * 处理“周期清退配置”
+ */
+async function handleLifecycleConfig(interaction) {
+  const role = interaction.options.getRole('目标身份组', true);
+  const enabledOpt = interaction.options.getBoolean('启用');
+  const inquiryDaysOpt = interaction.options.getInteger('询问周期天数');
+  const forceRemoveDaysOpt = interaction.options.getInteger('强制清退天数');
+  const onlyWhenFullOpt = interaction.options.getBoolean('满员才执行');
+  const reportChannel = interaction.options.getChannel('报告频道');
+  const reportChannelLink = interaction.options.getString('报告频道链接');
+
+  let settings = await getSelfRoleSettings(interaction.guild.id);
+  if (!settings) settings = { roles: [] };
+
+  const roleId = role.id;
+  const idx = settings.roles.findIndex((r) => r.roleId === roleId);
+  if (idx < 0) {
+    await interaction.editReply({ content: '❌ 找不到该身份组的配置，请先完成「基础配置」。' });
+    return;
+  }
+
+  const current = settings.roles[idx];
+  if (!current.lifecycle || typeof current.lifecycle !== 'object' || Array.isArray(current.lifecycle)) {
+    current.lifecycle = {};
+  }
+
+  if (enabledOpt !== null && enabledOpt !== undefined) {
+    current.lifecycle.enabled = enabledOpt;
+  }
+  if (inquiryDaysOpt !== null && inquiryDaysOpt !== undefined) {
+    current.lifecycle.inquiryDays = inquiryDaysOpt;
+  }
+  if (forceRemoveDaysOpt !== null && forceRemoveDaysOpt !== undefined) {
+    current.lifecycle.forceRemoveDays = forceRemoveDaysOpt;
+  }
+  if (onlyWhenFullOpt !== null && onlyWhenFullOpt !== undefined) {
+    current.lifecycle.onlyWhenFull = onlyWhenFullOpt;
+  }
+  if (reportChannel || reportChannelLink) {
+    let finalChannel = reportChannel;
+    if (!finalChannel) {
+      const cid = extractChannelIdFromText(reportChannelLink);
+      if (!cid) {
+        await interaction.editReply({ content: '❌ 报告频道链接无法解析，请粘贴频道/子区链接或ID。' });
+        return;
+      }
+      finalChannel = await interaction.guild.channels.fetch(cid).catch(() => null);
+      if (!finalChannel) {
+        await interaction.editReply({ content: '❌ 无法通过“报告频道链接”找到频道/子区，请确认链接或ID正确。' });
+        return;
+      }
+    }
+
+    if (finalChannel.guildId && finalChannel.guildId !== interaction.guild.id) {
+      await interaction.editReply({ content: '❌ 报告频道不属于当前服务器，请检查链接。' });
+      return;
+    }
+
+    // 生命周期报告需要可 send 的 text-based 频道/子区
+    if (!finalChannel.isTextBased?.() || finalChannel.type === ChannelType.GuildForum) {
+      await interaction.editReply({ content: '❌ 报告频道必须为文字频道或子区（线程）。不支持直接设置为论坛频道。' });
+      return;
+    }
+
+    current.lifecycle.reportChannelId = finalChannel.id;
+  }
+
+  settings.roles[idx] = current;
+  await saveSelfRoleSettings(interaction.guild.id, settings);
+
+  const cap = current.conditions?.capacity?.maxMembers;
+  const warning = current.lifecycle.onlyWhenFull && !(cap && cap > 0)
+    ? '⚠️ 已开启「满员才执行」，但未配置人数上限；系统将无法可靠判断“满员”。建议先设置「人数上限」。'
+    : '';
+
+  const enabledText = current.lifecycle.enabled ? '启用' : '未启用';
+  const inquiryText = typeof current.lifecycle.inquiryDays === 'number'
+    ? (current.lifecycle.inquiryDays > 0 ? `${current.lifecycle.inquiryDays} 天` : '不询问')
+    : '（保持不变）';
+  const forceText = typeof current.lifecycle.forceRemoveDays === 'number'
+    ? (current.lifecycle.forceRemoveDays > 0 ? `${current.lifecycle.forceRemoveDays} 天` : '不强制')
+    : '（保持不变）';
+  const onlyWhenFullText = typeof current.lifecycle.onlyWhenFull === 'boolean'
+    ? (current.lifecycle.onlyWhenFull ? '是' : '否')
+    : '（保持不变）';
+  const reportText = current.lifecycle.reportChannelId ? `<#${current.lifecycle.reportChannelId}>` : '（未配置）';
+
+  const embed = new EmbedBuilder()
+    .setTitle('✅ 周期清退配置成功')
+    .setColor(0x57F287)
+    .setDescription(
+      `**身份组：** <@&${roleId}>\n` +
+      `**状态：** ${enabledText}\n` +
+      `**询问周期：** ${inquiryText}\n` +
+      `**强制清退：** ${forceText}\n` +
+      `**满员才执行：** ${onlyWhenFullText}\n` +
+      `**报告频道：** ${reportText}` +
+      (warning ? `\n\n${warning}` : '')
+    );
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
 async function handleReasonConfig(interaction) {
   const role = interaction.options.getRole('目标身份组', true);
   const mode = interaction.options.getString('模式') || 'disabled';
@@ -568,6 +925,7 @@ async function handleReasonConfig(interaction) {
   settings.roles[writeIdx] = current;
 
   await saveSelfRoleSettings(interaction.guild.id, settings);
+  scheduleActiveUserSelfRolePanelsRefresh(interaction.client, interaction.guild.id, 'role_reason_config_updated');
 
   const embed = new EmbedBuilder()
     .setTitle('✅ 申请理由配置成功')
@@ -608,6 +966,7 @@ async function handleRemoveConfig(interaction) {
 
   await saveSelfRoleSettings(interaction.guild.id, settings);
   await updateMonitoredChannels(interaction.guild.id);
+  scheduleActiveUserSelfRolePanelsRefresh(interaction.client, interaction.guild.id, 'role_removed');
 
   const embed = new EmbedBuilder()
     .setTitle('✅ 已移除配置')
@@ -651,6 +1010,16 @@ async function handleListConfig(interaction) {
       conditionsLines.push(`- **前置身份组：** <@&${roleConfig.conditions.prerequisiteRoleId}>`);
     }
 
+    // 人数上限
+    if (roleConfig.conditions?.capacity?.maxMembers && roleConfig.conditions.capacity.maxMembers > 0) {
+      conditionsLines.push(`- **人数上限：** ${roleConfig.conditions.capacity.maxMembers}`);
+    }
+
+    // 配套身份组（审核通过/直授时一并授予）
+    if (Array.isArray(roleConfig.bundleRoleIds) && roleConfig.bundleRoleIds.length > 0) {
+      conditionsLines.push(`- **配套身份组：** ${roleConfig.bundleRoleIds.map((rid) => `<@&${rid}>`).join('，')}`);
+    }
+
     // 活跃度
     if (roleConfig.conditions?.activity) {
       const a = roleConfig.conditions.activity;
@@ -689,6 +1058,34 @@ async function handleListConfig(interaction) {
         line += '；已配置拒绝私信';
       }
       conditionsLines.push(line);
+    }
+
+    // 周期清退 / grant 生命周期
+    if (roleConfig.lifecycle) {
+      const lc = roleConfig.lifecycle;
+      const hasAny =
+        lc.enabled === true ||
+        (typeof lc.inquiryDays === 'number' && lc.inquiryDays > 0) ||
+        (typeof lc.forceRemoveDays === 'number' && lc.forceRemoveDays > 0) ||
+        lc.onlyWhenFull === true ||
+        !!lc.reportChannelId;
+
+      if (hasAny) {
+        let line = `- **周期清退：** ${lc.enabled ? '启用' : '未启用'}`;
+        if (typeof lc.inquiryDays === 'number') {
+          line += lc.inquiryDays > 0 ? `；询问周期 **${lc.inquiryDays}** 天` : '；不询问';
+        }
+        if (typeof lc.forceRemoveDays === 'number') {
+          line += lc.forceRemoveDays > 0 ? `；强制清退 **${lc.forceRemoveDays}** 天` : '；不强制';
+        }
+        if (lc.onlyWhenFull) {
+          line += '；仅满员执行';
+        }
+        if (lc.reportChannelId) {
+          line += `；报告频道 <#${lc.reportChannelId}>`;
+        }
+        conditionsLines.push(line);
+      }
     }
 
     // 申请理由

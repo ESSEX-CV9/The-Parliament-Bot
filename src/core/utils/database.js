@@ -1,6 +1,7 @@
 // src\core\utils\database.js
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const Database = require('better-sqlite3');
 
 // 确保数据目录存在
@@ -29,6 +30,89 @@ const SELF_MODERATION_BLACKLIST_FILE = path.join(DATA_DIR, 'selfModerationBlackl
 
 // --- Self Role SQLite Database Initialization ---
 const selfRoleDb = new Database(SELF_ROLE_DB_FILE);
+
+// --- SelfRole 配置 JSON 兼容层（v3 Step 1） ---
+// 说明：当前 role_settings.roles 仍以“角色配置数组”的 JSON 字符串存储。
+// 为保证后续大版本演进的兼容性，读取/写入时统一做结构归一化与容错解析。
+const SELF_ROLE_ROLE_CONFIG_SCHEMA_VERSION = 2;
+
+function safeJsonParse(text, fallback) {
+    try {
+        return JSON.parse(text);
+    } catch (err) {
+        return fallback;
+    }
+}
+
+function normalizeSelfRoleRoleConfig(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        return null;
+    }
+
+    const roleConfig = { ...input };
+
+    // schemaVersion: 用于后续演进（不依赖它判定逻辑，只作为标记）
+    if (typeof roleConfig.schemaVersion !== 'number') {
+        roleConfig.schemaVersion = SELF_ROLE_ROLE_CONFIG_SCHEMA_VERSION;
+    }
+
+    if (typeof roleConfig.roleId !== 'string') {
+        // roleId 缺失则该条配置无效
+        return null;
+    }
+
+    if (typeof roleConfig.label !== 'string') {
+        roleConfig.label = roleConfig.label == null ? '' : String(roleConfig.label);
+    }
+    if (typeof roleConfig.description !== 'string') {
+        roleConfig.description = roleConfig.description == null ? '' : String(roleConfig.description);
+    }
+    if (!roleConfig.conditions || typeof roleConfig.conditions !== 'object' || Array.isArray(roleConfig.conditions)) {
+        roleConfig.conditions = {};
+    }
+
+    // 配套身份组（用于审核通过/直授时一并发放）
+    if (!Array.isArray(roleConfig.bundleRoleIds)) {
+        roleConfig.bundleRoleIds = [];
+    }
+    roleConfig.bundleRoleIds = [...new Set(
+        roleConfig.bundleRoleIds
+            .filter(rid => typeof rid === 'string')
+            .map(rid => rid.trim())
+            .filter(Boolean)
+    )];
+
+    // 生命周期配置（周期询问/强制清退/onlyWhenFull 等）
+    if (!roleConfig.lifecycle || typeof roleConfig.lifecycle !== 'object' || Array.isArray(roleConfig.lifecycle)) {
+        roleConfig.lifecycle = {};
+    }
+    if (typeof roleConfig.lifecycle.enabled !== 'boolean') {
+        roleConfig.lifecycle.enabled = false;
+    }
+    if (roleConfig.lifecycle.inquiryDays != null) {
+        const v = Number(roleConfig.lifecycle.inquiryDays);
+        roleConfig.lifecycle.inquiryDays = Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
+    }
+    if (roleConfig.lifecycle.forceRemoveDays != null) {
+        const v = Number(roleConfig.lifecycle.forceRemoveDays);
+        roleConfig.lifecycle.forceRemoveDays = Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
+    }
+    if (typeof roleConfig.lifecycle.onlyWhenFull !== 'boolean') {
+        roleConfig.lifecycle.onlyWhenFull = false;
+    }
+    if (roleConfig.lifecycle.reportChannelId != null && typeof roleConfig.lifecycle.reportChannelId !== 'string') {
+        roleConfig.lifecycle.reportChannelId = String(roleConfig.lifecycle.reportChannelId);
+    }
+
+    return roleConfig;
+}
+
+function normalizeSelfRoleSettings(input) {
+    const settings = input && typeof input === 'object' ? { ...input } : {};
+    const rolesRaw = Array.isArray(settings.roles) ? settings.roles : [];
+    const roles = rolesRaw.map(normalizeSelfRoleRoleConfig).filter(Boolean);
+    return { ...settings, roles };
+}
 
 function initializeSelfRoleDatabase() {
     // role_settings 表
@@ -110,6 +194,154 @@ function initializeSelfRoleDatabase() {
         console.error('[SelfRole] ❌ 检查/添加 role_applications 扩展列时出错：', migErr);
     }
 
+    // --- SelfRole v2 运行态表（v3 Step 1） ---
+    // 说明：以下表用于承载“名额预留/申请生命周期/grant 生命周期/面板注册/告警”等能力。
+    // 目前仍保留旧表（role_applications 等）用于兼容旧版本流程；后续步骤将逐步切换到 v2 表。
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS sr_applications_v2 (
+            application_id    TEXT PRIMARY KEY,
+            guild_id          TEXT NOT NULL,
+            applicant_id      TEXT NOT NULL,
+            role_id           TEXT NOT NULL,
+            status            TEXT NOT NULL,
+            reason            TEXT,
+            review_message_id TEXT,
+            review_channel_id TEXT,
+            slot_reserved     INTEGER DEFAULT 0,
+            reserved_until    INTEGER,
+            created_at        INTEGER NOT NULL,
+            resolved_at       INTEGER,
+            resolution_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sr_app_v2_guild_role_status
+            ON sr_applications_v2 (guild_id, role_id, status);
+        CREATE INDEX IF NOT EXISTS idx_sr_app_v2_reserved_until
+            ON sr_applications_v2 (reserved_until);
+        CREATE INDEX IF NOT EXISTS idx_sr_app_v2_review_message_id
+            ON sr_applications_v2 (review_message_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_sr_app_v2_pending
+            ON sr_applications_v2 (guild_id, applicant_id, role_id)
+            WHERE status = 'pending';
+    `);
+
+    // 为 sr_applications_v2 表进行列演进：review_channel_id（用于定位审核面板消息所在频道/子区/论坛主题）
+    try {
+        const cols = selfRoleDb.prepare("PRAGMA table_info(sr_applications_v2)").all();
+        const hasReviewChannelId = Array.isArray(cols) && cols.some(c => c.name === 'review_channel_id');
+        if (!hasReviewChannelId) {
+            selfRoleDb.exec("ALTER TABLE sr_applications_v2 ADD COLUMN review_channel_id TEXT");
+            console.log('[SelfRole] 🔧 已为 sr_applications_v2 添加 review_channel_id 列');
+        }
+    } catch (migErr) {
+        console.error('[SelfRole] ❌ 检查/添加 sr_applications_v2 扩展列时出错：', migErr);
+    }
+
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS sr_application_votes (
+            application_id TEXT NOT NULL,
+            voter_id       TEXT NOT NULL,
+            vote           TEXT NOT NULL,
+            reason         TEXT,
+            updated_at     INTEGER NOT NULL,
+            PRIMARY KEY (application_id, voter_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sr_votes_application_id
+            ON sr_application_votes (application_id);
+    `);
+
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS sr_grants (
+            grant_id                  TEXT PRIMARY KEY,
+            guild_id                  TEXT NOT NULL,
+            user_id                   TEXT NOT NULL,
+            primary_role_id           TEXT NOT NULL,
+            application_id            TEXT,
+            granted_at                INTEGER NOT NULL,
+            status                    TEXT NOT NULL,
+            next_inquiry_at           INTEGER,
+            force_remove_at           INTEGER,
+            last_inquiry_at           INTEGER,
+            last_decision             TEXT,
+            ended_at                  INTEGER,
+            ended_reason              TEXT,
+            manual_attention_required INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_sr_grants_guild_role_status
+            ON sr_grants (guild_id, primary_role_id, status);
+        CREATE INDEX IF NOT EXISTS idx_sr_grants_next_inquiry_at
+            ON sr_grants (next_inquiry_at);
+        CREATE INDEX IF NOT EXISTS idx_sr_grants_force_remove_at
+            ON sr_grants (force_remove_at);
+    `);
+
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS sr_grant_roles (
+            grant_id  TEXT NOT NULL,
+            role_id   TEXT NOT NULL,
+            role_kind TEXT NOT NULL,
+            PRIMARY KEY (grant_id, role_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sr_grant_roles_grant_id
+            ON sr_grant_roles (grant_id);
+    `);
+
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS sr_renewal_sessions (
+            session_id              TEXT PRIMARY KEY,
+            grant_id                TEXT NOT NULL,
+            cycle_no                INTEGER NOT NULL,
+            status                  TEXT NOT NULL,
+            dm_message_id           TEXT,
+            asked_at                INTEGER,
+            responded_at            INTEGER,
+            decision                TEXT,
+            report_message_id       TEXT,
+            requires_admin_followup INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_sr_renewal_sessions_grant_id
+            ON sr_renewal_sessions (grant_id);
+        CREATE INDEX IF NOT EXISTS idx_sr_renewal_sessions_status
+            ON sr_renewal_sessions (status);
+        CREATE UNIQUE INDEX IF NOT EXISTS uniq_sr_renewal_sessions_pending_by_grant
+            ON sr_renewal_sessions (grant_id)
+            WHERE status = 'pending';
+    `);
+
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS sr_panels (
+            panel_id         TEXT PRIMARY KEY,
+            guild_id         TEXT NOT NULL,
+            channel_id       TEXT NOT NULL,
+            message_id       TEXT NOT NULL,
+            panel_type       TEXT NOT NULL,
+            is_active        INTEGER DEFAULT 1,
+            created_at       INTEGER NOT NULL,
+            last_rendered_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_sr_panels_guild_type_active
+            ON sr_panels (guild_id, panel_type, is_active);
+    `);
+
+    selfRoleDb.exec(`
+        CREATE TABLE IF NOT EXISTS sr_system_alerts (
+            alert_id       TEXT PRIMARY KEY,
+            guild_id       TEXT NOT NULL,
+            role_id        TEXT,
+            grant_id       TEXT,
+            application_id TEXT,
+            alert_type     TEXT NOT NULL,
+            severity       TEXT NOT NULL,
+            message        TEXT NOT NULL,
+            action_required TEXT,
+            created_at     INTEGER NOT NULL,
+            resolved_at    INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_sr_alerts_guild_resolved_at
+            ON sr_system_alerts (guild_id, resolved_at);
+        CREATE INDEX IF NOT EXISTS idx_sr_alerts_type
+            ON sr_system_alerts (alert_type);
+    `);
+
     console.log('[SelfRole] ✅ SQLite 数据库和表结构初始化完成。');
 }
 
@@ -176,8 +408,10 @@ async function getSelfRoleSettings(guildId) {
     const stmt = selfRoleDb.prepare('SELECT roles, last_successful_save FROM role_settings WHERE guild_id = ?');
     const row = stmt.get(guildId);
     if (!row) return null;
+
+    const normalized = normalizeSelfRoleSettings({ roles: safeJsonParse(row.roles, []) });
     return {
-        roles: JSON.parse(row.roles),
+        roles: normalized.roles,
         lastSuccessfulSave: row.last_successful_save,
     };
 }
@@ -189,6 +423,7 @@ async function getSelfRoleSettings(guildId) {
  * @returns {Promise<object>} 已保存的设置对象。
  */
 async function saveSelfRoleSettings(guildId, data) {
+    const normalized = normalizeSelfRoleSettings(data || {});
     const stmt = selfRoleDb.prepare(`
         INSERT INTO role_settings (guild_id, roles, last_successful_save)
         VALUES (?, ?, ?)
@@ -196,8 +431,8 @@ async function saveSelfRoleSettings(guildId, data) {
             roles = excluded.roles,
             last_successful_save = excluded.last_successful_save
     `);
-    stmt.run(guildId, JSON.stringify(data.roles || []), data.lastSuccessfulSave || null);
-    return data;
+    stmt.run(guildId, JSON.stringify(normalized.roles || []), normalized.lastSuccessfulSave || null);
+    return normalized;
 }
 
 /**
@@ -209,8 +444,9 @@ async function getAllSelfRoleSettings() {
     const rows = stmt.all();
     const settings = {};
     for (const row of rows) {
+        const normalized = normalizeSelfRoleSettings({ roles: safeJsonParse(row.roles, []) });
         settings[row.guild_id] = {
-            roles: JSON.parse(row.roles),
+            roles: normalized.roles,
             lastSuccessfulSave: row.last_successful_save,
         };
     }
@@ -538,8 +774,1060 @@ async function clearSelfRoleCooldown(guildId, roleId, userId) {
  * @returns {Promise<void>}
  */
 async function clearChannelActivity(guildId, channelId) {
-    const stmt = selfRoleDb.prepare('DELETE FROM user_activity WHERE guild_id = ? AND channel_id = ?');
-    stmt.run(guildId, channelId);
+    const transaction = selfRoleDb.transaction((gid, cid) => {
+        // 总活跃度
+        selfRoleDb
+            .prepare('DELETE FROM user_activity WHERE guild_id = ? AND channel_id = ?')
+            .run(gid, cid);
+
+        // 每日活跃度（重要：保持与 user_activity 的重置语义一致）
+        selfRoleDb
+            .prepare('DELETE FROM daily_user_activity WHERE guild_id = ? AND channel_id = ?')
+            .run(gid, cid);
+    });
+
+    transaction(guildId, channelId);
+}
+
+/**
+ * 统计 legacy (role_applications) 表中某身份组的待审核数量。
+ * 注意：legacy 表没有 guild_id，但 role_id 为全局 snowflake，可作为唯一键使用。
+ * @param {string} roleId
+ * @returns {Promise<number>}
+ */
+async function countLegacyPendingSelfRoleApplications(roleId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT COUNT(*) as c
+        FROM role_applications
+        WHERE role_id = ? AND status = 'pending'
+    `);
+    const row = stmt.get(roleId);
+    return row ? row.c : 0;
+}
+
+/**
+ * 统计 v2 (sr_applications_v2) 表中“待审核且已预留名额”的申请数量。
+ * @param {string} guildId
+ * @param {string} roleId
+ * @param {number} nowMs
+ * @returns {Promise<number>}
+ */
+async function countReservedPendingSelfRoleApplicationsV2(guildId, roleId, nowMs = Date.now()) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT COUNT(*) as c
+        FROM sr_applications_v2
+        WHERE guild_id = ?
+          AND role_id = ?
+          AND status = 'pending'
+          AND slot_reserved = 1
+          AND (reserved_until IS NULL OR reserved_until > ?)
+    `);
+    const row = stmt.get(guildId, roleId, nowMs);
+    return row ? row.c : 0;
+}
+
+/**
+ * 获取指定服务器的 active 面板记录。
+ * @param {string} guildId
+ * @param {'user'|'admin'} panelType
+ * @returns {Promise<Array<{panelId:string,guildId:string,channelId:string,messageId:string,panelType:string,isActive:boolean,createdAt:number,lastRenderedAt:number|null}>>}
+ */
+async function getActiveSelfRolePanels(guildId, panelType) {
+    const type = panelType === 'admin' ? 'admin' : 'user';
+    const stmt = selfRoleDb.prepare(`
+        SELECT panel_id, guild_id, channel_id, message_id, panel_type, is_active, created_at, last_rendered_at
+        FROM sr_panels
+        WHERE guild_id = ? AND panel_type = ? AND is_active = 1
+        ORDER BY created_at DESC
+    `);
+    const rows = stmt.all(guildId, type);
+    return rows.map(r => ({
+        panelId: r.panel_id,
+        guildId: r.guild_id,
+        channelId: r.channel_id,
+        messageId: r.message_id,
+        panelType: r.panel_type,
+        isActive: !!r.is_active,
+        createdAt: r.created_at,
+        lastRenderedAt: r.last_rendered_at,
+    }));
+}
+
+/**
+ * 将某服务器内某类型的所有 active 面板标记为 inactive。
+ * @param {string} guildId
+ * @param {'user'|'admin'} panelType
+ * @returns {Promise<number>} changes
+ */
+async function deactivateSelfRolePanels(guildId, panelType) {
+    const type = panelType === 'admin' ? 'admin' : 'user';
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_panels
+        SET is_active = 0
+        WHERE guild_id = ? AND panel_type = ? AND is_active = 1
+    `);
+    const info = stmt.run(guildId, type);
+    return info?.changes || 0;
+}
+
+/**
+ * 将指定 panel_id 标记为 inactive。
+ * @param {string} panelId
+ */
+async function deactivateSelfRolePanel(panelId) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_panels
+        SET is_active = 0
+        WHERE panel_id = ?
+    `);
+    const info = stmt.run(panelId);
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 注册一个新的面板消息，并将同类型旧面板标记为 inactive。
+ * 说明：panel_id 直接使用 messageId，避免额外 ID 生成依赖。
+ * @param {string} guildId
+ * @param {string} channelId
+ * @param {string} messageId
+ * @param {'user'|'admin'} panelType
+ */
+async function registerSelfRolePanelMessage(guildId, channelId, messageId, panelType) {
+    const type = panelType === 'admin' ? 'admin' : 'user';
+    const now = Date.now();
+    const panelId = messageId;
+
+    const tx = selfRoleDb.transaction((gid, cid, mid, pType, ts) => {
+        // 先停用同类面板（每个 guild 默认只保留一个 active）
+        selfRoleDb
+            .prepare('UPDATE sr_panels SET is_active = 0 WHERE guild_id = ? AND panel_type = ? AND is_active = 1')
+            .run(gid, pType);
+
+        // 再插入新面板
+        selfRoleDb
+            .prepare(`
+                INSERT OR REPLACE INTO sr_panels
+                (panel_id, guild_id, channel_id, message_id, panel_type, is_active, created_at, last_rendered_at)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            `)
+            .run(panelId, gid, cid, mid, pType, ts, ts);
+    });
+
+    tx(guildId, channelId, messageId, type, now);
+
+    return {
+        panelId,
+        guildId,
+        channelId,
+        messageId,
+        panelType: type,
+        isActive: true,
+        createdAt: now,
+        lastRenderedAt: now,
+    };
+}
+
+/**
+ * 更新面板的 last_rendered_at。
+ * @param {string} panelId
+ * @param {number} renderedAt
+ * @returns {Promise<boolean>}
+ */
+async function touchSelfRolePanelRenderedAt(panelId, renderedAt = Date.now()) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_panels
+        SET last_rendered_at = ?
+        WHERE panel_id = ?
+    `);
+    const info = stmt.run(renderedAt, panelId);
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 获取一条 v2 申请记录。
+ * @param {string} applicationId
+ * @returns {Promise<null|{
+ *   applicationId:string,
+ *   guildId:string,
+ *   applicantId:string,
+ *   roleId:string,
+ *   status:string,
+ *   reason:string|null,
+ *   reviewMessageId:string|null,
+ *   reviewChannelId:string|null,
+ *   slotReserved:boolean,
+ *   reservedUntil:number|null,
+ *   createdAt:number,
+ *   resolvedAt:number|null,
+ *   resolutionReason:string|null,
+ * }>}
+ */
+async function getSelfRoleApplicationV2(applicationId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT * FROM sr_applications_v2
+        WHERE application_id = ?
+        LIMIT 1
+    `);
+    const row = stmt.get(applicationId);
+    if (!row) return null;
+
+    return {
+        applicationId: row.application_id,
+        guildId: row.guild_id,
+        applicantId: row.applicant_id,
+        roleId: row.role_id,
+        status: row.status,
+        reason: row.reason || null,
+        reviewMessageId: row.review_message_id || null,
+        reviewChannelId: row.review_channel_id || null,
+        slotReserved: !!row.slot_reserved,
+        reservedUntil: row.reserved_until == null ? null : row.reserved_until,
+        createdAt: row.created_at,
+        resolvedAt: row.resolved_at == null ? null : row.resolved_at,
+        resolutionReason: row.resolution_reason || null,
+    };
+}
+
+/**
+ * 通过 review_message_id 查找 v2 申请记录（用于与 legacy 投票面板 message_id 对齐）。
+ * @param {string} reviewMessageId
+ */
+async function getSelfRoleApplicationV2ByReviewMessageId(reviewMessageId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT application_id
+        FROM sr_applications_v2
+        WHERE review_message_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+    `);
+    const row = stmt.get(reviewMessageId);
+    if (!row) return null;
+    return getSelfRoleApplicationV2(row.application_id);
+}
+
+/**
+ * 列出 legacy 表中所有 pending 申请（用于迁移/兼容）。
+ * @returns {Promise<Array<{messageId:string, applicantId:string, roleId:string, status:string, reason:string|null}>>}
+ */
+async function listLegacyPendingSelfRoleApplications() {
+    const stmt = selfRoleDb.prepare(`
+        SELECT message_id, applicant_id, role_id, status, reason
+        FROM role_applications
+        WHERE status = 'pending'
+        ORDER BY message_id DESC
+    `);
+    const rows = stmt.all();
+    return rows.map(r => ({
+        messageId: r.message_id,
+        applicantId: r.applicant_id,
+        roleId: r.role_id,
+        status: r.status,
+        reason: r.reason || null,
+    }));
+}
+
+/**
+ * 创建/更新 v2 申请记录（UPSERT）。
+ * 注意：本函数不做复杂校验，调用方负责保证业务规则。
+ * @param {string} applicationId
+ * @param {object} data
+ */
+async function saveSelfRoleApplicationV2(applicationId, data) {
+    const stmt = selfRoleDb.prepare(`
+        INSERT INTO sr_applications_v2 (
+            application_id,
+            guild_id,
+            applicant_id,
+            role_id,
+            status,
+            reason,
+            review_message_id,
+            review_channel_id,
+            slot_reserved,
+            reserved_until,
+            created_at,
+            resolved_at,
+            resolution_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(application_id) DO UPDATE SET
+            guild_id = excluded.guild_id,
+            applicant_id = excluded.applicant_id,
+            role_id = excluded.role_id,
+            status = excluded.status,
+            reason = excluded.reason,
+            review_message_id = excluded.review_message_id,
+            review_channel_id = excluded.review_channel_id,
+            slot_reserved = excluded.slot_reserved,
+            reserved_until = excluded.reserved_until,
+            created_at = excluded.created_at,
+            resolved_at = excluded.resolved_at,
+            resolution_reason = excluded.resolution_reason
+    `);
+
+    stmt.run(
+        applicationId,
+        data.guildId,
+        data.applicantId,
+        data.roleId,
+        data.status,
+        data.reason || null,
+        data.reviewMessageId || null,
+        data.reviewChannelId || null,
+        data.slotReserved ? 1 : 0,
+        data.reservedUntil == null ? null : data.reservedUntil,
+        data.createdAt,
+        data.resolvedAt == null ? null : data.resolvedAt,
+        data.resolutionReason || null,
+    );
+
+    return {
+        applicationId,
+        ...data,
+    };
+}
+
+/**
+ * 查询是否存在 pending 的 v2 申请（用于防重复）。
+ * @param {string} guildId
+ * @param {string} applicantId
+ * @param {string} roleId
+ */
+async function getPendingSelfRoleApplicationV2ByApplicantRole(guildId, applicantId, roleId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT application_id
+        FROM sr_applications_v2
+        WHERE guild_id = ? AND applicant_id = ? AND role_id = ? AND status = 'pending'
+        ORDER BY created_at DESC
+        LIMIT 1
+    `);
+    const row = stmt.get(guildId, applicantId, roleId);
+    if (!row) return null;
+    return getSelfRoleApplicationV2(row.application_id);
+}
+
+/**
+ * 列出某用户在某服务器的所有 pending v2 申请。
+ * @param {string} guildId
+ * @param {string} applicantId
+ */
+async function listPendingSelfRoleApplicationsV2ByApplicant(guildId, applicantId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT application_id
+        FROM sr_applications_v2
+        WHERE guild_id = ? AND applicant_id = ? AND status = 'pending'
+        ORDER BY created_at DESC
+    `);
+    const rows = stmt.all(guildId, applicantId);
+    return Promise.all(rows.map(r => getSelfRoleApplicationV2(r.application_id)));
+}
+
+/**
+ * 终结一条 v2 申请（approved/rejected/withdrawn/expired 等），并释放预留名额。
+ * @param {string} applicationId
+ * @param {string} status
+ * @param {string} resolutionReason
+ * @param {number} resolvedAt
+ * @returns {Promise<boolean>}
+ */
+async function resolveSelfRoleApplicationV2(applicationId, status, resolutionReason = null, resolvedAt = Date.now()) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_applications_v2
+        SET status = ?,
+            resolved_at = ?,
+            resolution_reason = ?,
+            slot_reserved = 0,
+            reserved_until = NULL
+        WHERE application_id = ?
+    `);
+    const info = stmt.run(status, resolvedAt, resolutionReason, applicationId);
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 扫描并终结所有已过期的 pending 申请（reserved_until <= now）。
+ * @param {number} nowMs
+ * @returns {Promise<Array<ReturnType<typeof getSelfRoleApplicationV2>>>}
+ */
+async function expirePendingSelfRoleApplicationsV2(nowMs = Date.now()) {
+    const selectStmt = selfRoleDb.prepare(`
+        SELECT application_id
+        FROM sr_applications_v2
+        WHERE status = 'pending'
+          AND slot_reserved = 1
+          AND reserved_until IS NOT NULL
+          AND reserved_until <= ?
+        ORDER BY reserved_until ASC
+    `);
+    const rows = selectStmt.all(nowMs);
+    if (!rows || rows.length === 0) return [];
+
+    const appIds = rows.map(r => r.application_id);
+    const apps = await Promise.all(appIds.map(id => getSelfRoleApplicationV2(id)));
+
+    const tx = selfRoleDb.transaction((ids, ts) => {
+        const updateStmt = selfRoleDb.prepare(`
+            UPDATE sr_applications_v2
+            SET status = 'expired',
+                resolved_at = ?,
+                resolution_reason = 'expired',
+                slot_reserved = 0,
+                reserved_until = NULL
+            WHERE application_id = ?
+        `);
+        for (const id of ids) {
+            updateStmt.run(ts, id);
+        }
+    });
+    tx(appIds, nowMs);
+
+    return apps.filter(Boolean);
+}
+
+/**
+ * 获取 grant 记录
+ * @param {string} grantId
+ */
+async function getSelfRoleGrant(grantId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT * FROM sr_grants
+        WHERE grant_id = ?
+        LIMIT 1
+    `);
+    const row = stmt.get(grantId);
+    if (!row) return null;
+
+    return {
+        grantId: row.grant_id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        primaryRoleId: row.primary_role_id,
+        applicationId: row.application_id || null,
+        grantedAt: row.granted_at,
+        status: row.status,
+        nextInquiryAt: row.next_inquiry_at == null ? null : row.next_inquiry_at,
+        forceRemoveAt: row.force_remove_at == null ? null : row.force_remove_at,
+        lastInquiryAt: row.last_inquiry_at == null ? null : row.last_inquiry_at,
+        lastDecision: row.last_decision || null,
+        endedAt: row.ended_at == null ? null : row.ended_at,
+        endedReason: row.ended_reason || null,
+        manualAttentionRequired: !!row.manual_attention_required,
+    };
+}
+
+/**
+ * 获取某用户对某主身份组的 active grant（若存在）。
+ */
+async function getActiveSelfRoleGrantByUserRole(guildId, userId, primaryRoleId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT grant_id
+        FROM sr_grants
+        WHERE guild_id = ? AND user_id = ? AND primary_role_id = ? AND status = 'active'
+        ORDER BY granted_at DESC
+        LIMIT 1
+    `);
+    const row = stmt.get(guildId, userId, primaryRoleId);
+    if (!row) return null;
+    return getSelfRoleGrant(row.grant_id);
+}
+
+/**
+ * 结束某用户对某主身份组的所有 active grants（用于避免重复 active grant）。
+ */
+async function endActiveSelfRoleGrantsForUserRole(guildId, userId, primaryRoleId, endedReason = 'replaced', endedAt = Date.now()) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_grants
+        SET status = 'ended',
+            ended_at = ?,
+            ended_reason = ?
+        WHERE guild_id = ? AND user_id = ? AND primary_role_id = ? AND status = 'active'
+    `);
+    const info = stmt.run(endedAt, endedReason, guildId, userId, primaryRoleId);
+    return info?.changes || 0;
+}
+
+/**
+ * 创建一个新的 active grant，并写入关联的角色集合。
+ * 说明：为保持“只管理 bot 发放对象”的边界，本表仅记录通过本模块发放的角色。
+ * @param {object} params
+ * @param {string} params.guildId
+ * @param {string} params.userId
+ * @param {string} params.primaryRoleId
+ * @param {string|null} params.applicationId
+ * @param {number} params.grantedAt
+ * @param {string[]} params.bundleRoleIds
+ */
+async function createSelfRoleGrant({
+    guildId,
+    userId,
+    primaryRoleId,
+    applicationId = null,
+    grantedAt = Date.now(),
+    bundleRoleIds = [],
+}) {
+    const grantId = randomUUID();
+    const safeBundle = Array.isArray(bundleRoleIds)
+        ? [...new Set(bundleRoleIds.filter(rid => typeof rid === 'string' && rid && rid !== primaryRoleId))]
+        : [];
+
+    const tx = selfRoleDb.transaction((data) => {
+        // 先结束旧的 active grant（若存在）
+        selfRoleDb
+            .prepare(`
+                UPDATE sr_grants
+                SET status = 'ended',
+                    ended_at = ?,
+                    ended_reason = 'replaced'
+                WHERE guild_id = ? AND user_id = ? AND primary_role_id = ? AND status = 'active'
+            `)
+            .run(data.grantedAt, data.guildId, data.userId, data.primaryRoleId);
+
+        // 再插入新 grant
+        selfRoleDb
+            .prepare(`
+                INSERT INTO sr_grants (
+                    grant_id,
+                    guild_id,
+                    user_id,
+                    primary_role_id,
+                    application_id,
+                    granted_at,
+                    status,
+                    next_inquiry_at,
+                    force_remove_at,
+                    last_inquiry_at,
+                    last_decision,
+                    ended_at,
+                    ended_reason,
+                    manual_attention_required
+                ) VALUES (?, ?, ?, ?, ?, ?, 'active', NULL, NULL, NULL, NULL, NULL, NULL, 0)
+            `)
+            .run(
+                data.grantId,
+                data.guildId,
+                data.userId,
+                data.primaryRoleId,
+                data.applicationId,
+                data.grantedAt,
+            );
+
+        const insertRoleStmt = selfRoleDb.prepare(`
+            INSERT OR REPLACE INTO sr_grant_roles (grant_id, role_id, role_kind)
+            VALUES (?, ?, ?)
+        `);
+        insertRoleStmt.run(data.grantId, data.primaryRoleId, 'primary');
+        for (const rid of data.safeBundle) {
+            insertRoleStmt.run(data.grantId, rid, 'bundle');
+        }
+    });
+
+    tx({
+        grantId,
+        guildId,
+        userId,
+        primaryRoleId,
+        applicationId,
+        grantedAt,
+        safeBundle,
+    });
+
+    return {
+        grantId,
+        guildId,
+        userId,
+        primaryRoleId,
+        applicationId,
+        grantedAt,
+        status: 'active',
+        bundleRoleIds: safeBundle,
+    };
+}
+
+/**
+ * 列出某 grant 关联的角色集合。
+ */
+async function listSelfRoleGrantRoles(grantId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT role_id, role_kind
+        FROM sr_grant_roles
+        WHERE grant_id = ?
+        ORDER BY role_kind ASC
+    `);
+    const rows = stmt.all(grantId);
+    return rows.map(r => ({ roleId: r.role_id, roleKind: r.role_kind }));
+}
+
+/**
+ * 统计某个身份组当前被“本模块 grant 记录”占用的现任人数（去重到 user 维度）。
+ *
+ * 口径：仅统计 sr_grants.status='active' 且 sr_grant_roles 包含该 roleId 的记录。
+ * 用途：名额上限/空缺/onlyWhenFull 判断。
+ * 说明：服务器内非 bot 授予的同身份组成员不占用申请名额。
+ *
+ * @param {string} guildId
+ * @param {string} roleId
+ * @returns {Promise<number>}
+ */
+async function countActiveSelfRoleGrantHoldersByRole(guildId, roleId) {
+    if (!guildId || !roleId) return 0;
+    const stmt = selfRoleDb.prepare(`
+        SELECT COUNT(DISTINCT g.user_id) AS cnt
+        FROM sr_grants g
+        INNER JOIN sr_grant_roles r ON r.grant_id = g.grant_id
+        WHERE g.guild_id = ?
+          AND g.status = 'active'
+          AND r.role_id = ?
+    `);
+    const row = stmt.get(guildId, roleId);
+    const n = Number(row?.cnt || 0);
+    return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * 列出所有 active grants
+ */
+async function listAllActiveSelfRoleGrants() {
+    const stmt = selfRoleDb.prepare(`
+        SELECT *
+        FROM sr_grants
+        WHERE status = 'active'
+        ORDER BY granted_at ASC
+    `);
+    const rows = stmt.all();
+    return rows.map(row => ({
+        grantId: row.grant_id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        primaryRoleId: row.primary_role_id,
+        applicationId: row.application_id || null,
+        grantedAt: row.granted_at,
+        status: row.status,
+        nextInquiryAt: row.next_inquiry_at == null ? null : row.next_inquiry_at,
+        forceRemoveAt: row.force_remove_at == null ? null : row.force_remove_at,
+        lastInquiryAt: row.last_inquiry_at == null ? null : row.last_inquiry_at,
+        lastDecision: row.last_decision || null,
+        endedAt: row.ended_at == null ? null : row.ended_at,
+        endedReason: row.ended_reason || null,
+        manualAttentionRequired: !!row.manual_attention_required,
+    }));
+}
+
+/**
+ * 列出指定时间之后结束的 grants（用于一致性巡检）。
+ * @param {number} sinceMs
+ * @param {number} limit
+ */
+async function listEndedSelfRoleGrantsSince(sinceMs, limit = 200) {
+    const safeLimit = Math.max(1, Math.min(500, Number(limit || 200)));
+    const stmt = selfRoleDb.prepare(`
+        SELECT *
+        FROM sr_grants
+        WHERE status = 'ended'
+          AND ended_at IS NOT NULL
+          AND ended_at >= ?
+        ORDER BY ended_at DESC
+        LIMIT ?
+    `);
+    const rows = stmt.all(sinceMs, safeLimit);
+    return rows.map(row => ({
+        grantId: row.grant_id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        primaryRoleId: row.primary_role_id,
+        applicationId: row.application_id || null,
+        grantedAt: row.granted_at,
+        status: row.status,
+        nextInquiryAt: row.next_inquiry_at == null ? null : row.next_inquiry_at,
+        forceRemoveAt: row.force_remove_at == null ? null : row.force_remove_at,
+        lastInquiryAt: row.last_inquiry_at == null ? null : row.last_inquiry_at,
+        lastDecision: row.last_decision || null,
+        endedAt: row.ended_at == null ? null : row.ended_at,
+        endedReason: row.ended_reason || null,
+        manualAttentionRequired: !!row.manual_attention_required,
+    }));
+}
+
+/**
+ * 更新 grant 的调度字段（next_inquiry_at/force_remove_at）
+ */
+async function updateSelfRoleGrantSchedule(grantId, { nextInquiryAt = null, forceRemoveAt = null }) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_grants
+        SET next_inquiry_at = ?,
+            force_remove_at = ?
+        WHERE grant_id = ?
+    `);
+    const info = stmt.run(nextInquiryAt, forceRemoveAt, grantId);
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 更新 grant 的询问相关字段
+ */
+async function updateSelfRoleGrantInquiry(grantId, { lastInquiryAt = null, nextInquiryAt = null }) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_grants
+        SET last_inquiry_at = ?,
+            next_inquiry_at = ?
+        WHERE grant_id = ?
+    `);
+    const info = stmt.run(lastInquiryAt, nextInquiryAt, grantId);
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 写入 grant 的最后决定（stay/leave 等）
+ */
+async function updateSelfRoleGrantLastDecision(grantId, lastDecision) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_grants
+        SET last_decision = ?
+        WHERE grant_id = ?
+    `);
+    const info = stmt.run(lastDecision, grantId);
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 结束 grant
+ */
+async function endSelfRoleGrant(grantId, endedReason = 'ended', endedAt = Date.now()) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_grants
+        SET status = 'ended',
+            ended_at = ?,
+            ended_reason = ?
+        WHERE grant_id = ?
+    `);
+    const info = stmt.run(endedAt, endedReason, grantId);
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 获取 renewal session
+ */
+async function getSelfRoleRenewalSession(sessionId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT *
+        FROM sr_renewal_sessions
+        WHERE session_id = ?
+        LIMIT 1
+    `);
+    const row = stmt.get(sessionId);
+    if (!row) return null;
+    return {
+        sessionId: row.session_id,
+        grantId: row.grant_id,
+        cycleNo: row.cycle_no,
+        status: row.status,
+        dmMessageId: row.dm_message_id || null,
+        askedAt: row.asked_at == null ? null : row.asked_at,
+        respondedAt: row.responded_at == null ? null : row.responded_at,
+        decision: row.decision || null,
+        reportMessageId: row.report_message_id || null,
+        requiresAdminFollowup: !!row.requires_admin_followup,
+    };
+}
+
+/**
+ * 获取某 grant 最新的 pending renewal session（若存在）。
+ */
+async function getPendingSelfRoleRenewalSessionByGrant(grantId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT session_id
+        FROM sr_renewal_sessions
+        WHERE grant_id = ? AND status = 'pending'
+        ORDER BY asked_at DESC
+        LIMIT 1
+    `);
+    const row = stmt.get(grantId);
+    if (!row) return null;
+    return getSelfRoleRenewalSession(row.session_id);
+}
+
+/**
+ * 创建 renewal session（cycle_no 自动递增）
+ */
+async function createSelfRoleRenewalSession({ grantId, status = 'pending', dmMessageId = null, askedAt = Date.now(), reportMessageId = null, requiresAdminFollowup = false }) {
+    const sessionId = randomUUID();
+
+    const tx = selfRoleDb.transaction((data) => {
+        const cycleRow = selfRoleDb
+            .prepare('SELECT IFNULL(MAX(cycle_no), 0) as c FROM sr_renewal_sessions WHERE grant_id = ?')
+            .get(data.grantId);
+        const nextCycle = (cycleRow?.c || 0) + 1;
+
+        selfRoleDb
+            .prepare(`
+                INSERT INTO sr_renewal_sessions (
+                    session_id,
+                    grant_id,
+                    cycle_no,
+                    status,
+                    dm_message_id,
+                    asked_at,
+                    responded_at,
+                    decision,
+                    report_message_id,
+                    requires_admin_followup
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+            `)
+            .run(
+                data.sessionId,
+                data.grantId,
+                nextCycle,
+                data.status,
+                data.dmMessageId,
+                data.askedAt,
+                data.reportMessageId,
+                data.requiresAdminFollowup ? 1 : 0,
+            );
+
+        return nextCycle;
+    });
+
+    const cycleNo = tx({ sessionId, grantId, status, dmMessageId, askedAt, reportMessageId, requiresAdminFollowup });
+    return getSelfRoleRenewalSession(sessionId);
+}
+
+/**
+ * 更新 renewal session
+ */
+async function updateSelfRoleRenewalSession(
+    sessionId,
+    {
+        status,
+        dmMessageId,
+        respondedAt,
+        decision,
+        reportMessageId,
+        requiresAdminFollowup,
+    } = {},
+) {
+    const current = await getSelfRoleRenewalSession(sessionId);
+    if (!current) return false;
+
+    const nextStatus = status === undefined ? current.status : status;
+    const nextDmMessageId = dmMessageId === undefined ? current.dmMessageId : dmMessageId;
+    const nextRespondedAt = respondedAt === undefined ? current.respondedAt : respondedAt;
+    const nextDecision = decision === undefined ? current.decision : decision;
+    const nextReportMessageId = reportMessageId === undefined ? current.reportMessageId : reportMessageId;
+    const nextRequires = requiresAdminFollowup === undefined ? current.requiresAdminFollowup : requiresAdminFollowup;
+
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_renewal_sessions
+        SET status = ?,
+            dm_message_id = ?,
+            responded_at = ?,
+            decision = ?,
+            report_message_id = ?,
+            requires_admin_followup = ?
+        WHERE session_id = ?
+    `);
+    const info = stmt.run(
+        nextStatus,
+        nextDmMessageId,
+        nextRespondedAt,
+        nextDecision,
+        nextReportMessageId,
+        nextRequires ? 1 : 0,
+        sessionId,
+    );
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 将某 grant 标记为需要管理员介入（manual_attention_required）。
+ * @param {string} grantId
+ * @param {boolean} required
+ */
+async function setSelfRoleGrantManualAttentionRequired(grantId, required = true) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_grants
+        SET manual_attention_required = ?
+        WHERE grant_id = ?
+    `);
+    const info = stmt.run(required ? 1 : 0, grantId);
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 创建一条 SelfRole 系统告警（sr_system_alerts）。
+ */
+async function createSelfRoleSystemAlert({
+    guildId,
+    roleId = null,
+    grantId = null,
+    applicationId = null,
+    alertType,
+    severity = 'medium',
+    message,
+    actionRequired = null,
+    createdAt = Date.now(),
+}) {
+    const alertId = randomUUID();
+
+    const stmt = selfRoleDb.prepare(`
+        INSERT INTO sr_system_alerts (
+            alert_id,
+            guild_id,
+            role_id,
+            grant_id,
+            application_id,
+            alert_type,
+            severity,
+            message,
+            action_required,
+            created_at,
+            resolved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    `);
+
+    stmt.run(
+        alertId,
+        guildId,
+        roleId,
+        grantId,
+        applicationId,
+        alertType,
+        severity,
+        String(message || ''),
+        actionRequired ? String(actionRequired) : null,
+        createdAt,
+    );
+
+    return {
+        alertId,
+        guildId,
+        roleId,
+        grantId,
+        applicationId,
+        alertType,
+        severity,
+        message: String(message || ''),
+        actionRequired: actionRequired ? String(actionRequired) : null,
+        createdAt,
+        resolvedAt: null,
+    };
+}
+
+/**
+ * 列出某服务器未解决的 SelfRole 告警。
+ */
+async function listActiveSelfRoleSystemAlerts(guildId, limit = 50) {
+    const safeLimit = Math.max(1, Math.min(200, Number(limit || 50)));
+    const stmt = selfRoleDb.prepare(`
+        SELECT *
+        FROM sr_system_alerts
+        WHERE guild_id = ? AND resolved_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT ?
+    `);
+    const rows = stmt.all(guildId, safeLimit);
+    return rows.map(r => ({
+        alertId: r.alert_id,
+        guildId: r.guild_id,
+        roleId: r.role_id || null,
+        grantId: r.grant_id || null,
+        applicationId: r.application_id || null,
+        alertType: r.alert_type,
+        severity: r.severity,
+        message: r.message,
+        actionRequired: r.action_required || null,
+        createdAt: r.created_at,
+        resolvedAt: r.resolved_at,
+    }));
+}
+
+/**
+ * 获取一条 SelfRole 告警
+ */
+async function getSelfRoleSystemAlert(alertId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT *
+        FROM sr_system_alerts
+        WHERE alert_id = ?
+        LIMIT 1
+    `);
+    const r = stmt.get(alertId);
+    if (!r) return null;
+    return {
+        alertId: r.alert_id,
+        guildId: r.guild_id,
+        roleId: r.role_id || null,
+        grantId: r.grant_id || null,
+        applicationId: r.application_id || null,
+        alertType: r.alert_type,
+        severity: r.severity,
+        message: r.message,
+        actionRequired: r.action_required || null,
+        createdAt: r.created_at,
+        resolvedAt: r.resolved_at,
+    };
+}
+
+/**
+ * 统计某 grant 未解决告警数量。
+ */
+async function countActiveSelfRoleSystemAlertsByGrant(grantId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT COUNT(*) as c
+        FROM sr_system_alerts
+        WHERE grant_id = ? AND resolved_at IS NULL
+    `);
+    const row = stmt.get(grantId);
+    return row ? row.c : 0;
+}
+
+/**
+ * 查询某 grant + alertType 是否已存在未解决告警（用于去重）。
+ */
+async function getActiveSelfRoleSystemAlertByGrantType(grantId, alertType) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT alert_id
+        FROM sr_system_alerts
+        WHERE grant_id = ?
+          AND alert_type = ?
+          AND resolved_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+    `);
+    const row = stmt.get(grantId, alertType);
+    if (!row) return null;
+    return getSelfRoleSystemAlert(row.alert_id);
+}
+
+/**
+ * 查询某 application + alertType 是否已存在未解决告警（用于去重）。
+ * @param {string|null} applicationId
+ * @param {string} alertType
+ */
+async function getActiveSelfRoleSystemAlertByApplicationType(applicationId, alertType) {
+    if (!applicationId) return null;
+    const stmt = selfRoleDb.prepare(`
+        SELECT alert_id
+        FROM sr_system_alerts
+        WHERE application_id = ?
+          AND alert_type = ?
+          AND resolved_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+    `);
+    const row = stmt.get(applicationId, alertType);
+    if (!row) return null;
+    return getSelfRoleSystemAlert(row.alert_id);
+}
+
+/**
+ * 解决一条 SelfRole 告警。
+ */
+async function resolveSelfRoleSystemAlert(alertId, resolvedAt = Date.now()) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_system_alerts
+        SET resolved_at = ?
+        WHERE alert_id = ?
+    `);
+    const info = stmt.run(resolvedAt, alertId);
+    return (info?.changes || 0) > 0;
 }
 
 
@@ -2003,6 +3291,51 @@ module.exports = {
     getSelfRoleCooldown,
     clearSelfRoleCooldown,
     clearChannelActivity,
+    countLegacyPendingSelfRoleApplications,
+    countReservedPendingSelfRoleApplicationsV2,
+    getActiveSelfRolePanels,
+    deactivateSelfRolePanels,
+    deactivateSelfRolePanel,
+    registerSelfRolePanelMessage,
+    touchSelfRolePanelRenderedAt,
+    // SelfRole v2 applications
+    getSelfRoleApplicationV2,
+    getSelfRoleApplicationV2ByReviewMessageId,
+    saveSelfRoleApplicationV2,
+    getPendingSelfRoleApplicationV2ByApplicantRole,
+    listPendingSelfRoleApplicationsV2ByApplicant,
+    listLegacyPendingSelfRoleApplications,
+    resolveSelfRoleApplicationV2,
+    expirePendingSelfRoleApplicationsV2,
+
+    // SelfRole grants
+    getSelfRoleGrant,
+    getActiveSelfRoleGrantByUserRole,
+    endActiveSelfRoleGrantsForUserRole,
+    createSelfRoleGrant,
+    listSelfRoleGrantRoles,
+    countActiveSelfRoleGrantHoldersByRole,
+    listAllActiveSelfRoleGrants,
+    listEndedSelfRoleGrantsSince,
+    updateSelfRoleGrantSchedule,
+    updateSelfRoleGrantInquiry,
+    updateSelfRoleGrantLastDecision,
+    endSelfRoleGrant,
+    // renewal sessions
+    getSelfRoleRenewalSession,
+    getPendingSelfRoleRenewalSessionByGrant,
+    createSelfRoleRenewalSession,
+    updateSelfRoleRenewalSession,
+
+    // SelfRole alerts / admin attention
+    setSelfRoleGrantManualAttentionRequired,
+    createSelfRoleSystemAlert,
+    listActiveSelfRoleSystemAlerts,
+    getSelfRoleSystemAlert,
+    countActiveSelfRoleSystemAlertsByGrant,
+    getActiveSelfRoleSystemAlertByGrantType,
+    getActiveSelfRoleSystemAlertByApplicationType,
+    resolveSelfRoleSystemAlert,
 
     // 自助管理黑名单相关导出
     getSelfModerationBlacklist,
