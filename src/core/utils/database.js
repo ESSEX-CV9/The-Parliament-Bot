@@ -2502,6 +2502,8 @@ async function saveSelfModerationGlobalCooldown(guildId, type, cooldownMinutes) 
         settings[guildId].deleteCooldownMinutes = cooldownMinutes;
     } else if (type === 'mute') {
         settings[guildId].muteCooldownMinutes = cooldownMinutes;
+    } else if (type === 'serious_mute') {
+        settings[guildId].seriousMuteCooldownMinutes = cooldownMinutes;
     }
     
     settings[guildId].updatedAt = new Date().toISOString();
@@ -2522,6 +2524,20 @@ async function getSelfModerationGlobalCooldown(guildId, type) {
         return settings[guildId].deleteCooldownMinutes || 0;
     } else if (type === 'mute') {
         return settings[guildId].muteCooldownMinutes || 0;
+    } else if (type === 'serious_mute') {
+        if (settings[guildId].seriousMuteCooldownMinutes !== undefined) {
+            return settings[guildId].seriousMuteCooldownMinutes || 0;
+        }
+
+        // 一次性迁移旧配置：首次访问严肃禁言冷却时，将旧的禁言冷却固化为独立字段
+        if (settings[guildId].muteCooldownMinutes !== undefined) {
+            settings[guildId].seriousMuteCooldownMinutes = settings[guildId].muteCooldownMinutes;
+            settings[guildId].updatedAt = new Date().toISOString();
+            writeSelfModerationSettings(settings);
+            return settings[guildId].seriousMuteCooldownMinutes || 0;
+        }
+
+        return 0;
     }
     
     return 0;

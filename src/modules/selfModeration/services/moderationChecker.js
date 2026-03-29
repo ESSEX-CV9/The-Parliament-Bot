@@ -1,6 +1,6 @@
 // src\modules\selfModeration\services\moderationChecker.js
 const { getAllSelfModerationVotes, updateSelfModerationVote, deleteSelfModerationVote } = require('../../../core/utils/database');
-const { getCheckIntervals, MUTE_DURATIONS, SERIOUS_MUTE_STABILITY_CONFIG } = require('../../../core/config/timeconfig');
+const { getCheckIntervals, MUTE_DURATIONS, SERIOUS_MUTE_STABILITY_CONFIG, getSeriousMuteTotalDurationMinutes } = require('../../../core/config/timeconfig');
 const { batchCheckReactions, checkReactionThreshold } = require('./reactionTracker');
 const { executeDeleteMessage, executeMuteUser, checkAndDeleteUserMessage, getCurrentMuteDuration } = require('./punishmentExecutor');
 const { EmbedBuilder } = require('discord.js');
@@ -406,8 +406,7 @@ async function handleSeriousMuteJumpOnExpire(client, vote) {
         
         // 计算新的 levelIndex
         const newLevelIndex = prev + finalMultiplier;
-        const table = [10, 20, 30, 60, 120, 240, 360, 480, 600];
-        const newTotalMinutes = newLevelIndex >= 10 ? 720 : table[newLevelIndex - 1];
+        const newTotalMinutes = getSeriousMuteTotalDurationMinutes(newLevelIndex);
         
         // 获取当前已执行的禁言时长
         const currentExecutedMinutes = getCurrentMuteDuration(executedActions);

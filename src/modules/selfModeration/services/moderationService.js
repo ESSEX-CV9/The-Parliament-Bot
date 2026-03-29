@@ -6,7 +6,7 @@ const { parseMessageUrl, isMessageFromSameGuild, formatMessageLink } = require('
 const { validateChannel, checkBotPermissions } = require('../utils/channelValidator');
 const { createOrMergeVote, checkConflictingVote, formatVoteInfo } = require('./votingManager');
 const { getShitReactionCount } = require('./reactionTracker');
-const { getSelfModerationVoteEndTime, DELETE_THRESHOLD, MUTE_DURATIONS, getCurrentTimeMode, computeSeriousBase, SERIOUS_MUTE_STABILITY_CONFIG } = require('../../../core/config/timeconfig');
+const { getSelfModerationVoteEndTime, DELETE_THRESHOLD, MUTE_DURATIONS, getCurrentTimeMode, computeSeriousBase, SERIOUS_MUTE_STABILITY_CONFIG, getSeriousMuteTotalDurationMinutes } = require('../../../core/config/timeconfig');
 const { getRecentSeriousMuteCount } = require('./seriousMuteHistory');
 const { formatDuration } = require('../utils/timeCalculator');
 
@@ -339,16 +339,19 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
         if (type === 'serious_mute') {
             // 严肃禁言分支：红色样式 + 额外字段
             const base0 = MUTE_DURATIONS.LEVEL_1.threshold;
-            const base = Math.ceil(base0 * 1.5);
+            const base = typeof voteData.seriousBase === 'number'
+                ? voteData.seriousBase
+                : computeSeriousBase(base0);
 
             // 近15天累计次数
             const guildId = voteData.guildId;
-            const prev = await getRecentSeriousMuteCount(guildId, targetUserId);
+            const prev = typeof voteData.initialPrev === 'number'
+                ? voteData.initialPrev
+                : await getRecentSeriousMuteCount(guildId, targetUserId);
 
             // 若仅达基础反应的最低禁言时长
             const levelIndexMin = prev + 1;
-            const baseMinutesList = [10, 20, 30, 60, 120, 240, 360, 480, 600]; // A1 映射
-            const minutesMin = levelIndexMin >= 10 ? 720 : baseMinutesList[levelIndexMin - 1];
+            const minutesMin = getSeriousMuteTotalDurationMinutes(levelIndexMin);
             const minutesMinHuman = formatDuration(minutesMin);
 
             const seriousExecutionCondition = `${base}个🚫开始严肃禁言 (${currentTimeMode})`;

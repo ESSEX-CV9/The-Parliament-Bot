@@ -28,6 +28,16 @@ const data = new SlashCommandBuilder()
                     .setMaxValue(1440))) // 最多24小时
     .addSubcommand(subcommand =>
         subcommand
+            .setName('严肃禁言冷却')
+            .setDescription('设置所有用户使用严肃禁言功能的冷却时间')
+            .addIntegerOption(option =>
+                option.setName('冷却时间')
+                    .setDescription('冷却时间（分钟，0表示无冷却）')
+                    .setRequired(true)
+                    .setMinValue(0)
+                    .setMaxValue(1440))) // 最多24小时
+    .addSubcommand(subcommand =>
+        subcommand
             .setName('查看设置')
             .setDescription('查看当前的全局冷却时间设置'));
 
@@ -62,6 +72,9 @@ async function execute(interaction) {
             case '禁言冷却':
                 await handleSetGlobalCooldown(interaction, 'mute');
                 break;
+            case '严肃禁言冷却':
+                await handleSetGlobalCooldown(interaction, 'serious_mute');
+                break;
             case '查看设置':
                 await handleViewGlobalCooldown(interaction);
                 break;
@@ -91,7 +104,12 @@ async function handleSetGlobalCooldown(interaction, type) {
     try {
         const cooldownMinutes = interaction.options.getInteger('冷却时间');
         
-        const actionName = type === 'delete' ? '删除消息' : '禁言用户';
+        let actionName = '禁言用户';
+        if (type === 'delete') {
+            actionName = '删除消息';
+        } else if (type === 'serious_mute') {
+            actionName = '严肃禁言';
+        }
         
         // 保存全局冷却时间设置
         await saveSelfModerationGlobalCooldown(interaction.guild.id, type, cooldownMinutes);
@@ -130,6 +148,7 @@ async function handleViewGlobalCooldown(interaction) {
         // 获取全局冷却时间设置
         const deleteCooldown = await getSelfModerationGlobalCooldown(interaction.guild.id, 'delete');
         const muteCooldown = await getSelfModerationGlobalCooldown(interaction.guild.id, 'mute');
+        const seriousMuteCooldown = await getSelfModerationGlobalCooldown(interaction.guild.id, 'serious_mute');
         
         let response = `**🕐 自助管理全局冷却时间设置**\n\n`;
         
@@ -157,6 +176,19 @@ async function handleViewGlobalCooldown(interaction) {
             response += `🔇 **禁言用户冷却：** ${timeText}\n`;
         } else {
             response += `🔇 **禁言用户冷却：** 无限制\n`;
+        }
+
+        // 严肃禁言冷却
+        if (seriousMuteCooldown > 0) {
+            const hours = Math.floor(seriousMuteCooldown / 60);
+            const minutes = seriousMuteCooldown % 60;
+            let timeText = '';
+            if (hours > 0) timeText += `${hours}小时`;
+            if (minutes > 0) timeText += `${minutes}分钟`;
+
+            response += `🚨 **严肃禁言冷却：** ${timeText}\n`;
+        } else {
+            response += `🚨 **严肃禁言冷却：** 无限制\n`;
         }
         
         response += `\n💡 **说明：** 这些设置对服务器内所有用户生效。每个用户使用功能后需要等待相应时间才能再次使用。`;

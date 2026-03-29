@@ -1,7 +1,7 @@
 // src\modules\selfModeration\services\punishmentExecutor.js
 const { updateSelfModerationVote } = require('../../../core/utils/database');
 const { calculateAdditionalMuteDuration, formatDuration } = require('../utils/timeCalculator');
-const { MUTE_DURATIONS, SERIOUS_MUTE_STABILITY_CONFIG } = require('../../../core/config/timeconfig');
+const { MUTE_DURATIONS, SERIOUS_MUTE_STABILITY_CONFIG, getSeriousMuteTotalDurationMinutes } = require('../../../core/config/timeconfig');
 const { archiveDeletedMessage } = require('./archiveService');
 const { getRecentSeriousMuteCount, appendSeriousMuteEvent } = require('./seriousMuteHistory');
 
@@ -243,8 +243,7 @@ async function executeMuteUser(client, voteData) {
             // multiplier 固定为 1（投票期间不跳级），跳级在投票结束时统一计算
             const multiplier = 1;
             const levelIndex = prevFrozen + multiplier;
-            const table = [10, 20, 30, 60, 120, 240, 360, 480, 600];
-            const targetTotalMinutes = levelIndex >= 10 ? 720 : table[levelIndex - 1];
+            const targetTotalMinutes = getSeriousMuteTotalDurationMinutes(levelIndex);
 
             const lastTarget = typeof voteData.lastTargetTotalMinutes === 'number' ? voteData.lastTargetTotalMinutes : 0;
             const currentExecuted = getCurrentMuteDuration(executedActions);
@@ -512,7 +511,7 @@ async function executeMuteUser(client, voteData) {
         
         // 更新投票状态为失败
         try {
-            await updateSelfModerationVote(voteData.guildId, voteData.targetMessageId, 'mute', {
+            await updateSelfModerationVote(voteData.guildId, voteData.targetMessageId, voteData.type || 'mute', {
                 status: 'failed',
                 error: error.message,
                 failedAt: new Date().toISOString()
@@ -584,6 +583,7 @@ async function delayedDeleteMessage(client, deleteVoteData, muteVoteData) {
 async function deleteMessageAfterVoteEnd(client, voteData) {
     try {
         const { guildId, targetChannelId, targetMessageId, targetMessageExists } = voteData;
+        const recordType = voteData.type || 'mute';
         
         console.log(`投票结束，开始删除消息: ${targetMessageId}, 消息存在: ${targetMessageExists}`);
         
@@ -601,7 +601,7 @@ async function deleteMessageAfterVoteEnd(client, voteData) {
         const deleteResult = await deleteAndArchiveMessage(client, voteData);
         
         // 更新投票记录
-        await updateSelfModerationVote(guildId, targetMessageId, 'mute', {
+        await updateSelfModerationVote(guildId, targetMessageId, recordType, {
             messageDeleted: deleteResult.success,
             messageArchived: deleteResult.archived,
             messageDeletedAt: new Date().toISOString()
