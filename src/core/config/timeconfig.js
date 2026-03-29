@@ -118,11 +118,20 @@ const SERIOUS_MUTE_STABILITY_CONFIG = {
     LIMIT_SINGLE_STEP_JUMP: null // 单次跳级上限，null 表示不限制
 };
 
+// 严肃禁言累计时长阶梯（分钟）
+const SERIOUS_MUTE_DURATION_STEPS_MINUTES = [180, 360, 720, 1440, 2880, 4320];
+
 // 计算严肃禁言基准阈值：ceil(base0*1.5)，并应用下限保护
 function computeSeriousBase(base0) {
     const computed = Math.ceil(base0 * 1.5);
     const minBase = SERIOUS_MUTE_STABILITY_CONFIG.MIN_BASE || 5;
     return Math.max(computed, minBase);
+}
+
+function getSeriousMuteTotalDurationMinutes(levelIndex) {
+    const normalizedLevelIndex = Math.max(1, Number(levelIndex) || 1);
+    const stepIndex = Math.min(normalizedLevelIndex, SERIOUS_MUTE_DURATION_STEPS_MINUTES.length) - 1;
+    return SERIOUS_MUTE_DURATION_STEPS_MINUTES[stepIndex];
 }
 
 // 禁言时长配置（分钟）- 保留用于兼容性，但已改为使用线性计算
@@ -364,5 +373,7 @@ module.exports = {
     MUTE_STATUS_CHECK_CONFIG,
     // 严肃禁言稳定性默认参数与计算工具导出
     SERIOUS_MUTE_STABILITY_CONFIG,
-    computeSeriousBase
+    SERIOUS_MUTE_DURATION_STEPS_MINUTES,
+    computeSeriousBase,
+    getSeriousMuteTotalDurationMinutes
 };
