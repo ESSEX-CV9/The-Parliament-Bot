@@ -2,6 +2,7 @@
 
 const { ActionRowBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getSelfRoleSettings, saveSelfRoleSettings } = require('../../../core/utils/database');
+const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 const { updateMonitoredChannels } = require('./activityTracker');
 
 const ROLES_PER_PAGE = 25;
@@ -11,6 +12,11 @@ const ROLES_PER_PAGE = 25;
  * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleAddRoleButton(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+        await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true }).catch(() => {});
+        return;
+    }
+
     await interaction.deferReply({ ephemeral: true });
 
     const allRoles = await interaction.guild.roles.fetch();
@@ -43,6 +49,11 @@ async function handleAddRoleButton(interaction) {
  * @param {import('discord.js').StringSelectMenuInteraction} interaction - 字符串选择菜单交互对象。
  */
 async function handleRoleSelectForAdd(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+        await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true }).catch(() => {});
+        return;
+    }
+
     const roleId = interaction.values[0];
     const role = await interaction.guild.roles.fetch(roleId);
 
@@ -102,6 +113,11 @@ async function handleRoleSelectForAdd(interaction) {
  * @param {import('discord.js').ModalSubmitInteraction} interaction - 模态框提交交互对象。
  */
 async function handleModalSubmit(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+        await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true }).catch(() => {});
+        return;
+    }
+
     await interaction.deferReply({ ephemeral: true });
 
     const isEdit = interaction.customId.startsWith('admin_edit_role_modal_');
@@ -328,6 +344,11 @@ async function handleModalSubmit(interaction) {
  * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleRemoveRoleButton(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+        await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true }).catch(() => {});
+        return;
+    }
+
     await interaction.deferReply({ ephemeral: true });
 
     const settings = await getSelfRoleSettings(interaction.guild.id);
@@ -354,6 +375,11 @@ async function handleRemoveRoleButton(interaction) {
  * @param {import('discord.js').StringSelectMenuInteraction} interaction - 字符串选择菜单交互对象。
  */
 async function handleRoleSelectForRemove(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+        await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true }).catch(() => {});
+        return;
+    }
+
     await interaction.deferReply({ ephemeral: true });
     const roleIdToRemove = interaction.values[0];
     const guildId = interaction.guild.id;
@@ -388,6 +414,11 @@ async function handleRoleSelectForRemove(interaction) {
  * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleListRolesButton(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+        await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true }).catch(() => {});
+        return;
+    }
+
     await interaction.deferReply({ ephemeral: true });
 
     const settings = await getSelfRoleSettings(interaction.guild.id);
@@ -524,6 +555,11 @@ function createPagedRoleSelectMenu(roles, page, totalPages, type) {
  * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleRoleListPageChange(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+        await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true }).catch(() => {});
+        return;
+    }
+
     await interaction.deferUpdate();
     const [,,, type, pageStr] = interaction.customId.split('_');
     const page = parseInt(pageStr);
@@ -554,6 +590,11 @@ async function handleRoleListPageChange(interaction) {
  * @param {import('discord.js').ButtonInteraction} interaction - 按钮交互对象。
  */
 async function handleEditRoleButton(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+        await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true }).catch(() => {});
+        return;
+    }
+
     await interaction.deferReply({ ephemeral: true });
 
     const settings = await getSelfRoleSettings(interaction.guild.id);
@@ -580,6 +621,11 @@ async function handleEditRoleButton(interaction) {
  * @param {import('discord.js').StringSelectMenuInteraction} interaction - 字符串选择菜单交互对象。
  */
 async function handleRoleSelectForEdit(interaction) {
+    if (!checkAdminPermission(interaction.member)) {
+        await interaction.reply({ content: getPermissionDeniedMessage(), ephemeral: true }).catch(() => {});
+        return;
+    }
+
     const roleId = interaction.values[0];
     const settings = await getSelfRoleSettings(interaction.guild.id);
     const roleConfig = settings.roles.find(r => r.roleId === roleId);

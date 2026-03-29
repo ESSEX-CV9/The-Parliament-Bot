@@ -1,6 +1,21 @@
 // src/core/index.js
 require('dotenv').config();
 
+// --- 进程级兜底日志（避免“Discord 无响应但控制台无日志”难以排查） ---
+// 可选：设置 FATAL_EXIT_ON_EXCEPTION=true，在发生 uncaughtException 时直接退出（建议配合进程守护工具使用）。
+const FATAL_EXIT_ON_EXCEPTION = String(process.env.FATAL_EXIT_ON_EXCEPTION || '').toLowerCase() === 'true';
+
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ [Process] unhandledRejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('❌ [Process] uncaughtException:', err);
+    if (FATAL_EXIT_ON_EXCEPTION) {
+        process.exit(1);
+    }
+});
+
 const {
     Client,
     Collection,
@@ -19,6 +34,9 @@ const { startElectionScheduler } = require('../modules/election/services/electio
 const { printTimeConfig } = require('./config/timeconfig');
 const { startActivityTracker } = require('../modules/selfRole/services/activityTracker');
 const { syncMissedActivity } = require('../modules/selfRole/services/autoSyncService');
+const { startSelfRoleApplicationChecker } = require('../modules/selfRole/services/applicationChecker');
+const { startSelfRoleLifecycleScheduler } = require('../modules/selfRole/services/lifecycleScheduler');
+const { startSelfRoleConsistencyChecker } = require('../modules/selfRole/services/consistencyChecker');
 
 // 身份组同步系统（多服务器）
 const {
@@ -149,6 +167,15 @@ const checkActivityCommand = require('../modules/selfRole/commands/checkActivity
 const debugRolesCommand = require('../modules/selfRole/commands/debugRoles'); // 调试命令
 const clearCooldownCommand = require('../modules/selfRole/commands/clearCooldown');
 const configureRolesCommand = require('../modules/selfRole/commands/configureRoles');
+const withdrawSelfRoleApplicationCommand = require('../modules/selfRole/commands/withdrawApplication');
+const selfRoleOpsCommand = require('../modules/selfRole/commands/selfRoleOps');
+const selfRoleWizardCommand = require('../modules/selfRole/commands/selfRoleWizard');
+let selfRoleTestCommand = null;
+if (String(process.env.SELF_ROLE_ENABLE_TEST_COMMANDS || '').toLowerCase() === 'true') {
+    // 仅在测试环境启用（避免生产环境误注册）
+    selfRoleTestCommand = require('../modules/selfRole/commands/selfRoleTest');
+    console.log('[SelfRole] 🧪 SELF_ROLE_ENABLE_TEST_COMMANDS=true：已启用自助身份组测试命令注册。');
+}
 
 // 身份组同步系统命令
 const roleSyncConfigCommand = require('../modules/roleSync/commands/roleSyncConfig');
@@ -164,6 +191,11 @@ const controlledInviteParamsCommand = require('../modules/controlledInvite/comma
 const controlledInviteToggleCommand = require('../modules/controlledInvite/commands/controlledInviteToggle');
 const viewMyControlledInviteStatusCommand = require('../modules/controlledInvite/commands/viewMyControlledInviteStatus');
 
+const DISCORD_REST_TIMEOUT_MS = (() => {
+    const n = Number(process.env.DISCORD_REST_TIMEOUT_MS);
+    return Number.isFinite(n) && n > 0 ? n : 15000;
+})();
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -173,9 +205,48 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
     ],
     rest: {
-        requestTimeout: 60000, // 将超时时间设置为 60 秒
+        // REST 请求超时（ms）。避免网络异常时请求长时间挂起导致交互无响应。
+        timeout: DISCORD_REST_TIMEOUT_MS,
     },
 });
+
+// --- Discord 客户端/REST 诊断日志（用于定位“无响应但无日志”） ---
+client.on('error', (err) => {
+    console.error('❌ [Discord] client error:', err);
+});
+client.on('warn', (info) => {
+    console.warn('⚠️ [Discord] client warn:', info);
+});
+client.on('shardError', (err, shardId) => {
+    console.error(`❌ [Discord] shardError shard=${shardId}:`, err);
+});
+client.on('shardDisconnect', (event, shardId) => {
+    console.warn(`⚠️ [Discord] shardDisconnect shard=${shardId} code=${event?.code} reason=${event?.reason}`);
+});
+client.on('shardReconnecting', (shardId) => {
+    console.warn(`⚠️ [Discord] shardReconnecting shard=${shardId}`);
+});
+client.on('shardResume', (shardId, replayedEvents) => {
+    console.log(`✅ [Discord] shardResume shard=${shardId} replayed=${replayedEvents}`);
+});
+
+try {
+    client.rest.on('rateLimited', (info) => {
+        const route = info?.route || info?.path || 'unknown';
+        const method = info?.method || 'unknown';
+        const timeToReset = info?.timeToReset;
+        console.warn(`⚠️ [Discord][REST] rateLimited ${method} ${route} resetInMs=${timeToReset}`);
+    });
+} catch (_) {}
+
+const HEALTH_LOG_INTERVAL_MINUTES = Number(process.env.HEALTH_LOG_INTERVAL_MINUTES || 0);
+if (Number.isFinite(HEALTH_LOG_INTERVAL_MINUTES) && HEALTH_LOG_INTERVAL_MINUTES > 0) {
+    setInterval(() => {
+        console.log(
+            `[Health] wsStatus=${client.ws?.status} ping=${client.ws?.ping} guilds=${client.guilds?.cache?.size} mem=${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`,
+        );
+    }, Math.floor(HEALTH_LOG_INTERVAL_MINUTES * 60 * 1000));
+}
 
 client.commands = new Collection();
 
@@ -297,6 +368,12 @@ client.commands.set(checkActivityCommand.data.name, checkActivityCommand);
 client.commands.set(debugRolesCommand.data.name, debugRolesCommand); // 调试命令
 client.commands.set(clearCooldownCommand.data.name, clearCooldownCommand);
 client.commands.set(configureRolesCommand.data.name, configureRolesCommand);
+client.commands.set(withdrawSelfRoleApplicationCommand.data.name, withdrawSelfRoleApplicationCommand);
+client.commands.set(selfRoleOpsCommand.data.name, selfRoleOpsCommand);
+client.commands.set(selfRoleWizardCommand.data.name, selfRoleWizardCommand);
+if (selfRoleTestCommand) {
+    client.commands.set(selfRoleTestCommand.data.name, selfRoleTestCommand);
+}
 client.commands.set(roleSyncConfigCommand.data.name, roleSyncConfigCommand);
 
 // 处罚系统命令
@@ -309,7 +386,18 @@ client.commands.set(controlledInviteToggleCommand.data.name, controlledInviteTog
 client.commands.set(viewMyControlledInviteStatusCommand.data.name, viewMyControlledInviteStatusCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
-    await clientReadyHandler(readyClient);
+    try {
+        // 启动时强制同步命令（clientReadyHandler 内部会执行 rest.put 刷新命令）
+        // 若开启 STRICT_COMMAND_SYNC=true 且存在失败 guild，将直接抛错并中止启动。
+        await clientReadyHandler(readyClient);
+    } catch (err) {
+        console.error('❌ 启动阶段命令同步失败，进程即将退出：', err);
+        try {
+            readyClient.destroy();
+        } catch (_) {}
+        process.exit(1);
+        return;
+    }
     printTimeConfig();
     
     startProposalChecker(readyClient);
@@ -334,9 +422,18 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log('✅ 自动清理系统已启动');
 
     startActivityTracker();
+
+    // SelfRole 申请过期检查器（预留名额释放/旧数据兼容迁移）
+    startSelfRoleApplicationChecker(readyClient);
     
     // 在机器人完全启动前，执行离线数据同步
     await syncMissedActivity(readyClient);
+
+    // SelfRole grant 生命周期调度器（周期询问/onlyWhenFull/强制清退）
+    startSelfRoleLifecycleScheduler(readyClient);
+
+    // SelfRole 一致性巡检（grant/面板/角色残留等）
+    startSelfRoleConsistencyChecker(readyClient);
 
     // 启动身份组同步系统
     await startRoleSyncSystem(readyClient);
@@ -364,4 +461,30 @@ client.on(Events.GuildMemberRemove, roleSyncGuildMemberRemoveHandler);
 client.on(Events.GuildMemberUpdate, roleSyncGuildMemberUpdateHandler);
 client.on(Events.GuildRoleDelete, roleSyncGuildRoleDeleteHandler);
 
-client.login(process.env.DISCORD_TOKEN);
+function normalizeDiscordToken(raw) {
+    if (!raw) return '';
+    let token = String(raw).trim();
+    if (!token) return '';
+    // 兼容误填 "Bot <token>"
+    token = token.replace(/^Bot\s+/i, '').trim();
+    return token;
+}
+
+const token = normalizeDiscordToken(process.env.DISCORD_TOKEN);
+if (!token || token.includes('PASTE_YOUR_DISCORD_BOT_TOKEN')) {
+    console.error('❌ 缺少或未正确配置 DISCORD_TOKEN。请在项目根目录 .env 中设置 DISCORD_TOKEN=你的机器人Token 后重启。');
+    process.exit(1);
+}
+if (token.split('.').length !== 3) {
+    console.error('❌ DISCORD_TOKEN 格式异常：应为 3 段以英文点号分隔的 token。请检查是否有空格/换行/前缀 Bot 等。');
+    process.exit(1);
+}
+
+// 确保后续模块（如命令同步）拿到的是清洗后的 token
+process.env.DISCORD_TOKEN = token;
+
+client.login(token).catch((err) => {
+    console.error('❌ Discord 登录失败。常见原因：Token 粘贴错误 / Token 已被重置失效 / 使用了非 Bot Token。');
+    console.error(err);
+    process.exit(1);
+});
