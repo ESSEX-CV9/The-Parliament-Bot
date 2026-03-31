@@ -162,7 +162,7 @@ const BASE_MUTE_DURATIONS = {
 };
 
 // 删除消息阈值 - 原始配置
-const BASE_DELETE_THRESHOLD = 10; // 10个⚠️删除消息
+const BASE_DELETE_THRESHOLD = 5; // 5个⚠️删除消息
 
 /**
  * 计算线性禁言时长
