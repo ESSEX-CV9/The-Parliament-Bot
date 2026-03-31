@@ -25,16 +25,21 @@ function formatDateTime(ts) {
     }
 }
 
-async function buildCompactStatusLines(guild, settings) {
+async function buildCompactStatusLines(guild, settings, options = {}) {
     const guildId = guild.id;
-    const nowMs = Date.now();
+    const nowMs = typeof options.nowMs === 'number' ? options.nowMs : Date.now();
 
-    let allRoles;
-    try {
-        allRoles = await guild.roles.fetch();
-    } catch (err) {
-        console.error('[SelfRole][Panel] ❌ 拉取身份组列表失败:', err);
-        allRoles = guild.roles.cache;
+    const roleFilter = Array.isArray(options.roleIds) ? new Set(options.roleIds.filter(Boolean)) : null;
+    const roleStats = options.roleStats instanceof Map ? options.roleStats : null;
+
+    let allRoles = options.allRoles;
+    if (!allRoles) {
+        try {
+            allRoles = await guild.roles.fetch();
+        } catch (err) {
+            console.error('[SelfRole][Panel] ❌ 拉取身份组列表失败:', err);
+            allRoles = guild.roles.cache;
+        }
     }
 
     const roleLines = [];
@@ -42,6 +47,7 @@ async function buildCompactStatusLines(guild, settings) {
     for (const roleConfig of settings?.roles || []) {
         const roleId = roleConfig?.roleId;
         if (!roleId) continue;
+        if (roleFilter && !roleFilter.has(roleId)) continue;
 
         const role = allRoles.get(roleId) || (await guild.roles.fetch(roleId).catch(() => null));
         if (!role) {
@@ -49,9 +55,16 @@ async function buildCompactStatusLines(guild, settings) {
             continue;
         }
 
-        const holders = await countActiveSelfRoleGrantHoldersByRole(guildId, roleId);
-
-        const pending = await countReservedPendingSelfRoleApplicationsV2(guildId, roleId, nowMs);
+        let holders;
+        let pending;
+        if (roleStats && roleStats.has(roleId)) {
+            const snap = roleStats.get(roleId) || {};
+            holders = Number(snap.holders || 0);
+            pending = Number(snap.pending || 0);
+        } else {
+            holders = await countActiveSelfRoleGrantHoldersByRole(guildId, roleId);
+            pending = await countReservedPendingSelfRoleApplicationsV2(guildId, roleId, nowMs);
+        }
 
         const maxMembers = roleConfig?.conditions?.capacity?.maxMembers;
         const hasLimit = typeof maxMembers === 'number' && maxMembers > 0;
@@ -142,16 +155,21 @@ function describeLifecycleConfig(lc) {
     return text;
 }
 
-async function buildRichDetailLines(guild, settings) {
+async function buildRichDetailLines(guild, settings, options = {}) {
     const guildId = guild.id;
-    const nowMs = Date.now();
+    const nowMs = typeof options.nowMs === 'number' ? options.nowMs : Date.now();
 
-    let allRoles;
-    try {
-        allRoles = await guild.roles.fetch();
-    } catch (err) {
-        console.error('[SelfRole][Panel] ❌ 拉取身份组列表失败:', err);
-        allRoles = guild.roles.cache;
+    const roleFilter = Array.isArray(options.roleIds) ? new Set(options.roleIds.filter(Boolean)) : null;
+    const roleStats = options.roleStats instanceof Map ? options.roleStats : null;
+
+    let allRoles = options.allRoles;
+    if (!allRoles) {
+        try {
+            allRoles = await guild.roles.fetch();
+        } catch (err) {
+            console.error('[SelfRole][Panel] ❌ 拉取身份组列表失败:', err);
+            allRoles = guild.roles.cache;
+        }
     }
 
     const roles = settings?.roles || [];
@@ -168,6 +186,7 @@ async function buildRichDetailLines(guild, settings) {
     for (const roleConfig of roles) {
         const roleId = roleConfig?.roleId;
         if (!roleId) continue;
+        if (roleFilter && !roleFilter.has(roleId)) continue;
 
         const role = allRoles.get(roleId) || (await guild.roles.fetch(roleId).catch(() => null));
         if (!role) {
@@ -181,8 +200,16 @@ async function buildRichDetailLines(guild, settings) {
         const label = roleConfig?.label || role.name;
         const description = String(roleConfig?.description || '').trim();
 
-        const holders = await countActiveSelfRoleGrantHoldersByRole(guildId, roleId);
-        const pending = await countReservedPendingSelfRoleApplicationsV2(guildId, roleId, nowMs);
+        let holders;
+        let pending;
+        if (roleStats && roleStats.has(roleId)) {
+            const snap = roleStats.get(roleId) || {};
+            holders = Number(snap.holders || 0);
+            pending = Number(snap.pending || 0);
+        } else {
+            holders = await countActiveSelfRoleGrantHoldersByRole(guildId, roleId);
+            pending = await countReservedPendingSelfRoleApplicationsV2(guildId, roleId, nowMs);
+        }
         const maxMembers = roleConfig?.conditions?.capacity?.maxMembers;
         const hasLimit = typeof maxMembers === 'number' && maxMembers > 0;
         const maxText = hasLimit ? String(maxMembers) : '∞';
@@ -278,14 +305,54 @@ async function refreshActiveUserSelfRolePanels(client, guildId) {
     if (!guild) return;
 
     const settings = await getSelfRoleSettings(guildId);
-    const statusLines = await buildCompactStatusLines(guild, settings);
-    const detailLines = await buildRichDetailLines(guild, settings);
-
     const panels = await getActiveSelfRolePanels(guildId, 'user');
     if (!panels || panels.length === 0) return;
 
+    const nowMs = Date.now();
+
+    // 1) 尽量只 fetch 一次 roles，避免多个面板刷新时重复请求
+    let allRoles;
+    try {
+        allRoles = await guild.roles.fetch();
+    } catch (err) {
+        console.error('[SelfRole][Panel] ❌ 拉取身份组列表失败:', err);
+        allRoles = guild.roles.cache;
+    }
+
+    // 2) 为本次刷新构建一次“现任/待审核”快照，避免同一 tick 内重复查询
+    const roleStats = new Map();
+    const roleConfigs = Array.isArray(settings?.roles) ? settings.roles : [];
+    for (const rc of roleConfigs) {
+        const roleId = rc?.roleId;
+        if (!roleId) continue;
+        const holders = await countActiveSelfRoleGrantHoldersByRole(guildId, roleId);
+        const pending = await countReservedPendingSelfRoleApplicationsV2(guildId, roleId, nowMs);
+        roleStats.set(roleId, { holders, pending });
+    }
+
+    const linesCache = new Map();
+
     for (const panel of panels) {
         try {
+            const cacheKey = panel.roleIds ? panel.roleIds.slice().sort().join(',') : '*';
+            let cached = linesCache.get(cacheKey);
+            if (!cached) {
+                const statusLines = await buildCompactStatusLines(guild, settings, {
+                    roleIds: panel.roleIds,
+                    allRoles,
+                    roleStats,
+                    nowMs,
+                });
+                const detailLines = await buildRichDetailLines(guild, settings, {
+                    roleIds: panel.roleIds,
+                    allRoles,
+                    roleStats,
+                    nowMs,
+                });
+                cached = { statusLines, detailLines };
+                linesCache.set(cacheKey, cached);
+            }
+
             const channel = await guild.channels.fetch(panel.channelId).catch(() => null);
             if (!channel || !channel.isTextBased()) continue;
 
@@ -307,7 +374,7 @@ async function refreshActiveUserSelfRolePanels(client, guildId) {
                     ? new EmbedBuilder(embeds[1].data)
                     : new EmbedBuilder().setColor(0x5865F2);
                 statusEmbed.setTitle(STATUS_SECTION_HEADER);
-                statusEmbed.setDescription(statusLines.join('\n'));
+                statusEmbed.setDescription(cached.statusLines.join('\n'));
                 statusEmbed.setFooter({ text: `最后刷新：${formatDateTime(Date.now())}` });
                 updatedEmbeds.push(statusEmbed);
 
@@ -315,7 +382,7 @@ async function refreshActiveUserSelfRolePanels(client, guildId) {
                 if (embeds[2]?.title === DETAIL_SECTION_HEADER) {
                     const detailEmbed = new EmbedBuilder(embeds[2].data);
                     detailEmbed.setTitle(DETAIL_SECTION_HEADER);
-                    detailEmbed.setDescription(detailLines.join('\n'));
+                    detailEmbed.setDescription(cached.detailLines.join('\n'));
                     detailEmbed.setFooter({ text: `最后刷新：${formatDateTime(Date.now())}` });
                     updatedEmbeds.push(detailEmbed);
                 }
@@ -337,7 +404,7 @@ async function refreshActiveUserSelfRolePanels(client, guildId) {
             const updated = originalEmbed ? new EmbedBuilder(originalEmbed.data) : new EmbedBuilder();
 
             const originalDesc = originalEmbed?.description || '';
-            updated.setDescription(upsertStatusSection(originalDesc, statusLines));
+            updated.setDescription(upsertStatusSection(originalDesc, cached.statusLines));
 
             // 不强制改标题/颜色，避免破坏管理员自定义内容
             updated.setFooter({ text: `最后刷新：${formatDateTime(Date.now())}` });

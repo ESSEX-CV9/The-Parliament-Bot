@@ -674,7 +674,7 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('manage_select_submission_')) {
                 // 投稿选择下拉菜单（在展示界面中的管理功能）
                 await displayService.handleSubmissionSelect(interaction);
-            } else if (interaction.customId === 'self_role_select_menu') {
+            } else if (interaction.customId === 'self_role_select_menu' || interaction.customId.startsWith('self_role_select_menu:')) {
                 await handleSelfRoleSelect(interaction);
             } else if (interaction.customId.startsWith('sr_wiz:')) {
                 await handleSelfRoleConfigWizardSelect(interaction);
