@@ -1296,6 +1296,41 @@ async function getActiveSelfRoleGrantByUserRole(guildId, userId, primaryRoleId) 
     return getSelfRoleGrant(row.grant_id);
 }
 
+
+/**
+ * 列出某服务器内某主身份组的所有 active grants（用于运维同步/诊断）。
+ * @param {string} guildId
+ * @param {string} primaryRoleId
+ * @returns {Promise<Array<{grantId:string,guildId:string,userId:string,primaryRoleId:string,applicationId:string|null,grantedAt:number,status:string,nextInquiryAt:number|null,forceRemoveAt:number|null,lastInquiryAt:number|null,lastDecision:string|null,endedAt:number|null,endedReason:string|null,manualAttentionRequired:boolean}>>}
+ */
+async function listActiveSelfRoleGrantsByPrimaryRole(guildId, primaryRoleId) {
+    if (!guildId || !primaryRoleId) return [];
+
+    const stmt = selfRoleDb.prepare(`
+        SELECT *
+        FROM sr_grants
+        WHERE guild_id = ? AND primary_role_id = ? AND status = 'active'
+        ORDER BY granted_at ASC
+    `);
+    const rows = stmt.all(guildId, primaryRoleId);
+    return rows.map(row => ({
+        grantId: row.grant_id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        primaryRoleId: row.primary_role_id,
+        applicationId: row.application_id || null,
+        grantedAt: row.granted_at,
+        status: row.status,
+        nextInquiryAt: row.next_inquiry_at == null ? null : row.next_inquiry_at,
+        forceRemoveAt: row.force_remove_at == null ? null : row.force_remove_at,
+        lastInquiryAt: row.last_inquiry_at == null ? null : row.last_inquiry_at,
+        lastDecision: row.last_decision || null,
+        endedAt: row.ended_at == null ? null : row.ended_at,
+        endedReason: row.ended_reason || null,
+        manualAttentionRequired: !!row.manual_attention_required,
+    }));
+}
+
 /**
  * 结束某用户对某主身份组的所有 active grants（用于避免重复 active grant）。
  */
@@ -3382,6 +3417,7 @@ module.exports = {
     createSelfRoleGrant,
     listSelfRoleGrantRoles,
     countActiveSelfRoleGrantHoldersByRole,
+    listActiveSelfRoleGrantsByPrimaryRole,
     listAllActiveSelfRoleGrants,
     listEndedSelfRoleGrantsSince,
     updateSelfRoleGrantSchedule,

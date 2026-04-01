@@ -14,6 +14,9 @@ const {
   saveSelfRoleApplicationV2,
   getSelfRoleSettings,
   getActiveSelfRoleGrantByUserRole,
+  listActiveSelfRoleGrantsByPrimaryRole,
+  createSelfRoleGrant,
+  endActiveSelfRoleGrantsForUserRole,
   updateSelfRoleGrantSchedule,
   listSelfRoleGrantRoles,
   countActiveSelfRoleGrantHoldersByRole,
@@ -87,6 +90,43 @@ module.exports = {
       sub
         .setName('刷新面板')
         .setDescription('立即刷新本服务器用户面板的岗位状态区（现任/空缺/待审核）'),
+    )
+
+    // 1.5) 同步身份组名单 -> grant（用于校准名额/生命周期口径）
+    .addSubcommand((sub) =>
+      sub
+        .setName('同步身份组名单')
+        .setDescription('读取服务器内指定身份组的成员名单，并同步为 SelfRole grant（会影响名额统计/周期清退）')
+        .addRoleOption((opt) =>
+          opt
+            .setName('目标身份组')
+            .setDescription('要同步的身份组（必须已配置为可自助申请岗位）')
+            .setRequired(true),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('结束缺失grant')
+            .setDescription('是否结束“数据库里有 active grant，但成员已不在该身份组内”的记录（需要完整成员列表）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('包含配套身份组')
+            .setDescription('导入 grant 时是否同时记录该岗位的配套身份组（仅影响后续清退/退出时移除哪些角色）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('包含机器人')
+            .setDescription('是否包含机器人账号（默认跳过）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('确认执行')
+            .setDescription('true=实际写入数据库；false=仅预览将要变更的数量')
+            .setRequired(false),
+        ),
     )
 
     // 2) 申请过期
@@ -202,6 +242,150 @@ module.exports = {
     if (sub === '刷新面板') {
       await refreshActiveUserSelfRolePanels(interaction.client, guildId);
       await interaction.editReply({ content: '✅ 已触发用户面板刷新。' });
+      return;
+    }
+
+    // --- 同步身份组名单 -> grant ---
+    if (sub === '同步身份组名单') {
+      const role = interaction.options.getRole('目标身份组', true);
+      const endMissingGrant = interaction.options.getBoolean('结束缺失grant') ?? false;
+      const includeBundle = interaction.options.getBoolean('包含配套身份组') ?? false;
+      const includeBots = interaction.options.getBoolean('包含机器人') ?? false;
+      const confirm = interaction.options.getBoolean('确认执行') ?? false;
+
+      const settings = await getSelfRoleSettings(guildId).catch(() => null);
+      const roleConfig = settings?.roles?.find((r) => r?.roleId === role.id) || null;
+      if (!roleConfig) {
+        await interaction.editReply({
+          content:
+            `❌ 该身份组未配置为“可自助申请岗位”，无法同步为 grant：<@&${role.id}>\n\n` +
+            `请先使用 /自助身份组申请-配置向导 或 /自助身份组申请-配置身份组 完成岗位配置。`,
+        });
+        return;
+      }
+
+      await interaction.editReply({
+        content: '🔄 正在拉取服务器成员列表并统计身份组名单...（大服务器可能需要较长时间）',
+      });
+
+      let fetchedAll = false;
+      let fetchErrText = '';
+      try {
+        await interaction.guild.members.fetch();
+        fetchedAll = interaction.guild.members.cache.size >= interaction.guild.memberCount;
+      } catch (err) {
+        fetchErrText = err?.message ? String(err.message) : String(err);
+      }
+
+      const roleMembers = role.members;
+      const userIdsInRole = [];
+      let skippedBots = 0;
+      for (const m of roleMembers.values()) {
+        if (!includeBots && m.user?.bot) {
+          skippedBots++;
+          continue;
+        }
+        userIdsInRole.push(m.id);
+      }
+      const inSet = new Set(userIdsInRole);
+
+      const existingGrants = await listActiveSelfRoleGrantsByPrimaryRole(guildId, role.id).catch(() => []);
+      const grantSet = new Set(existingGrants.map((g) => g.userId));
+
+      const toCreate = [...inSet].filter((uid) => !grantSet.has(uid));
+      const toEnd = [...grantSet].filter((uid) => !inSet.has(uid));
+
+      if (endMissingGrant && !fetchedAll) {
+        await interaction.editReply({
+          content:
+            `❌ 当前无法确认已完整拉取服务器成员列表，因此为避免误结束 grant，本次禁止执行“结束缺失grant”。\n\n` +
+            `cache=${interaction.guild.members.cache.size}/${interaction.guild.memberCount}\n` +
+            (fetchErrText ? `fetchErr=${fetchErrText}\n\n` : '\n') +
+            `建议：\n- 确保机器人启用 GUILD_MEMBERS Intent 并有权限拉取全员\n- 或先关闭“结束缺失grant”，仅做导入/补齐`,
+        });
+        return;
+      }
+
+      const sampleCreate = toCreate.slice(0, 10).map((id) => `<@${id}>`).join(' ');
+      const sampleEnd = toEnd.slice(0, 10).map((id) => `<@${id}>`).join(' ');
+
+      const bundleRoleIds = includeBundle ? (Array.isArray(roleConfig.bundleRoleIds) ? roleConfig.bundleRoleIds : []) : [];
+      const bundleText = includeBundle
+        ? (bundleRoleIds.length > 0 ? bundleRoleIds.map((rid) => `<@&${rid}>`).join(' ') : '（无）')
+        : '（不记录配套身份组）';
+
+      const previewLines = [
+        `目标身份组：<@&${role.id}>`,
+        `拉取成员列表：${fetchedAll ? '✅ 已完整拉取' : `⚠️ 可能不完整（cache=${interaction.guild.members.cache.size}/${interaction.guild.memberCount}）`}`,
+        fetchErrText ? `拉取异常：${fetchErrText}` : null,
+        includeBots ? '包含机器人：是' : `包含机器人：否（已跳过 bots=${skippedBots}）`,
+        `现有 active grants：${existingGrants.length}`,
+        `身份组成员数（基于当前缓存）：${userIdsInRole.length}`,
+        `将新增 grants：${toCreate.length}${sampleCreate ? `\n- 示例：${sampleCreate}${toCreate.length > 10 ? ' ...' : ''}` : ''}`,
+        endMissingGrant
+          ? `将结束 grants（成员已不在该身份组内）：${toEnd.length}${sampleEnd ? `\n- 示例：${sampleEnd}${toEnd.length > 10 ? ' ...' : ''}` : ''}`
+          : `将结束 grants：0（未启用“结束缺失grant”）`,
+        `同步配套身份组：${includeBundle ? '是' : '否'}\n- 配套身份组：${bundleText}`,
+        '',
+        confirm
+          ? '✅ 已确认执行：将开始写入数据库。'
+          : '⚠️ 当前为预览模式：如需执行，请重新运行并设置 `确认执行:true`。',
+        '',
+        '注意：导入为 grant 后，这些成员会被系统视为“本模块管理对象”，将计入名额统计，并可能触发周期询问/清退（若该岗位启用了 lifecycle）。',
+      ].filter(Boolean);
+
+      if (!confirm) {
+        await interaction.editReply({ content: previewLines.join('\n') });
+        return;
+      }
+
+      // 执行写入
+      const startedAt = Date.now();
+      let created = 0;
+      let createFailed = 0;
+      let ended = 0;
+      let endFailed = 0;
+
+      for (const uid of toCreate) {
+        try {
+          await createSelfRoleGrant({
+            guildId,
+            userId: uid,
+            primaryRoleId: role.id,
+            applicationId: null,
+            grantedAt: now,
+            bundleRoleIds,
+          });
+          created++;
+        } catch (_) {
+          createFailed++;
+        }
+      }
+
+      if (endMissingGrant) {
+        for (const uid of toEnd) {
+          try {
+            const c = await endActiveSelfRoleGrantsForUserRole(guildId, uid, role.id, 'sync_missing_role', now);
+            if (c && c > 0) ended += c;
+          } catch (_) {
+            endFailed++;
+          }
+        }
+      }
+
+      await refreshActiveUserSelfRolePanels(interaction.client, guildId).catch(() => {});
+
+      const durationMs = Date.now() - startedAt;
+      await interaction.editReply({
+        content:
+          `✅ 同步完成：<@&${role.id}>\n` +
+          `新增 grants：${created}\n` +
+          (createFailed > 0 ? `新增失败：${createFailed}\n` : '') +
+          (endMissingGrant ? `结束 grants：${ended}\n` : '') +
+          (endFailed > 0 ? `结束失败：${endFailed}\n` : '') +
+          `耗时：${Math.round(durationMs / 1000)} 秒\n\n` +
+          `已触发用户面板刷新。`,
+      });
       return;
     }
 
