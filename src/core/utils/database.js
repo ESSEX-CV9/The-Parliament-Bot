@@ -314,6 +314,7 @@ function initializeSelfRoleDatabase() {
             channel_id       TEXT NOT NULL,
             message_id       TEXT NOT NULL,
             panel_type       TEXT NOT NULL,
+            role_ids         TEXT,
             is_active        INTEGER DEFAULT 1,
             created_at       INTEGER NOT NULL,
             last_rendered_at INTEGER
@@ -321,6 +322,18 @@ function initializeSelfRoleDatabase() {
         CREATE INDEX IF NOT EXISTS idx_sr_panels_guild_type_active
             ON sr_panels (guild_id, panel_type, is_active);
     `);
+
+    // 为 sr_panels 表进行列演进：role_ids（用于“同一服务器多个用户面板，不同面板展示不同可申请身份组集合”）
+    try {
+        const cols = selfRoleDb.prepare("PRAGMA table_info(sr_panels)").all();
+        const hasRoleIds = Array.isArray(cols) && cols.some(c => c.name === 'role_ids');
+        if (!hasRoleIds) {
+            selfRoleDb.exec("ALTER TABLE sr_panels ADD COLUMN role_ids TEXT");
+            console.log('[SelfRole] 🔧 已为 sr_panels 添加 role_ids 列');
+        }
+    } catch (migErr) {
+        console.error('[SelfRole] ❌ 检查/添加 sr_panels 扩展列时出错：', migErr);
+    }
 
     selfRoleDb.exec(`
         CREATE TABLE IF NOT EXISTS sr_system_alerts (
@@ -835,7 +848,7 @@ async function countReservedPendingSelfRoleApplicationsV2(guildId, roleId, nowMs
 async function getActiveSelfRolePanels(guildId, panelType) {
     const type = panelType === 'admin' ? 'admin' : 'user';
     const stmt = selfRoleDb.prepare(`
-        SELECT panel_id, guild_id, channel_id, message_id, panel_type, is_active, created_at, last_rendered_at
+        SELECT panel_id, guild_id, channel_id, message_id, panel_type, role_ids, is_active, created_at, last_rendered_at
         FROM sr_panels
         WHERE guild_id = ? AND panel_type = ? AND is_active = 1
         ORDER BY created_at DESC
@@ -847,10 +860,55 @@ async function getActiveSelfRolePanels(guildId, panelType) {
         channelId: r.channel_id,
         messageId: r.message_id,
         panelType: r.panel_type,
+        roleIds: (() => {
+            if (!r.role_ids) return null;
+            const parsed = safeJsonParse(r.role_ids, null);
+            if (!Array.isArray(parsed)) return null;
+            return [...new Set(parsed.filter(v => typeof v === 'string').map(v => v.trim()).filter(Boolean))];
+        })(),
         isActive: !!r.is_active,
         createdAt: r.created_at,
         lastRenderedAt: r.last_rendered_at,
     }));
+}
+
+
+/**
+ * 获取一条面板记录（用于从“面板消息”定位其可申请身份组范围等配置）。
+ * 说明：当前 panel_id 与 message_id 采用同一值（messageId）。
+ * @param {string} panelId
+ * @returns {Promise<null|{panelId:string,guildId:string,channelId:string,messageId:string,panelType:string,roleIds:string[]|null,isActive:boolean,createdAt:number,lastRenderedAt:number|null}>}
+ */
+async function getSelfRolePanel(panelId) {
+    if (!panelId) return null;
+
+    const stmt = selfRoleDb.prepare(`
+        SELECT panel_id, guild_id, channel_id, message_id, panel_type, role_ids, is_active, created_at, last_rendered_at
+        FROM sr_panels
+        WHERE panel_id = ?
+        LIMIT 1
+    `);
+    const r = stmt.get(panelId);
+    if (!r) return null;
+
+    const roleIds = (() => {
+        if (!r.role_ids) return null;
+        const parsed = safeJsonParse(r.role_ids, null);
+        if (!Array.isArray(parsed)) return null;
+        return [...new Set(parsed.filter(v => typeof v === 'string').map(v => v.trim()).filter(Boolean))];
+    })();
+
+    return {
+        panelId: r.panel_id,
+        guildId: r.guild_id,
+        channelId: r.channel_id,
+        messageId: r.message_id,
+        panelType: r.panel_type,
+        roleIds,
+        isActive: !!r.is_active,
+        createdAt: r.created_at,
+        lastRenderedAt: r.last_rendered_at,
+    };
 }
 
 /**
@@ -892,28 +950,35 @@ async function deactivateSelfRolePanel(panelId) {
  * @param {string} messageId
  * @param {'user'|'admin'} panelType
  */
-async function registerSelfRolePanelMessage(guildId, channelId, messageId, panelType) {
+async function registerSelfRolePanelMessage(guildId, channelId, messageId, panelType, options = {}) {
     const type = panelType === 'admin' ? 'admin' : 'user';
     const now = Date.now();
     const panelId = messageId;
 
-    const tx = selfRoleDb.transaction((gid, cid, mid, pType, ts) => {
-        // 先停用同类面板（每个 guild 默认只保留一个 active）
-        selfRoleDb
-            .prepare('UPDATE sr_panels SET is_active = 0 WHERE guild_id = ? AND panel_type = ? AND is_active = 1')
-            .run(gid, pType);
+    const deactivateExisting = options?.deactivateExisting !== false; // 默认 true：保持旧行为（同类型只保留 1 个 active）
+    const roleIdsRaw = options?.roleIds;
+    const roleIds = Array.isArray(roleIdsRaw)
+        ? [...new Set(roleIdsRaw.filter(v => typeof v === 'string').map(v => v.trim()).filter(Boolean))]
+        : null;
+    const roleIdsJson = roleIds ? JSON.stringify(roleIds) : null;
 
-        // 再插入新面板
+    const tx = selfRoleDb.transaction((gid, cid, mid, pType, ts, shouldDeactivate, ridsJson) => {
+        if (shouldDeactivate) {
+            selfRoleDb
+                .prepare('UPDATE sr_panels SET is_active = 0 WHERE guild_id = ? AND panel_type = ? AND is_active = 1')
+                .run(gid, pType);
+        }
+
         selfRoleDb
             .prepare(`
                 INSERT OR REPLACE INTO sr_panels
-                (panel_id, guild_id, channel_id, message_id, panel_type, is_active, created_at, last_rendered_at)
-                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                (panel_id, guild_id, channel_id, message_id, panel_type, role_ids, is_active, created_at, last_rendered_at)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
             `)
-            .run(panelId, gid, cid, mid, pType, ts, ts);
+            .run(panelId, gid, cid, mid, pType, ridsJson, ts, ts);
     });
 
-    tx(guildId, channelId, messageId, type, now);
+    tx(guildId, channelId, messageId, type, now, deactivateExisting, roleIdsJson);
 
     return {
         panelId,
@@ -921,6 +986,7 @@ async function registerSelfRolePanelMessage(guildId, channelId, messageId, panel
         channelId,
         messageId,
         panelType: type,
+        roleIds,
         isActive: true,
         createdAt: now,
         lastRenderedAt: now,
@@ -1228,6 +1294,41 @@ async function getActiveSelfRoleGrantByUserRole(guildId, userId, primaryRoleId) 
     const row = stmt.get(guildId, userId, primaryRoleId);
     if (!row) return null;
     return getSelfRoleGrant(row.grant_id);
+}
+
+
+/**
+ * 列出某服务器内某主身份组的所有 active grants（用于运维同步/诊断）。
+ * @param {string} guildId
+ * @param {string} primaryRoleId
+ * @returns {Promise<Array<{grantId:string,guildId:string,userId:string,primaryRoleId:string,applicationId:string|null,grantedAt:number,status:string,nextInquiryAt:number|null,forceRemoveAt:number|null,lastInquiryAt:number|null,lastDecision:string|null,endedAt:number|null,endedReason:string|null,manualAttentionRequired:boolean}>>}
+ */
+async function listActiveSelfRoleGrantsByPrimaryRole(guildId, primaryRoleId) {
+    if (!guildId || !primaryRoleId) return [];
+
+    const stmt = selfRoleDb.prepare(`
+        SELECT *
+        FROM sr_grants
+        WHERE guild_id = ? AND primary_role_id = ? AND status = 'active'
+        ORDER BY granted_at ASC
+    `);
+    const rows = stmt.all(guildId, primaryRoleId);
+    return rows.map(row => ({
+        grantId: row.grant_id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        primaryRoleId: row.primary_role_id,
+        applicationId: row.application_id || null,
+        grantedAt: row.granted_at,
+        status: row.status,
+        nextInquiryAt: row.next_inquiry_at == null ? null : row.next_inquiry_at,
+        forceRemoveAt: row.force_remove_at == null ? null : row.force_remove_at,
+        lastInquiryAt: row.last_inquiry_at == null ? null : row.last_inquiry_at,
+        lastDecision: row.last_decision || null,
+        endedAt: row.ended_at == null ? null : row.ended_at,
+        endedReason: row.ended_reason || null,
+        manualAttentionRequired: !!row.manual_attention_required,
+    }));
 }
 
 /**
@@ -3310,6 +3411,7 @@ module.exports = {
     countLegacyPendingSelfRoleApplications,
     countReservedPendingSelfRoleApplicationsV2,
     getActiveSelfRolePanels,
+    getSelfRolePanel,
     deactivateSelfRolePanels,
     deactivateSelfRolePanel,
     registerSelfRolePanelMessage,
@@ -3331,6 +3433,7 @@ module.exports = {
     createSelfRoleGrant,
     listSelfRoleGrantRoles,
     countActiveSelfRoleGrantHoldersByRole,
+    listActiveSelfRoleGrantsByPrimaryRole,
     listAllActiveSelfRoleGrants,
     listEndedSelfRoleGrantsSince,
     updateSelfRoleGrantSchedule,

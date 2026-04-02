@@ -12,6 +12,7 @@ const {
     getSelfRoleCooldown,
     countActiveSelfRoleGrantHoldersByRole,
     countReservedPendingSelfRoleApplicationsV2,
+    getSelfRolePanel,
     getPendingSelfRoleApplicationV2ByApplicantRole,
     saveSelfRoleApplicationV2,
     resolveSelfRoleApplicationV2,
@@ -43,6 +44,31 @@ async function handleSelfRoleButton(interaction) {
     const guildId = interaction.guild.id;
     const isLegacyPanel = interaction.customId === 'self_role_apply_button';
 
+    // 多面板支持：从“被点击的面板消息”读取该面板的可申请身份组范围。
+    // - legacy 面板（self_role_apply_button）无法定位 DB 记录，默认展示全部已配置岗位。
+    // - 新面板（sr2_apply_button）若已注册到 sr_panels，可按 roleIds 进行过滤。
+    const panelMessageId = interaction.message?.id || null;
+    let panelRoleIds = null;
+    let panelIsActive = true;
+
+    if (!isLegacyPanel && panelMessageId) {
+        const panel = await getSelfRolePanel(panelMessageId).catch(() => null);
+        if (panel && panel.panelType === 'user') {
+            panelIsActive = !!panel.isActive;
+            if (!panelIsActive) {
+                await interaction.editReply({ content: '⚠️ 该申请面板已被停用或已过期，请联系管理员重新创建。' });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
+
+            if (Array.isArray(panel.roleIds)) {
+                panelRoleIds = panel.roleIds;
+            }
+        }
+    }
+
+    const panelRoleFilter = Array.isArray(panelRoleIds) ? new Set(panelRoleIds) : null;
+
     // 清理过期申请，避免面板“空缺/待审核”统计长期不释放
     await checkExpiredSelfRoleApplications(interaction.client).catch(() => {});
 
@@ -61,6 +87,7 @@ async function handleSelfRoleButton(interaction) {
     const nowMs = Date.now();
     for (const roleConfig of settings.roles) {
         if (!roleConfig?.roleId) continue;
+        if (panelRoleFilter && !panelRoleFilter.has(roleConfig.roleId)) continue;
         if (memberRoles.has(roleConfig.roleId)) continue;
 
         const maxMembers = roleConfig?.conditions?.capacity?.maxMembers;
@@ -99,8 +126,12 @@ async function handleSelfRoleButton(interaction) {
         return;
     }
 
+    const selectMenuCustomId = (!isLegacyPanel && panelMessageId && panelIsActive)
+        ? `self_role_select_menu:${panelMessageId}`
+        : 'self_role_select_menu';
+
     const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('self_role_select_menu')
+        .setCustomId(selectMenuCustomId)
         .setPlaceholder('请选择要申请的身份组...')
         .addOptions(options);
 
@@ -133,6 +164,26 @@ async function handleSelfRoleSelect(interaction) {
     const member = interaction.member;
     const selectedRoleIds = Array.isArray(interaction.values) ? interaction.values : [];
 
+    // 多面板支持：selectMenu customId 可能携带来源面板 messageId，用于二次校验可申请范围。
+    const rawCustomId = String(interaction.customId || '');
+    const panelMessageId = rawCustomId.startsWith('self_role_select_menu:')
+        ? rawCustomId.replace('self_role_select_menu:', '')
+        : null;
+    let panelRoleFilter = null;
+    if (panelMessageId) {
+        const panel = await getSelfRolePanel(panelMessageId).catch(() => null);
+        if (panel && panel.panelType === 'user') {
+            if (!panel.isActive) {
+                await interaction.reply({ content: '⚠️ 该申请面板已被停用或已过期，请重新从最新面板发起申请。', ephemeral: true });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
+            if (Array.isArray(panel.roleIds) && panel.roleIds.length > 0) {
+                panelRoleFilter = new Set(panel.roleIds);
+            }
+        }
+    }
+
     const settings = await getSelfRoleSettings(guildId);
     if (!settings || !Array.isArray(settings.roles) || settings.roles.length === 0) {
         await interaction.reply({ content: '❌ 当前没有任何可申请的身份组。', ephemeral: true });
@@ -144,6 +195,18 @@ async function handleSelfRoleSelect(interaction) {
         await interaction.reply({ content: '❌ 未选择任何身份组，请重试。', ephemeral: true });
         setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
         return;
+    }
+
+    if (panelRoleFilter) {
+        const invalid = selectedRoleIds.filter(rid => !panelRoleFilter.has(rid));
+        if (invalid.length > 0) {
+            await interaction.reply({
+                content: '❌ 你选择的身份组不属于该面板允许申请的范围，请重新从该面板发起申请。',
+                ephemeral: true,
+            });
+            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+            return;
+        }
     }
 
     // 先判断是否需要理由 modal：需要则立刻弹出，避免后续过期清理/统计计算等耗时操作导致 3 秒超时。

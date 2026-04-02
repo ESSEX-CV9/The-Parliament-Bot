@@ -14,6 +14,9 @@ const {
   saveSelfRoleApplicationV2,
   getSelfRoleSettings,
   getActiveSelfRoleGrantByUserRole,
+  listActiveSelfRoleGrantsByPrimaryRole,
+  createSelfRoleGrant,
+  endActiveSelfRoleGrantsForUserRole,
   updateSelfRoleGrantSchedule,
   listSelfRoleGrantRoles,
   countActiveSelfRoleGrantHoldersByRole,
@@ -26,6 +29,7 @@ const { refreshActiveUserSelfRolePanels } = require('../services/panelService');
 const { checkExpiredSelfRoleApplications } = require('../services/applicationChecker');
 const { runSelfRoleLifecycleTick } = require('../services/lifecycleScheduler');
 const { runSelfRoleConsistencyCheck } = require('../services/consistencyChecker');
+const { withRetry } = require('../../roleSync/utils/networkRetry');
 
 function formatDateTime(ts) {
   try {
@@ -40,6 +44,93 @@ function formatMs(ms) {
   const n = Number(ms);
   if (!Number.isFinite(n)) return String(ms);
   return `${n}（${formatDateTime(n)}）`;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 通过 REST API 分页扫描全服成员，并筛选拥有指定身份组的成员ID。
+ *
+ * 背景：在超大服务器（20万+）使用 `guild.members.fetch()` 会触发全量缓存/超时/内存问题。
+ * 该实现复用 RoleSync 模块已验证的方案：`guild.members.list({ limit, after, cache:false })`。
+ *
+ * @param {import('discord.js').Guild} guild
+ * @param {string} roleId
+ * @param {{ includeBots?: boolean, onProgress?: (p: { scanned: number, pages: number, matched: number, skippedBots: number }) => (void|Promise<void>), signal?: { shouldStop: boolean } }} options
+ * @returns {Promise<{ userIds: string[], scanned: number, pages: number, matched: number, skippedBots: number, aborted: boolean }>}
+ */
+async function listGuildRoleMemberIdsViaREST(guild, roleId, options = {}) {
+  const includeBots = options.includeBots === true;
+  const onProgress = options.onProgress || (() => {});
+  const signal = options.signal || { shouldStop: false };
+
+  const PAGE_SIZE = 1000;
+  let afterCursor = '0';
+  let scanned = 0;
+  let pages = 0;
+  let skippedBots = 0;
+
+  const userIds = new Set();
+
+  while (true) {
+    if (signal.shouldStop) {
+      return {
+        userIds: [...userIds],
+        scanned,
+        pages,
+        matched: userIds.size,
+        skippedBots,
+        aborted: true,
+      };
+    }
+
+    const members = await withRetry(
+      () => guild.members.list({ limit: PAGE_SIZE, after: afterCursor, cache: false }),
+      { retries: 3, baseDelayMs: 1000, label: `selfrole_rest_list_members_${guild.id}_page${pages}` },
+    );
+
+    if (!members || members.size === 0) break;
+
+    scanned += members.size;
+
+    for (const [, member] of members) {
+      // 优先使用 member._roles（更轻量，不需要为每个成员构建 roles.cache Collection）
+      let hasRole = false;
+      if (Array.isArray(member?._roles)) {
+        hasRole = member._roles.includes(roleId);
+      } else if (member?.roles?.cache?.has) {
+        hasRole = member.roles.cache.has(roleId);
+      }
+
+      if (!hasRole) continue;
+
+      if (!includeBots && member.user?.bot) {
+        skippedBots += 1;
+        continue;
+      }
+
+      userIds.add(member.id);
+    }
+
+    pages += 1;
+    await Promise.resolve(onProgress({ scanned, pages, matched: userIds.size, skippedBots }));
+
+    afterCursor = members.lastKey();
+    if (members.size < PAGE_SIZE) break;
+
+    await sleep(200);
+  }
+
+  return {
+    userIds: [...userIds],
+    scanned,
+    pages,
+    matched: userIds.size,
+    skippedBots,
+    aborted: false,
+  };
 }
 
 async function buildLifecycleDebugSummary({ client, guildId, roleId, grant }) {
@@ -87,6 +178,43 @@ module.exports = {
       sub
         .setName('刷新面板')
         .setDescription('立即刷新本服务器用户面板的岗位状态区（现任/空缺/待审核）'),
+    )
+
+    // 1.5) 同步身份组名单 -> grant（用于校准名额/生命周期口径）
+    .addSubcommand((sub) =>
+      sub
+        .setName('同步身份组名单')
+        .setDescription('读取服务器内指定身份组的成员名单，并同步为 SelfRole grant（会影响名额统计/周期清退）')
+        .addRoleOption((opt) =>
+          opt
+            .setName('目标身份组')
+            .setDescription('要同步的身份组（必须已配置为可自助申请岗位）')
+            .setRequired(true),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('结束缺失grant')
+            .setDescription('是否结束“数据库里有 active grant，但成员已不在该身份组内”的记录（需要完整成员列表）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('包含配套身份组')
+            .setDescription('导入 grant 时是否同时记录该岗位的配套身份组（仅影响后续清退/退出时移除哪些角色）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('包含机器人')
+            .setDescription('是否包含机器人账号（默认跳过）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('确认执行')
+            .setDescription('true=实际写入数据库；false=仅预览将要变更的数量')
+            .setRequired(false),
+        ),
     )
 
     // 2) 申请过期
@@ -202,6 +330,175 @@ module.exports = {
     if (sub === '刷新面板') {
       await refreshActiveUserSelfRolePanels(interaction.client, guildId);
       await interaction.editReply({ content: '✅ 已触发用户面板刷新。' });
+      return;
+    }
+
+    // --- 同步身份组名单 -> grant ---
+    if (sub === '同步身份组名单') {
+      const role = interaction.options.getRole('目标身份组', true);
+      const endMissingGrant = interaction.options.getBoolean('结束缺失grant') ?? false;
+      const includeBundle = interaction.options.getBoolean('包含配套身份组') ?? false;
+      const includeBots = interaction.options.getBoolean('包含机器人') ?? false;
+      const confirm = interaction.options.getBoolean('确认执行') ?? false;
+
+      const settings = await getSelfRoleSettings(guildId).catch(() => null);
+      const roleConfig = settings?.roles?.find((r) => r?.roleId === role.id) || null;
+      if (!roleConfig) {
+        await interaction.editReply({
+          content:
+            `❌ 该身份组未配置为“可自助申请岗位”，无法同步为 grant：<@&${role.id}>\n\n` +
+            `请先使用 /自助身份组申请-配置向导 或 /自助身份组申请-配置身份组 完成岗位配置。`,
+        });
+        return;
+      }
+
+      await interaction.editReply({
+        content: '🔄 正在通过 REST 分页扫描全服成员并筛选身份组名单...（大服务器可能需要较长时间）',
+      });
+
+      const scanStartedAt = Date.now();
+      let scanErrText = '';
+      let scanResult = null;
+      let lastProgressUpdateAt = 0;
+      try {
+        scanResult = await listGuildRoleMemberIdsViaREST(interaction.guild, role.id, {
+          includeBots,
+          onProgress: async ({ scanned, pages, matched, skippedBots: currentSkippedBots }) => {
+            const ts = Date.now();
+            const shouldUpdate = pages <= 1 || ts - lastProgressUpdateAt >= 5000 || pages % 25 === 0;
+            if (!shouldUpdate) return;
+            lastProgressUpdateAt = ts;
+
+            const botText = includeBots ? '' : ` skippedBots=${currentSkippedBots}`;
+            await interaction
+              .editReply({
+                content:
+                  `🔄 正在扫描成员并筛选身份组：<@&${role.id}>\n` +
+                  `进度：pages=${pages} scanned=${scanned}/${interaction.guild.memberCount} matched=${matched}${botText}`,
+              })
+              .catch(() => {});
+          },
+        });
+      } catch (err) {
+        scanErrText = err?.message ? String(err.message) : String(err);
+      }
+
+      if (!scanResult) {
+        await interaction.editReply({
+          content:
+            `❌ 通过 REST 扫描服务器成员失败，无法统计身份组名单：<@&${role.id}>\n\n` +
+            (scanErrText ? `error=${scanErrText}\n\n` : '') +
+            `建议：\n- 稍后重试（可能遇到短暂网络/Discord API 抖动）\n- 检查机器人是否能正常访问该服务器`,
+        });
+        return;
+      }
+
+      const scanDurationMs = Date.now() - scanStartedAt;
+      const scanCompleted = !scanResult.aborted;
+      const userIdsInRole = Array.isArray(scanResult.userIds) ? scanResult.userIds : [];
+      const skippedBots = Number(scanResult.skippedBots || 0);
+      const scannedMembers = Number(scanResult.scanned || 0);
+      const scannedPages = Number(scanResult.pages || 0);
+      const inSet = new Set(userIdsInRole);
+
+      const existingGrants = await listActiveSelfRoleGrantsByPrimaryRole(guildId, role.id).catch(() => []);
+      const grantSet = new Set(existingGrants.map((g) => g.userId));
+
+      const toCreate = [...inSet].filter((uid) => !grantSet.has(uid));
+      const toEnd = [...grantSet].filter((uid) => !inSet.has(uid));
+
+      if (endMissingGrant && !scanCompleted) {
+        await interaction.editReply({
+          content:
+            `❌ 本次未完成全量成员扫描，因此为避免误结束 grant，本次禁止执行“结束缺失grant”。\n\n` +
+            `scanned=${scannedMembers}/${interaction.guild.memberCount} pages=${scannedPages}\n` +
+            (scanErrText ? `error=${scanErrText}\n\n` : '\n') +
+            `建议：\n- 稍后重试\n- 或先关闭“结束缺失grant”，仅做导入/补齐`,
+        });
+        return;
+      }
+
+      const sampleCreate = toCreate.slice(0, 10).map((id) => `<@${id}>`).join(' ');
+      const sampleEnd = toEnd.slice(0, 10).map((id) => `<@${id}>`).join(' ');
+
+      const bundleRoleIds = includeBundle ? (Array.isArray(roleConfig.bundleRoleIds) ? roleConfig.bundleRoleIds : []) : [];
+      const bundleText = includeBundle
+        ? (bundleRoleIds.length > 0 ? bundleRoleIds.map((rid) => `<@&${rid}>`).join(' ') : '（无）')
+        : '（不记录配套身份组）';
+
+      const previewLines = [
+        `目标身份组：<@&${role.id}>`,
+        '扫描方式：REST 分页 list（cache:false）',
+        `扫描结果：${scanCompleted ? '✅ 已完成' : '⚠️ 未完成（aborted）'}`,
+        `扫描统计：scanned=${scannedMembers}/${interaction.guild.memberCount} pages=${scannedPages} 耗时≈${Math.round(scanDurationMs / 1000)} 秒`,
+        includeBots ? '包含机器人：是' : `包含机器人：否（已跳过 bots=${skippedBots}）`,
+        `现有 active grants：${existingGrants.length}`,
+        `身份组成员数（基于扫描）：${inSet.size}`,
+        `将新增 grants：${toCreate.length}${sampleCreate ? `\n- 示例：${sampleCreate}${toCreate.length > 10 ? ' ...' : ''}` : ''}`,
+        endMissingGrant
+          ? `将结束 grants（成员已不在该身份组内）：${toEnd.length}${sampleEnd ? `\n- 示例：${sampleEnd}${toEnd.length > 10 ? ' ...' : ''}` : ''}`
+          : `将结束 grants：0（未启用“结束缺失grant”）`,
+        `同步配套身份组：${includeBundle ? '是' : '否'}\n- 配套身份组：${bundleText}`,
+        '',
+        confirm
+          ? '✅ 已确认执行：将开始写入数据库。'
+          : '⚠️ 当前为预览模式：如需执行，请重新运行并设置 `确认执行:true`。',
+        '',
+        '注意：导入为 grant 后，这些成员会被系统视为“本模块管理对象”，将计入名额统计，并可能触发周期询问/清退（若该岗位启用了 lifecycle）。',
+      ].filter(Boolean);
+
+      if (!confirm) {
+        await interaction.editReply({ content: previewLines.join('\n') });
+        return;
+      }
+
+      // 执行写入
+      const startedAt = Date.now();
+      let created = 0;
+      let createFailed = 0;
+      let ended = 0;
+      let endFailed = 0;
+
+      for (const uid of toCreate) {
+        try {
+          await createSelfRoleGrant({
+            guildId,
+            userId: uid,
+            primaryRoleId: role.id,
+            applicationId: null,
+            grantedAt: now,
+            bundleRoleIds,
+          });
+          created++;
+        } catch (_) {
+          createFailed++;
+        }
+      }
+
+      if (endMissingGrant) {
+        for (const uid of toEnd) {
+          try {
+            const c = await endActiveSelfRoleGrantsForUserRole(guildId, uid, role.id, 'sync_missing_role', now);
+            if (c && c > 0) ended += c;
+          } catch (_) {
+            endFailed++;
+          }
+        }
+      }
+
+      await refreshActiveUserSelfRolePanels(interaction.client, guildId).catch(() => {});
+
+      const durationMs = Date.now() - startedAt;
+      await interaction.editReply({
+        content:
+          `✅ 同步完成：<@&${role.id}>\n` +
+          `新增 grants：${created}\n` +
+          (createFailed > 0 ? `新增失败：${createFailed}\n` : '') +
+          (endMissingGrant ? `结束 grants：${ended}\n` : '') +
+          (endFailed > 0 ? `结束失败：${endFailed}\n` : '') +
+          `耗时：${Math.round(durationMs / 1000)} 秒\n\n` +
+          `已触发用户面板刷新。`,
+      });
       return;
     }
 
