@@ -209,7 +209,9 @@ class DisplayService {
                     }
                 }
 
-                description += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
+                if (!submission.contentVerified) {
+                    description += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
+                }
             } else {
                 // 本服务器投稿的正常格式
                 description += `${submissionNumber}.  ${workUrl}\n`;
