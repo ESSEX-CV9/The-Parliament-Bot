@@ -200,6 +200,7 @@ async function runSelfRoleConsistencyCheck(client) {
     const summary = {
         skipped: false,
         reason: 'ok',
+        error: null,
         startedAt,
         finishedAt: null,
         durationMs: null,
@@ -221,6 +222,12 @@ async function runSelfRoleConsistencyCheck(client) {
             panels: summary.panels,
             endedGrants: summary.endedGrants,
         });
+    } catch (err) {
+        summary.reason = 'error';
+        summary.error = err?.message ? String(err.message) : String(err);
+        summary.finishedAt = Date.now();
+        summary.durationMs = summary.finishedAt - summary.startedAt;
+        console.error('[SelfRole][Consistency] ❌ 一致性巡检执行失败:', err);
     } finally {
         checkerRunning = false;
     }
