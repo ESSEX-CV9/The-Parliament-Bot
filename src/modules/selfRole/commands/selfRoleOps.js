@@ -1315,6 +1315,7 @@ module.exports = {
 
       const p = result?.panels;
       const eg = result?.endedGrants;
+      const ag = result?.activeGrantsMissingRoles;
       const durationText = result?.durationMs != null ? `${Math.round(result.durationMs / 1000)} 秒` : '未知';
 
       await interaction.editReply({
@@ -1324,9 +1325,11 @@ module.exports = {
           `【本巡检会做什么】\n` +
           `1) 检查已注册的用户/管理面板是否丢失（频道/消息不存在则自动标记为 inactive，并写入告警）\n` +
           `2) 检查“已结束的 grant”是否仍残留角色（发现后会在报告频道发送一次性告警/指引，或仅落库去重）\n\n` +
+          `3) 检查“active grant”成员是否缺失应有的身份组（发现后会在报告频道发送一次性告警/指引）\n\n` +
           `【面板巡检】checked=${p?.checked ?? '?'} missingChannel=${p?.channelMissing ?? '?'} missingMessage=${p?.messageMissing ?? '?'} deactivated=${p?.deactivated ?? '?'} errors=${p?.errors ?? '?'}\n` +
           `【结束 grant 巡检】scanned=${eg?.scanned ?? '?'} checked=${eg?.checked ?? '?'} residualFound=${eg?.residualFound ?? '?'} skippedExistingAlert=${eg?.skippedExistingAlert ?? '?'} errors=${eg?.errors ?? '?'}\n\n` +
-          `如发现问题：\n- 面板丢失：请重新创建面板\n- 角色残留：请按告警提示手动移除残留角色，并点击“✅ 标记为已处理”`,
+          `【active grant 角色缺失巡检】scanned=${ag?.scanned ?? '?'} checked=${ag?.checked ?? '?'} missingFound=${ag?.missingFound ?? '?'} missingPrimary=${ag?.missingPrimaryFound ?? '?'} missingBundle=${ag?.missingBundleFound ?? '?'} memberMissing=${ag?.memberMissing ?? '?'} skippedExistingAlert=${ag?.skippedExistingAlert ?? '?'} truncated=${ag?.truncated ? 'true' : 'false'} errors=${ag?.errors ?? '?'}\n\n` +
+          `如发现问题：\n- 面板丢失：请重新创建面板\n- 角色残留：请按告警提示手动移除残留角色，并点击“✅ 标记为已处理”\n- active grant 角色缺失：请按告警提示补回角色或使用“开除岗位成员”结束 grant，最后点击“✅ 标记为已处理”`,
       });
       return;
     }
