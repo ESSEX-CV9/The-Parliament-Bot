@@ -1205,6 +1205,7 @@ module.exports = {
       await interaction.editReply({
         content:
           `✅ 已执行一次一致性巡检（耗时：${durationText}）。\n\n` +
+          (result?.reason === 'error' && result?.error ? `⚠️ 执行过程中发生异常：${result.error}\n\n` : '') +
           `【本巡检会做什么】\n` +
           `1) 检查已注册的用户/管理面板是否丢失（频道/消息不存在则自动标记为 inactive，并写入告警）\n` +
           `2) 检查“已结束的 grant”是否仍残留角色（发现后会在报告频道发送一次性告警/指引，或仅落库去重）\n\n` +
