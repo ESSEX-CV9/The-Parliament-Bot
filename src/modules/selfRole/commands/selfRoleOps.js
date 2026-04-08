@@ -981,7 +981,33 @@ module.exports = {
       let removedOk = false;
       let removeErrText = '';
 
-      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+      // 先确认成员是否仍在服务器中：
+      // - Unknown Member（10007）视为已退群：允许结束 grant 以清理数据库
+      // - 其它错误（网络/API抖动）视为不可确认：中止操作，避免“未移除角色却结束 grant”
+      let member = null;
+      let memberNotInGuild = false;
+      try {
+        member = await withRetry(
+          () => interaction.guild.members.fetch(user.id),
+          { retries: 2, baseDelayMs: 280, label: `ops_kick_fetch_member_${user.id}` },
+        );
+      } catch (err) {
+        const code = err?.code;
+        if (code === 10007 || code === '10007') {
+          memberNotInGuild = true;
+          member = null;
+        } else {
+          const errText = err?.message ? String(err.message) : String(err);
+          await interaction.editReply({ content: `❌ 获取成员信息失败，已中止开除操作：${errText}` });
+          return;
+        }
+      }
+
+      // 确保至少移除主身份组（避免 grant_roles 异常时出现“移除列表为空”）
+      if (role && role.id && !roleIdsToRemove.includes(role.id)) {
+        roleIdsToRemove.push(role.id);
+      }
+
       if (member) {
         try {
           await member.roles.remove(roleIdsToRemove, `SelfRole ${endedReason}`);
@@ -990,7 +1016,7 @@ module.exports = {
           removeErrText = err?.message ? String(err.message) : String(err);
         }
       } else {
-        removeErrText = 'member_not_found_or_not_in_guild';
+        removeErrText = memberNotInGuild ? 'member_not_in_guild' : 'member_unavailable';
       }
 
       let endedCount = 0;
@@ -999,7 +1025,7 @@ module.exports = {
 
       // 安全策略：如果“移除角色”失败且成员仍在服务器，则不结束 grant，避免名额统计口径错误。
       // - 成员不存在（已退群）时，允许结束 grant 用于清理数据库。
-      const shouldEndGrant = !!grant && (removedOk || !member);
+      const shouldEndGrant = !!grant && (removedOk || memberNotInGuild);
       if (shouldEndGrant) {
         try {
           endedCount = await endActiveSelfRoleGrantsForUserRole(guildId, user.id, role.id, endedReason, now);
