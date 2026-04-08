@@ -104,49 +104,55 @@ async function processMessageUrlSubmission(interaction, type, messageUrl, option
         // 获取设置
         const settings = await getSelfModerationSettings(interaction.guild.id);
         if (!settings) {
-            return interaction.editReply({
+            await interaction.editReply({
                 content: '❌ 该服务器未配置自助管理功能，请联系管理员设置。'
             });
+            return { success: false };
         }
         
         // 检查用户权限（serious_mute 视同 mute 放行）
         const permType = (type === 'serious_mute') ? 'mute' : type;
         const hasPermission = checkSelfModerationPermission(interaction.member, permType, settings);
         if (!hasPermission) {
-            return interaction.editReply({
+            await interaction.editReply({
                 content: getSelfModerationPermissionDeniedMessage(permType)
             });
+            return { success: false };
         }
         
         // 检查当前频道权限（用户使用指令的频道）
         const currentChannelAllowed = await validateChannel(interaction.channel.id, settings, interaction.channel);
         if (!currentChannelAllowed) {
-            return interaction.editReply({
+            await interaction.editReply({
                 content: '❌ 此频道不允许使用自助管理功能。请在管理员设置的允许频道中使用此指令。'
             });
+            return { success: false };
         }
         
         // 解析消息链接
         const parsed = parseMessageUrl(messageUrl);
         if (!parsed) {
-            return interaction.editReply({
+            await interaction.editReply({
                 content: '❌ 消息链接格式无效，请确保链接是完整的Discord消息链接。'
             });
+            return { success: false };
         }
         
         // 检查是否是同一服务器的消息
         if (parsed.guildId !== interaction.guild.id) {
-            return interaction.editReply({
+            await interaction.editReply({
                 content: '❌ 只能处理本服务器内的消息。'
             });
+            return { success: false };
         }
         
         // 获取并验证目标消息
         const messageInfo = await validateTargetMessage(interaction.client, parsed);
         if (!messageInfo.success) {
-            return interaction.editReply({
+            await interaction.editReply({
                 content: `❌ ${messageInfo.error}`
             });
+            return { success: false };
         }
         
         // 🔥 检查目标消息所在的频道是否也被授权
@@ -174,17 +180,19 @@ async function processMessageUrlSubmission(interaction, type, messageUrl, option
             errorMessage += `• 使用指令的频道必须被授权 ✅\n`;
             errorMessage += `• 目标消息所在的频道也必须被授权 ❌\n\n`;
             
-            return interaction.editReply({
+            await interaction.editReply({
                 content: errorMessage
             });
+            return { success: false };
         }
         
         // 检查机器人权限
         const botPermissions = checkBotPermissions(messageInfo.channel, interaction.guild.members.me, type);
         if (!botPermissions.hasPermission) {
-            return interaction.editReply({
+            await interaction.editReply({
                 content: `❌ 机器人权限不足，缺少以下权限：${botPermissions.missingPermissions.join(', ')}`
             });
+            return { success: false };
         }
         
         // 创建或合并投票
@@ -225,12 +233,15 @@ async function processMessageUrlSubmission(interaction, type, messageUrl, option
         await interaction.editReply({
             content: `✅ ${voteResult.message}`
         });
-        
+
+        return { success: true, isNewVote: voteResult.isNewVote };
+
     } catch (error) {
         console.error('处理消息链接提交时出错:', error);
         await interaction.editReply({
             content: '❌ 处理请求时出现错误，请稍后重试。'
         });
+        return { success: false };
     }
 }
 

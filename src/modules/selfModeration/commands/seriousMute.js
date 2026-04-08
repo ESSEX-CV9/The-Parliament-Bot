@@ -102,10 +102,12 @@ async function execute(interaction) {
 
         // 统一走通用流程：
         // 仅差异：type 使用 'serious_mute'，并附加 { severity: 'serious' } 透传（当前通用函数可忽略多余参数，后续子任务接入）。
-        await processMessageUrlSubmission(interaction, 'serious_mute', messageUrl, { severity: 'serious', earlyDelete, originalDescription: originalDesc });
+        const result = await processMessageUrlSubmission(interaction, 'serious_mute', messageUrl, { severity: 'serious', earlyDelete, originalDescription: originalDesc });
 
-        // 成功后更新最后使用时间（独立于普通禁言）
-        await updateUserLastUsage(interaction.guild.id, interaction.user.id, 'serious_mute');
+        // 仅在成功创建新投票时消耗冷却时间（独立于普通禁言）
+        if (result?.isNewVote === true) {
+            await updateUserLastUsage(interaction.guild.id, interaction.user.id, 'serious_mute');
+        }
 
     } catch (error) {
         console.error('执行严肃禁言指令时出错:', error);
