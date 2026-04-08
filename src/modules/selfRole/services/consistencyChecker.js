@@ -39,6 +39,16 @@ async function sendReportMessage(client, reportChannelId, content) {
 async function checkPanels(client, allSettings) {
     const guildIds = Object.keys(allSettings || {});
 
+    const summary = {
+        guilds: guildIds.length,
+        panels: 0,
+        checked: 0,
+        deactivated: 0,
+        channelMissing: 0,
+        messageMissing: 0,
+        errors: 0,
+    };
+
     for (const guildId of guildIds) {
         const guild = client.guilds.cache.get(guildId) || (await client.guilds.fetch(guildId).catch(() => null));
         if (!guild) continue;
@@ -47,11 +57,18 @@ async function checkPanels(client, allSettings) {
             const panels = await getActiveSelfRolePanels(guildId, panelType);
             if (!panels || panels.length === 0) continue;
 
+            summary.panels += panels.length;
+
             for (const panel of panels) {
                 try {
+                    summary.checked += 1;
+
                     const channel = await guild.channels.fetch(panel.channelId).catch(() => null);
                     if (!channel || !channel.isTextBased()) {
                         await deactivateSelfRolePanel(panel.panelId).catch(() => {});
+
+                        summary.channelMissing += 1;
+                        summary.deactivated += 1;
 
                         await createSelfRoleSystemAlert({
                             guildId,
@@ -67,6 +84,9 @@ async function checkPanels(client, allSettings) {
                     if (!msg) {
                         await deactivateSelfRolePanel(panel.panelId).catch(() => {});
 
+                        summary.messageMissing += 1;
+                        summary.deactivated += 1;
+
                         await createSelfRoleSystemAlert({
                             guildId,
                             alertType: 'panel_message_missing',
@@ -76,11 +96,14 @@ async function checkPanels(client, allSettings) {
                         }).catch(() => null);
                     }
                 } catch (err) {
+                    summary.errors += 1;
                     console.error('[SelfRole][Consistency] ❌ 检查面板失败:', err);
                 }
             }
         }
     }
+
+    return summary;
 }
 
 async function checkEndedGrants(client, allSettings) {
@@ -88,24 +111,51 @@ async function checkEndedGrants(client, allSettings) {
     const since = now - ENDED_GRANT_LOOKBACK_DAYS * DAY_MS;
 
     const ended = await listEndedSelfRoleGrantsSince(since, 500);
-    if (!ended || ended.length === 0) return;
+
+    const summary = {
+        scanned: Array.isArray(ended) ? ended.length : 0,
+        checked: 0,
+        skippedExistingAlert: 0,
+        guildMissing: 0,
+        memberMissing: 0,
+        noGrantRoles: 0,
+        residualFound: 0,
+        errors: 0,
+    };
+
+    if (!ended || ended.length === 0) return summary;
 
     for (const grant of ended) {
         try {
+            summary.checked += 1;
             const existing = await getActiveSelfRoleSystemAlertByGrantType(grant.grantId, 'ended_grant_roles_still_present');
-            if (existing) continue;
+            if (existing) {
+                summary.skippedExistingAlert += 1;
+                continue;
+            }
 
             const guild = client.guilds.cache.get(grant.guildId) || (await client.guilds.fetch(grant.guildId).catch(() => null));
-            if (!guild) continue;
+            if (!guild) {
+                summary.guildMissing += 1;
+                continue;
+            }
 
             const member = await guild.members.fetch(grant.userId).catch(() => null);
-            if (!member) continue;
+            if (!member) {
+                summary.memberMissing += 1;
+                continue;
+            }
 
             const grantRoles = await listSelfRoleGrantRoles(grant.grantId);
-            if (!grantRoles || grantRoles.length === 0) continue;
+            if (!grantRoles || grantRoles.length === 0) {
+                summary.noGrantRoles += 1;
+                continue;
+            }
 
             const stillHas = grantRoles.filter(r => member.roles.cache.has(r.roleId));
             if (stillHas.length === 0) continue;
+
+            summary.residualFound += 1;
 
             const stillText = stillHas.map(r => `<@&${r.roleId}>`).join(' ');
 
@@ -134,25 +184,48 @@ async function checkEndedGrants(client, allSettings) {
                 actionRequired: `请管理员手动移除上述残留身份组：${stillText}。移除完成后点击本消息下方“✅ 标记为已处理”。`,
             }).catch(() => null);
         } catch (err) {
+            summary.errors += 1;
             console.error('[SelfRole][Consistency] ❌ 检查 ended grant 失败:', err);
         }
     }
+
+    return summary;
 }
 
 async function runSelfRoleConsistencyCheck(client) {
-    if (checkerRunning) return;
+    if (checkerRunning) return { skipped: true, reason: 'already_running' };
     checkerRunning = true;
+
+    const startedAt = Date.now();
+    const summary = {
+        skipped: false,
+        reason: 'ok',
+        startedAt,
+        finishedAt: null,
+        durationMs: null,
+        panels: null,
+        endedGrants: null,
+    };
 
     try {
         const allSettings = await getAllSelfRoleSettings();
 
-        await checkPanels(client, allSettings);
-        await checkEndedGrants(client, allSettings);
+        summary.panels = await checkPanels(client, allSettings);
+        summary.endedGrants = await checkEndedGrants(client, allSettings);
 
-        console.log('[SelfRole][Consistency] ✅ 一致性巡检完成');
+        summary.finishedAt = Date.now();
+        summary.durationMs = summary.finishedAt - summary.startedAt;
+
+        console.log('[SelfRole][Consistency] ✅ 一致性巡检完成:', {
+            durationMs: summary.durationMs,
+            panels: summary.panels,
+            endedGrants: summary.endedGrants,
+        });
     } finally {
         checkerRunning = false;
     }
+
+    return summary;
 }
 
 function startSelfRoleConsistencyChecker(client) {

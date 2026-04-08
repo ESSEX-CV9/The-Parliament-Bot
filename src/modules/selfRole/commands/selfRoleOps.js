@@ -5,7 +5,7 @@
 //
 // 注意：该命令会触发真实的生命周期询问/强制清退/过期处理等行为，请谨慎使用。
 
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 
@@ -63,6 +63,19 @@ function formatRoleMentionList(roleIds, limit = 10) {
   if (ids.length > limit) return `${shown} ...（+${ids.length - limit}）`;
   return shown || '（无）';
 }
+
+function buildEndedReason(prefix, operatorId, note) {
+  const safePrefix = String(prefix || 'ops').trim() || 'ops';
+  const safeOperator = String(operatorId || '').trim();
+  const safeNote = String(note || '').trim().replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').slice(0, 80);
+
+  let reason = safeOperator ? `${safePrefix}:${safeOperator}` : safePrefix;
+  if (safeNote) reason += `:${safeNote}`;
+  if (reason.length > 200) reason = reason.slice(0, 200);
+  return reason;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * 通过 REST API 分页扫描全服成员，并为每个目标身份组筛选成员ID（一次扫描支持多个身份组）。
@@ -258,6 +271,31 @@ module.exports = {
         ),
     )
 
+    // 1.6) 查看岗位成员名单（grant 口径 + 到期时间）
+    .addSubcommand((sub) =>
+      sub
+        .setName('查看岗位成员')
+        .setDescription('查看指定岗位（主身份组）的成员名单（grant 口径）及其到期时间（forceRemoveAt）')
+        .addRoleOption((opt) =>
+          opt
+            .setName('目标身份组')
+            .setDescription('要查看的岗位身份组（必须已配置为可自助申请岗位）')
+            .setRequired(true),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('导出csv')
+            .setDescription('是否附带 CSV 附件（包含完整名单与到期时间）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('校验服务器角色')
+            .setDescription('是否逐个校验成员当前是否仍拥有该身份组（人数多时会较慢）')
+            .setRequired(false),
+        ),
+    )
+
     // 2) 申请过期
     .addSubcommand((sub) =>
       sub
@@ -337,6 +375,44 @@ module.exports = {
             .setName('目标身份组')
             .setDescription('grant 的主身份组')
             .setRequired(true),
+        ),
+    )
+
+
+    // 3.5) 手动开除（不依赖生命周期开关，直接移除身份组 + 结束 grant）
+    .addSubcommand((sub) =>
+      sub
+        .setName('开除岗位成员')
+        .setDescription('无视周期清退设置，直接移除某用户的岗位身份组并结束 grant（高风险运维操作）')
+        .addUserOption((opt) =>
+          opt
+            .setName('目标用户')
+            .setDescription('要开除的用户')
+            .setRequired(true),
+        )
+        .addRoleOption((opt) =>
+          opt
+            .setName('目标身份组')
+            .setDescription('要开除的岗位身份组（必须已配置为可自助申请岗位）')
+            .setRequired(true),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('移除配套身份组')
+            .setDescription('是否同时移除该岗位 grant 关联的配套身份组（默认是）')
+            .setRequired(false),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('原因')
+            .setDescription('可选备注（会写入 ended_reason，并用于审计）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('确认执行')
+            .setDescription('true=实际执行开除；false=仅预览将要移除的身份组/结束的 grant')
+            .setRequired(false),
         ),
     )
 
@@ -691,6 +767,254 @@ module.exports = {
     }
 
 
+
+
+    // --- 查看岗位成员（grant 口径 + 到期时间） ---
+    if (sub === '查看岗位成员') {
+      const role = interaction.options.getRole('目标身份组', true);
+      const exportCsv = interaction.options.getBoolean('导出csv');
+      const verifyServerRole = interaction.options.getBoolean('校验服务器角色') ?? false;
+
+      const settings = await getSelfRoleSettings(guildId).catch(() => null);
+      const roleConfig = settings?.roles?.find((r) => r?.roleId === role.id) || null;
+      if (!roleConfig) {
+        await interaction.editReply({
+          content:
+            `❌ 该身份组未配置为“可自助申请岗位”，无法按岗位口径查看：<@&${role.id}>\n\n` +
+            `请先使用 /自助身份组申请-配置向导 或 /自助身份组申请-配置身份组 完成岗位配置。`,
+        });
+        return;
+      }
+
+      const lc = roleConfig.lifecycle || {};
+      const lifecycleEnabled = !!lc.enabled;
+      const forceRemoveDays = Number(lc.forceRemoveDays || 0);
+
+      const grants = await listActiveSelfRoleGrantsByPrimaryRole(guildId, role.id).catch(() => []);
+      if (!Array.isArray(grants) || grants.length === 0) {
+        await interaction.editReply({
+          content:
+            `ℹ️ 当前岗位 <@&${role.id}> 没有任何 active grant（grant 口径成员=0）。\n` +
+            `说明：该列表只统计“通过本模块授予并写入 grant”的成员；手动授予的同身份组成员不在此列表。`,
+        });
+        return;
+      }
+
+      const rows = grants.map((g) => {
+        const computedForceRemoveAt = g.forceRemoveAt != null
+          ? g.forceRemoveAt
+          : (lifecycleEnabled && forceRemoveDays > 0 ? g.grantedAt + forceRemoveDays * DAY_MS : null);
+
+        return {
+          grantId: g.grantId,
+          userId: g.userId,
+          grantedAt: g.grantedAt,
+          nextInquiryAt: g.nextInquiryAt,
+          forceRemoveAt: g.forceRemoveAt,
+          computedForceRemoveAt,
+          manualAttentionRequired: !!g.manualAttentionRequired,
+          hasServerRole: null,
+        };
+      });
+
+      // 可选：校验服务器当前是否仍持有角色（用于快速发现“grant 还在但角色已被手动移除”的不一致）
+      let verifyStats = null;
+      if (verifyServerRole) {
+        let ok = 0;
+        let missing = 0;
+        let failed = 0;
+
+        for (const r of rows) {
+          try {
+            const member = await withRetry(
+              () => interaction.guild.members.fetch(r.userId),
+              { retries: 2, baseDelayMs: 280, label: `ops_verify_member_${r.userId}` },
+            ).catch(() => null);
+
+            if (!member) {
+              r.hasServerRole = null;
+              failed += 1;
+              continue;
+            }
+
+            const has = member.roles.cache.has(role.id);
+            r.hasServerRole = has;
+            if (has) ok += 1;
+            else missing += 1;
+          } catch (_) {
+            r.hasServerRole = null;
+            failed += 1;
+          }
+        }
+
+        verifyStats = { ok, missing, failed };
+      }
+
+      // 排序：到期时间（computed）升序；无到期排最后
+      rows.sort((a, b) => {
+        const ta = a.computedForceRemoveAt == null ? Number.POSITIVE_INFINITY : Number(a.computedForceRemoveAt);
+        const tb = b.computedForceRemoveAt == null ? Number.POSITIVE_INFINITY : Number(b.computedForceRemoveAt);
+        return ta - tb;
+      });
+
+      const showLimit = 30;
+      const lines = [
+        `岗位：<@&${role.id}>`,
+        `active grants：${rows.length}`,
+        `生命周期配置：enabled=${lifecycleEnabled ? 'true' : 'false'} forceRemoveDays=${Number.isFinite(forceRemoveDays) ? forceRemoveDays : '未知'} onlyWhenFull=${lc.onlyWhenFull ? 'true' : 'false'}`,
+        verifyStats ? `服务器角色校验：ok=${verifyStats.ok} missing=${verifyStats.missing} failed=${verifyStats.failed}` : null,
+        '',
+        '【成员名单（grant 口径）】',
+      ].filter(Boolean);
+
+      for (let i = 0; i < Math.min(rows.length, showLimit); i++) {
+        const r = rows[i];
+        const exp = r.computedForceRemoveAt != null ? formatDateTime(r.computedForceRemoveAt) : '（无/未设置）';
+        const hint = verifyServerRole
+          ? (r.hasServerRole === true ? '✅' : (r.hasServerRole === false ? '❌(角色已不在)' : '？(无法校验)'))
+          : '';
+        lines.push(`${i + 1}. <@${r.userId}> 到期：${exp}${hint ? ` ${hint}` : ''}`);
+      }
+
+      if (rows.length > showLimit) {
+        lines.push(`... 还有 ${rows.length - showLimit} 人未展示（建议查看 CSV 附件）。`);
+      }
+
+      const shouldExport = exportCsv === null || exportCsv === undefined ? true : exportCsv;
+      const files = [];
+      if (shouldExport) {
+        const header = [
+          'userId',
+          'mention',
+          'grantId',
+          'grantedAt',
+          'nextInquiryAt',
+          'forceRemoveAt',
+          'computedForceRemoveAt',
+          'manualAttentionRequired',
+          'hasServerRole',
+        ].join(',');
+
+        const csvLines = [header];
+        for (const r of rows) {
+          csvLines.push([
+            r.userId,
+            `<@${r.userId}>`,
+            r.grantId,
+            r.grantedAt ? new Date(r.grantedAt).toISOString() : '',
+            r.nextInquiryAt ? new Date(r.nextInquiryAt).toISOString() : '',
+            r.forceRemoveAt ? new Date(r.forceRemoveAt).toISOString() : '',
+            r.computedForceRemoveAt ? new Date(r.computedForceRemoveAt).toISOString() : '',
+            r.manualAttentionRequired ? '1' : '0',
+            r.hasServerRole === null ? '' : (r.hasServerRole ? '1' : '0'),
+          ].join(','));
+        }
+
+        const csv = csvLines.join('\n');
+        const fileName = `selfrole_${guildId}_${role.id}_members_${new Date().toISOString().slice(0, 10)}.csv`;
+        files.push(new AttachmentBuilder(Buffer.from(csv, 'utf8'), { name: fileName }));
+      }
+
+      await interaction.editReply({ content: lines.join('\n'), files });
+      return;
+    }
+
+    // --- 手动开除岗位成员（不依赖 lifecycle.enabled） ---
+    if (sub === '开除岗位成员') {
+      const user = interaction.options.getUser('目标用户', true);
+      const role = interaction.options.getRole('目标身份组', true);
+      const removeBundleOpt = interaction.options.getBoolean('移除配套身份组');
+      const removeBundle = removeBundleOpt === null || removeBundleOpt === undefined ? true : removeBundleOpt;
+      const note = interaction.options.getString('原因') || '';
+      const confirm = interaction.options.getBoolean('确认执行') ?? false;
+
+      const settings = await getSelfRoleSettings(guildId).catch(() => null);
+      const roleConfig = settings?.roles?.find((r) => r?.roleId === role.id) || null;
+      if (!roleConfig) {
+        await interaction.editReply({
+          content:
+            `❌ 该身份组未配置为“可自助申请岗位”，为避免误操作，本命令禁止对其执行开除：<@&${role.id}>\n\n` +
+            `请先完成岗位配置，或使用 Discord 原生命令手动移除身份组。`,
+        });
+        return;
+      }
+
+      const grant = await getActiveSelfRoleGrantByUserRole(guildId, user.id, role.id).catch(() => null);
+      const endedReason = buildEndedReason('ops_kick', interaction.user.id, note);
+
+      let roleIdsToRemove = [];
+      let grantRoles = [];
+
+      if (grant) {
+        grantRoles = await listSelfRoleGrantRoles(grant.grantId).catch(() => []);
+        roleIdsToRemove = grantRoles
+          .filter((r) => r.roleKind === 'primary' || (removeBundle && r.roleKind === 'bundle'))
+          .map((r) => r.roleId);
+      } else {
+        roleIdsToRemove = [role.id];
+        if (removeBundle) {
+          const bundle = Array.isArray(roleConfig.bundleRoleIds) ? roleConfig.bundleRoleIds : [];
+          roleIdsToRemove.push(...bundle);
+        }
+      }
+
+      roleIdsToRemove = [...new Set(roleIdsToRemove.filter(Boolean))];
+
+      const previewLines = [
+        `目标用户：<@${user.id}>`,
+        `目标岗位：<@&${role.id}>`,
+        `active grant：${grant ? `✅ grantId=${grant.grantId}` : '❌ 无（可能为手动授予，或已无 active grant）'}`,
+        `移除配套身份组：${removeBundle ? '是' : '否'}`,
+        `将移除身份组：${roleIdsToRemove.length > 0 ? formatRoleMentionList(roleIdsToRemove, 20) : '（无）'}`,
+        `将结束 grant：${grant ? '是（结束该用户该岗位的所有 active grants）' : '否（未找到 active grant）'}`,
+        note ? `备注：${note}` : null,
+        '',
+        confirm ? '✅ 已确认执行：将开始开除操作。' : '⚠️ 当前为预览模式：如需执行，请重新运行并设置 `确认执行:true`。',
+      ].filter(Boolean);
+
+      if (!confirm) {
+        await interaction.editReply({ content: previewLines.join('\n') });
+        return;
+      }
+
+      const startedAt = Date.now();
+      let removedOk = false;
+      let removeErrText = '';
+
+      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+      if (member) {
+        try {
+          await member.roles.remove(roleIdsToRemove, `SelfRole ${endedReason}`);
+          removedOk = true;
+        } catch (err) {
+          removeErrText = err?.message ? String(err.message) : String(err);
+        }
+      } else {
+        removeErrText = 'member_not_found_or_not_in_guild';
+      }
+
+      let endedCount = 0;
+      let endErrText = '';
+      try {
+        endedCount = await endActiveSelfRoleGrantsForUserRole(guildId, user.id, role.id, endedReason, now);
+      } catch (err) {
+        endErrText = err?.message ? String(err.message) : String(err);
+      }
+
+      await refreshActiveUserSelfRolePanels(interaction.client, guildId).catch(() => {});
+
+      const durationMs = Date.now() - startedAt;
+      await interaction.editReply({
+        content:
+          `✅ 开除操作完成：<@${user.id}> -> <@&${role.id}>\n` +
+          `移除身份组：${removedOk ? '✅ 成功' : `❌ 失败（${removeErrText || 'unknown'}）`}\n` +
+          `结束 active grants：${endedCount}${endErrText ? `（结束异常：${endErrText}）` : ''}\n` +
+          `耗时：${Math.round(durationMs / 1000)} 秒\n\n` +
+          `说明：本命令不依赖 lifecycle.enabled，会直接移除角色；若机器人无权限管理目标角色层级，移除会失败。`,
+      });
+      return;
+    }
+
     // --- 申请过期 ---
     if (sub === '检查申请过期') {
       const expired = await checkExpiredSelfRoleApplications(interaction.client);
@@ -824,12 +1148,29 @@ module.exports = {
           forceRemoveAt: now - 1,
         });
 
+        const before = await getActiveSelfRoleGrantByUserRole(guildId, user.id, role.id).catch(() => null);
         const tick = await runSelfRoleLifecycleTick(interaction.client, { guildId, grantId: grant.grantId });
+        const after = await getActiveSelfRoleGrantByUserRole(guildId, user.id, role.id).catch(() => null);
+
+        const dbg = await buildLifecycleDebugSummary({ client: interaction.client, guildId, roleId: role.id, grant: after || grant });
+        let hint = '';
+        if (tick?.skipped) {
+          hint = `⚠️ 生命周期 tick 未执行：reason=${tick.reason || 'unknown'}（可能正在执行中）。`;
+        }
+        if (!dbg.lifecycle.enabled) {
+          hint = '⚠️ lifecycle 未启用：tick 会跳过强制清退。若需无条件移除，请使用子命令：开除岗位成员。';
+        } else if (dbg.lifecycle.onlyWhenFull && dbg.capacity.maxMembers && !dbg.capacity.full) {
+          hint = '⚠️ onlyWhenFull=是 且当前未满员：tick 会跳过强制清退（计时会继续）。';
+        }
 
         await interaction.editReply({
           content:
             `✅ 已将 forceRemoveAt 设为过去并执行 tick：grantId=${grant.grantId}\n\n` +
-            `tickSummary: skipped=${tick?.skipped ? 'true' : 'false'} reason=${tick?.reason || 'ok'} due=${tick?.dueGrants ?? '?'} inquiry=${tick?.processedInquiries ?? '?'} force=${tick?.processedForceRemoves ?? '?'} errors=${tick?.errors ?? '?'}`,
+            `tickSummary: skipped=${tick?.skipped ? 'true' : 'false'} reason=${tick?.reason || 'ok'} due=${tick?.dueGrants ?? '?'} inquiry=${tick?.processedInquiries ?? '?'} force=${tick?.processedForceRemoves ?? '?'} errors=${tick?.errors ?? '?'}\n\n` +
+            (hint ? `${hint}\n\n` : '') +
+            `before.forceRemoveAt: ${formatMs(before?.forceRemoveAt)}\n` +
+            `after.forceRemoveAt:  ${formatMs(after?.forceRemoveAt)}\n` +
+            `after.status: ${after?.status || '（grant 已结束或不存在）'}`,
         });
         return;
       }
@@ -837,8 +1178,29 @@ module.exports = {
 
     // --- 一致性巡检 ---
     if (sub === '执行一致性巡检') {
-      await runSelfRoleConsistencyCheck(interaction.client);
-      await interaction.editReply({ content: '✅ 已执行一次一致性巡检。' });
+      const result = await runSelfRoleConsistencyCheck(interaction.client);
+
+      if (result?.skipped) {
+        await interaction.editReply({
+          content: `⚠️ 一致性巡检未执行：reason=${result.reason || 'already_running'}（可能正在运行中）。`,
+        });
+        return;
+      }
+
+      const p = result?.panels;
+      const eg = result?.endedGrants;
+      const durationText = result?.durationMs != null ? `${Math.round(result.durationMs / 1000)} 秒` : '未知';
+
+      await interaction.editReply({
+        content:
+          `✅ 已执行一次一致性巡检（耗时：${durationText}）。\n\n` +
+          `【本巡检会做什么】\n` +
+          `1) 检查已注册的用户/管理面板是否丢失（频道/消息不存在则自动标记为 inactive，并写入告警）\n` +
+          `2) 检查“已结束的 grant”是否仍残留角色（发现后会在报告频道发送一次性告警/指引，或仅落库去重）\n\n` +
+          `【面板巡检】checked=${p?.checked ?? '?'} missingChannel=${p?.channelMissing ?? '?'} missingMessage=${p?.messageMissing ?? '?'} deactivated=${p?.deactivated ?? '?'} errors=${p?.errors ?? '?'}\n` +
+          `【结束 grant 巡检】scanned=${eg?.scanned ?? '?'} checked=${eg?.checked ?? '?'} residualFound=${eg?.residualFound ?? '?'} skippedExistingAlert=${eg?.skippedExistingAlert ?? '?'} errors=${eg?.errors ?? '?'}\n\n` +
+          `如发现问题：\n- 面板丢失：请重新创建面板\n- 角色残留：请按告警提示手动移除残留角色，并点击“✅ 标记为已处理”`,
+      });
       return;
     }
 
