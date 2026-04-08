@@ -1,5 +1,5 @@
 // src\modules\selfModeration\services\punishmentExecutor.js
-const { updateSelfModerationVote } = require('../../../core/utils/database');
+const { updateSelfModerationVote, getAllSelfModerationVotes } = require('../../../core/utils/database');
 const { calculateAdditionalMuteDuration, formatDuration } = require('../utils/timeCalculator');
 const { MUTE_DURATIONS, SERIOUS_MUTE_STABILITY_CONFIG, getSeriousMuteTotalDurationMinutes } = require('../../../core/config/timeconfig');
 const { archiveDeletedMessage } = require('./archiveService');
@@ -440,37 +440,55 @@ async function executeMuteUser(client, voteData) {
         }
         
         // 清除之前的定时器（如果存在）
-        if (global.muteTimers && global.muteTimers[`${guildId}_${targetUserId}_${permissionChannel.id}`]) {
-            clearTimeout(global.muteTimers[`${guildId}_${targetUserId}_${permissionChannel.id}`]);
-            console.log(`已清除用户 ${targetUserId} 在频道 ${permissionChannel.id} 的旧定时器`);
+        const timerKey = `${guildId}_${targetUserId}_${permissionChannel.id}_${recordType}`;
+        if (global.muteTimers && global.muteTimers[timerKey]) {
+            clearTimeout(global.muteTimers[timerKey]);
+            console.log(`已清除用户 ${targetUserId} 在频道 ${permissionChannel.id} 的旧定时器 (${recordType})`);
         }
-        
+
         // 设置新的定时器，到时间后解除禁言
         if (!global.muteTimers) {
             global.muteTimers = {};
         }
-        
+
         // 计算剩余时长：解禁时间 - 当前时间
         const remainingTime = muteEndTime.getTime() - Date.now();
-        
+
         console.log(`设置解禁定时器: 总时长=${muteInfo.totalDuration}分钟, 解禁时间=${muteEndTime.toISOString()}, 剩余时长=${Math.round(remainingTime/1000/60)}分钟`);
-        
+
         const timerId = setTimeout(async () => {
             try {
-                await permissionChannel.permissionOverwrites.delete(member);
-                console.log(`已解除用户 ${targetUserId} 在频道 ${permissionChannel.id} 的禁言`);
-                
-                // 更新禁言状态为已完成
+                // 检查是否还有其他类型的活跃禁言，避免提前解除另一种禁言
+                const allVotes = await getAllSelfModerationVotes();
+                const now = Date.now();
+                const otherMuteActive = Object.values(allVotes).some(v =>
+                    v.guildId === guildId &&
+                    v.targetUserId === targetUserId &&
+                    v.muteChannelId === permissionChannel.id &&
+                    v.muteStatus === 'active' &&
+                    v.type !== recordType &&
+                    v.muteEndTime &&
+                    new Date(v.muteEndTime).getTime() > now
+                );
+
+                if (!otherMuteActive) {
+                    await permissionChannel.permissionOverwrites.delete(member);
+                    console.log(`已解除用户 ${targetUserId} 在频道 ${permissionChannel.id} 的禁言`);
+                } else {
+                    console.log(`用户 ${targetUserId} 仍有其他活跃禁言（${recordType} 已到期），跳过权限删除`);
+                }
+
+                // 始终将当前记录标记为已完成
                 await updateSelfModerationVote(guildId, targetMessageId, recordType, {
                     muteStatus: 'completed',
                     lastUnmuteAttempt: new Date().toISOString()
                 });
-                
+
                 // 清除定时器记录
-                delete global.muteTimers[`${guildId}_${targetUserId}_${permissionChannel.id}`];
+                delete global.muteTimers[timerKey];
             } catch (error) {
                 console.error(`解除禁言时出错:`, error);
-                
+
                 // 更新解封失败信息，保持状态为 active 以便定时检查器重试
                 try {
                     await updateSelfModerationVote(guildId, targetMessageId, recordType, {
@@ -484,9 +502,9 @@ async function executeMuteUser(client, voteData) {
                 }
             }
         }, remainingTime); // 使用剩余时长而非总时长
-        
+
         // 保存定时器ID
-        global.muteTimers[`${guildId}_${targetUserId}_${permissionChannel.id}`] = timerId;
+        global.muteTimers[timerKey] = timerId;
         
         return {
             success: true,

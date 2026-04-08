@@ -457,26 +457,43 @@ async function handleSeriousMuteJumpOnExpire(client, vote) {
                 }
                 
                 // 更新定时器
-                const timerKey = `${guildId}_${targetUserId}_${muteChannelId}`;
+                const timerKey = `${guildId}_${targetUserId}_${muteChannelId}_serious_mute`;
                 if (global.muteTimers && global.muteTimers[timerKey]) {
                     clearTimeout(global.muteTimers[timerKey]);
                 }
-                
+
                 if (!global.muteTimers) {
                     global.muteTimers = {};
                 }
-                
+
                 const remainingTime = newMuteEndTime.getTime() - Date.now();
                 global.muteTimers[timerKey] = setTimeout(async () => {
                     try {
-                        await permissionChannel.permissionOverwrites.delete(member);
-                        console.log(`[SeriousMute] 已解除用户 ${targetUserId} 在频道 ${muteChannelId} 的禁言（跳跃后）`);
-                        
+                        // 检查是否还有普通禁言仍活跃，避免提前解除
+                        const allVotesJump = await getAllSelfModerationVotes();
+                        const nowJump = Date.now();
+                        const otherMuteActiveJump = Object.values(allVotesJump).some(v =>
+                            v.guildId === guildId &&
+                            v.targetUserId === targetUserId &&
+                            v.muteChannelId === muteChannelId &&
+                            v.muteStatus === 'active' &&
+                            v.type !== 'serious_mute' &&
+                            v.muteEndTime &&
+                            new Date(v.muteEndTime).getTime() > nowJump
+                        );
+
+                        if (!otherMuteActiveJump) {
+                            await permissionChannel.permissionOverwrites.delete(member);
+                            console.log(`[SeriousMute] 已解除用户 ${targetUserId} 在频道 ${muteChannelId} 的禁言（跳跃后）`);
+                        } else {
+                            console.log(`[SeriousMute] 用户 ${targetUserId} 仍有活跃的普通禁言，跳过权限删除（跳跃后）`);
+                        }
+
                         await updateSelfModerationVote(guildId, targetMessageId, 'serious_mute', {
                             muteStatus: 'completed',
                             lastUnmuteAttempt: new Date().toISOString()
                         });
-                        
+
                         delete global.muteTimers[timerKey];
                     } catch (error) {
                         console.error('[SeriousMute] 解除跳跃后禁言时出错:', error);
@@ -728,17 +745,23 @@ async function sendPunishmentNotification(client, vote, result) {
                 try {
                     const existingMessage = await channel.messages.fetch(punishmentNotificationMessageId);
                     if (existingMessage && existingMessage.embeds[0]) {
-                        // 使用增量更新：只更新总禁言时长和解禁时间
+                        // 使用增量更新：更新票数、总禁言时长和解禁时间
                         const endTimestamp = Math.floor(result.endTime.getTime() / 1000);
                         const existingEmbed = existingMessage.embeds[0];
                         let existingDescription = existingEmbed.description || '';
-                        
+
+                        // 更新票数
+                        existingDescription = existingDescription.replace(
+                            /🚫反应数量达到 \*\*\d+\*\* 个（去重后）/,
+                            `🚫反应数量达到 **${currentReactionCount}** 个（去重后）`
+                        );
+
                         // 更新总禁言时长
                         existingDescription = existingDescription.replace(
                             /\*\*总禁言时长：\*\* .+/,
                             `**总禁言时长：** ${result.totalDuration}`
                         );
-                        
+
                         // 更新解禁时间
                         existingDescription = existingDescription.replace(
                             /\*\*解禁时间：\*\* <t:\d+:f>/,
