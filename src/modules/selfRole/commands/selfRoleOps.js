@@ -995,10 +995,19 @@ module.exports = {
 
       let endedCount = 0;
       let endErrText = '';
-      try {
-        endedCount = await endActiveSelfRoleGrantsForUserRole(guildId, user.id, role.id, endedReason, now);
-      } catch (err) {
-        endErrText = err?.message ? String(err.message) : String(err);
+      let endSkipped = false;
+
+      // 安全策略：如果“移除角色”失败且成员仍在服务器，则不结束 grant，避免名额统计口径错误。
+      // - 成员不存在（已退群）时，允许结束 grant 用于清理数据库。
+      const shouldEndGrant = !!grant && (removedOk || !member);
+      if (shouldEndGrant) {
+        try {
+          endedCount = await endActiveSelfRoleGrantsForUserRole(guildId, user.id, role.id, endedReason, now);
+        } catch (err) {
+          endErrText = err?.message ? String(err.message) : String(err);
+        }
+      } else if (grant) {
+        endSkipped = true;
       }
 
       await refreshActiveUserSelfRolePanels(interaction.client, guildId).catch(() => {});
@@ -1008,7 +1017,9 @@ module.exports = {
         content:
           `✅ 开除操作完成：<@${user.id}> -> <@&${role.id}>\n` +
           `移除身份组：${removedOk ? '✅ 成功' : `❌ 失败（${removeErrText || 'unknown'}）`}\n` +
-          `结束 active grants：${endedCount}${endErrText ? `（结束异常：${endErrText}）` : ''}\n` +
+          (endSkipped
+            ? '结束 active grants：⚠️ 已跳过（因移除角色失败，为避免名额口径错误，grant 保持 active）\n'
+            : `结束 active grants：${endedCount}${endErrText ? `（结束异常：${endErrText}）` : ''}\n`) +
           `耗时：${Math.round(durationMs / 1000)} 秒\n\n` +
           `说明：本命令不依赖 lifecycle.enabled，会直接移除角色；若机器人无权限管理目标角色层级，移除会失败。`,
       });
