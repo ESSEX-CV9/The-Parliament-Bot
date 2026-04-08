@@ -183,7 +183,9 @@ class DisplayService {
             return embed;
         }
 
+        const CHAR_BUDGET = 3800;
         let description = '';
+        let truncated = false;
 
         for (let i = 0; i < pageData.length; i++) {
             const submission = pageData[i];
@@ -192,46 +194,60 @@ class DisplayService {
             // 使用预处理的数据
             const { workUrl, publishTime, authorMention, truncatedDescription } = submission;
 
+            let entryText = '';
+
             // 检查是否为外部服务器投稿
             if (submission.isExternal) {
                 // 外部服务器投稿的特殊格式
-                description += `${submissionNumber}. ${workUrl}\n`;
-                description += `👤投稿者: ${authorMention}\n`;
-                description += `📅投稿时间：<t:${publishTime}:f>\n`;
-                description += `📝作品介绍: ${truncatedDescription}\n`;
-                description += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
+                entryText += `${submissionNumber}. ${workUrl}\n`;
+                entryText += `👤投稿者: ${authorMention}\n`;
+                entryText += `📅投稿时间：<t:${publishTime}:f>\n`;
+                entryText += `📝作品介绍: ${truncatedDescription}\n`;
+                entryText += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
 
                 // 新增：获奖信息显示
                 if (submission.awardInfo && submission.awardInfo.awardName) {
-                    description += `🏆 **获奖信息：** ${submission.awardInfo.awardName}\n`;
+                    entryText += `🏆 **获奖信息：** ${submission.awardInfo.awardName}\n`;
                     if (submission.awardInfo.awardMessage) {
-                        description += `💬 ${submission.awardInfo.awardMessage}\n`;
+                        entryText += `💬 ${submission.awardInfo.awardMessage}\n`;
                     }
                 }
 
                 if (!submission.contentVerified) {
-                    description += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
+                    entryText += `⚠️ : 此稿件为非本服务器投稿，BOT无法验证，如果有需要请联系赛事主办进行退稿处理\n`;
                 }
             } else {
                 // 本服务器投稿的正常格式
-                description += `${submissionNumber}.  ${workUrl}\n`;
-                description += `👤作者：${authorMention}\n`;
-                description += `📅发布时间：<t:${publishTime}:f>\n`;
-                description += `📝作品介绍: ${truncatedDescription}\n`;
-                description += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
+                entryText += `${submissionNumber}.  ${workUrl}\n`;
+                entryText += `👤作者：${authorMention}\n`;
+                entryText += `📅发布时间：<t:${publishTime}:f>\n`;
+                entryText += `📝作品介绍: ${truncatedDescription}\n`;
+                entryText += `🆔投稿ID：\`${submission.contestSubmissionId}\`\n`;
 
                 // 新增：获奖信息显示
                 if (submission.awardInfo && submission.awardInfo.awardName) {
-                    description += `🏆 **获奖信息：** ${submission.awardInfo.awardName}\n`;
+                    entryText += `🏆 **获奖信息：** ${submission.awardInfo.awardName}\n`;
                     if (submission.awardInfo.awardMessage) {
-                        description += `💬 ${submission.awardInfo.awardMessage}\n`;
+                        entryText += `💬 ${submission.awardInfo.awardMessage}\n`;
                     }
                 }
             }
 
             if (i < pageData.length - 1) {
-                description += '\n';
+                entryText += '\n';
             }
+
+            // 保护：超出字符预算则截断，避免超过 Discord embed description 4096 字符限制
+            if (description.length + entryText.length > CHAR_BUDGET) {
+                truncated = true;
+                break;
+            }
+
+            description += entryText;
+        }
+
+        if (truncated) {
+            description += '\n**(部分内容因长度限制未显示，建议减少每页显示数量)**';
         }
 
         embed.setDescription(description);
