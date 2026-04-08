@@ -282,6 +282,12 @@ module.exports = {
             .setDescription('要查看的岗位身份组（必须已配置为可自助申请岗位）')
             .setRequired(true),
         )
+        .addUserOption((opt) =>
+          opt
+            .setName('指定用户')
+            .setDescription('仅查看/校验该用户在该岗位的 grant（留空=查看全部）')
+            .setRequired(false),
+        )
         .addBooleanOption((opt) =>
           opt
             .setName('导出csv')
@@ -772,8 +778,10 @@ module.exports = {
     // --- 查看岗位成员（grant 口径 + 到期时间） ---
     if (sub === '查看岗位成员') {
       const role = interaction.options.getRole('目标身份组', true);
+      const targetUser = interaction.options.getUser('指定用户');
       const exportCsv = interaction.options.getBoolean('导出csv');
-      const verifyServerRole = interaction.options.getBoolean('校验服务器角色') ?? false;
+      const verifyOpt = interaction.options.getBoolean('校验服务器角色');
+      const verifyServerRole = verifyOpt ?? (targetUser ? true : false);
 
       const settings = await getSelfRoleSettings(guildId).catch(() => null);
       const roleConfig = settings?.roles?.find((r) => r?.roleId === role.id) || null;
@@ -790,8 +798,88 @@ module.exports = {
       const lifecycleEnabled = !!lc.enabled;
       const forceRemoveDays = Number(lc.forceRemoveDays || 0);
 
-      const grants = await listActiveSelfRoleGrantsByPrimaryRole(guildId, role.id).catch(() => []);
+      let grants = [];
+      if (targetUser) {
+        const g = await getActiveSelfRoleGrantByUserRole(guildId, targetUser.id, role.id).catch(() => null);
+        grants = g ? [g] : [];
+      } else {
+        grants = await listActiveSelfRoleGrantsByPrimaryRole(guildId, role.id).catch(() => []);
+      }
+
       if (!Array.isArray(grants) || grants.length === 0) {
+        if (targetUser) {
+          // 指定用户模式：即使没有 grant，也可以校验其当前是否仍持有该角色，辅助排查“手动授予/历史遗留”。
+          let hasServerRole = null;
+          let verifyHint = '';
+
+          if (verifyServerRole) {
+            const member = await withRetry(
+              () => interaction.guild.members.fetch(targetUser.id),
+              { retries: 2, baseDelayMs: 280, label: `ops_verify_member_${targetUser.id}` },
+            ).catch((err) => {
+              const code = err?.code;
+              if (code === 10007 || code === '10007') return 'not_in_guild';
+              return null;
+            });
+
+            if (member === 'not_in_guild') {
+              hasServerRole = false;
+              verifyHint = '（成员已不在服务器）';
+            } else if (member && typeof member === 'object') {
+              hasServerRole = member.roles.cache.has(role.id);
+            } else {
+              hasServerRole = null;
+              verifyHint = '（无法校验）';
+            }
+          }
+
+          const lines = [
+            `岗位：<@&${role.id}>`,
+            `指定用户：<@${targetUser.id}>`,
+            'active grant：0（未找到该用户在该岗位的 active grant）',
+            verifyServerRole
+              ? `服务器角色：${hasServerRole === true ? '✅ 有' : (hasServerRole === false ? `❌ 无${verifyHint}` : `？未知${verifyHint}`)}`
+              : null,
+            '',
+            '说明：本命令按“grant 口径”查看成员；若用户当前仍持有该身份组但没有 grant，通常表示该身份组是手动授予/历史遗留。',
+          ].filter(Boolean);
+
+          const shouldExport = exportCsv === null || exportCsv === undefined ? true : exportCsv;
+          const files = [];
+          if (shouldExport) {
+            const header = [
+              'userId',
+              'mention',
+              'grantId',
+              'grantedAt',
+              'nextInquiryAt',
+              'forceRemoveAt',
+              'computedForceRemoveAt',
+              'manualAttentionRequired',
+              'hasServerRole',
+            ].join(',');
+
+            const csvLine = [
+              targetUser.id,
+              `<@${targetUser.id}>`,
+              '',
+              '',
+              '',
+              '',
+              '',
+              '',
+              hasServerRole === null ? '' : (hasServerRole ? '1' : '0'),
+            ].join(',');
+
+            const csv = `${header}\n${csvLine}\n`;
+            const fileName = `selfrole_${guildId}_${role.id}_user_${targetUser.id}_${new Date().toISOString().slice(0, 10)}.csv`;
+            files.push(new AttachmentBuilder(Buffer.from(csv, 'utf8'), { name: fileName }));
+          }
+
+          await interaction.editReply({ content: lines.join('\n'), files });
+          return;
+        }
+
         await interaction.editReply({
           content:
             `ℹ️ 当前岗位 <@&${role.id}> 没有任何 active grant（grant 口径成员=0）。\n` +
@@ -860,6 +948,7 @@ module.exports = {
       const showLimit = 30;
       const lines = [
         `岗位：<@&${role.id}>`,
+        targetUser ? `指定用户：<@${targetUser.id}>（仅展示该用户）` : null,
         `active grants：${rows.length}`,
         `生命周期配置：enabled=${lifecycleEnabled ? 'true' : 'false'} forceRemoveDays=${Number.isFinite(forceRemoveDays) ? forceRemoveDays : '未知'} onlyWhenFull=${lc.onlyWhenFull ? 'true' : 'false'}`,
         verifyStats ? `服务器角色校验：ok=${verifyStats.ok} missing=${verifyStats.missing} failed=${verifyStats.failed}` : null,
