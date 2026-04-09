@@ -13,10 +13,12 @@ const {
   getPendingSelfRoleApplicationV2ByApplicantRole,
   saveSelfRoleApplicationV2,
   getSelfRoleSettings,
+  getSelfRoleGrant,
   getActiveSelfRoleGrantByUserRole,
   listActiveSelfRoleGrantsByPrimaryRole,
   createSelfRoleGrant,
   endActiveSelfRoleGrantsForUserRole,
+  deleteSelfRoleGrantCascade,
   updateSelfRoleGrantSchedule,
   listSelfRoleGrantRoles,
   countActiveSelfRoleGrantHoldersByRole,
@@ -418,6 +420,31 @@ module.exports = {
           opt
             .setName('确认执行')
             .setDescription('true=实际执行开除；false=仅预览将要移除的身份组/结束的 grant')
+            .setRequired(false),
+        ),
+    )
+
+    // 3.6) 删除 grant 记录（用于清理已知错误/历史噪音）
+    .addSubcommand((sub) =>
+      sub
+        .setName('删除grant记录')
+        .setDescription('【高风险】从数据库中彻底删除一个 grant 及其关联记录（不会自动移除服务器内角色）')
+        .addStringOption((opt) =>
+          opt
+            .setName('grant_id')
+            .setDescription('要删除的 grantId（UUID，通常可从告警消息中复制）')
+            .setRequired(true),
+        )
+        .addStringOption((opt) =>
+          opt
+            .setName('原因')
+            .setDescription('可选：删除原因备注（仅用于本次操作记录）')
+            .setRequired(false),
+        )
+        .addBooleanOption((opt) =>
+          opt
+            .setName('确认执行')
+            .setDescription('true=实际删除；false=仅预览将删除的对象')
             .setRequired(false),
         ),
     )
@@ -1137,6 +1164,102 @@ module.exports = {
             : `结束 active grants：${endedCount}${endErrText ? `（结束异常：${endErrText}）` : ''}\n`) +
           `耗时：${Math.round(durationMs / 1000)} 秒\n\n` +
           `说明：本命令不依赖 lifecycle.enabled，会直接移除角色；若机器人无权限管理目标角色层级，移除会失败。`,
+      });
+      return;
+    }
+
+
+    // --- 删除 grant 记录（高风险：仅清理 DB，不改服务器角色） ---
+    if (sub === '删除grant记录') {
+      const grantIdRaw = interaction.options.getString('grant_id', true);
+      const grantId = String(grantIdRaw || '').trim();
+      const note = interaction.options.getString('原因') || '';
+      const confirm = interaction.options.getBoolean('确认执行') ?? false;
+
+      if (!grantId) {
+        await interaction.editReply({ content: '❌ grant_id 不能为空。' });
+        return;
+      }
+
+      const grant = await getSelfRoleGrant(grantId).catch(() => null);
+      if (!grant) {
+        await interaction.editReply({ content: `❌ 未找到该 grant：grantId=${grantId}` });
+        return;
+      }
+
+      if (grant.guildId !== guildId) {
+        await interaction.editReply({
+          content: `❌ 该 grant 不属于当前服务器，禁止删除：grant.guildId=${grant.guildId} current=${guildId}`,
+        });
+        return;
+      }
+
+      if (grant.status === 'active') {
+        await interaction.editReply({
+          content:
+            `❌ 该 grant 当前仍为 active，默认禁止直接删除（会影响名额统计/生命周期口径）。\n\n` +
+            `建议：\n` +
+            `1) 使用 /自助身份组申请-运维 开除岗位成员 结束 grant 并移除身份组；\n` +
+            `2) 如确需清理历史噪音，可在 grant 结束后再执行删除。\n\n` +
+            `grantId=${grant.grantId} user=<@${grant.userId}> role=<@&${grant.primaryRoleId}>`,
+        });
+        return;
+      }
+
+      const grantRoles = await listSelfRoleGrantRoles(grant.grantId).catch(() => []);
+      const roleText = grantRoles.length > 0
+        ? grantRoles.map((r) => `<@&${r.roleId}>(${r.roleKind})`).join(' ')
+        : '（无）';
+
+      const previewLines = [
+        '【删除 grant 预览】',
+        `grantId: ${grant.grantId}`,
+        `user: <@${grant.userId}>`,
+        `primaryRole: <@&${grant.primaryRoleId}>`,
+        `status: ${grant.status}`,
+        `grantedAt: ${formatMs(grant.grantedAt)}`,
+        `endedAt: ${formatMs(grant.endedAt)}`,
+        `endedReason: ${grant.endedReason || '（无）'}`,
+        `manualAttentionRequired: ${grant.manualAttentionRequired ? 'true' : 'false'}`,
+        `roles: ${roleText}`,
+        note ? `备注：${note}` : null,
+        '',
+        '将删除：sr_grants + sr_grant_roles + sr_renewal_sessions + sr_system_alerts（仅数据库记录，不会自动移除服务器内角色）',
+        confirm
+          ? '✅ 已确认执行：将开始删除。'
+          : '⚠️ 当前为预览模式：如需执行，请重新运行并设置 `确认执行:true`。',
+      ].filter(Boolean);
+
+      if (!confirm) {
+        await interaction.editReply({ content: previewLines.join('\n') });
+        return;
+      }
+
+      const startedAt = Date.now();
+      const del = await deleteSelfRoleGrantCascade(grant.grantId).catch((err) => {
+        console.error('[SelfRole][Ops] ❌ 删除 grant 失败:', err);
+        return null;
+      });
+
+      if (!del || !del.deletedGrant) {
+        await interaction.editReply({
+          content:
+            `❌ 删除 grant 失败（数据库未变更）。\n` +
+            `grantId=${grant.grantId}`,
+        });
+        return;
+      }
+
+      await refreshActiveUserSelfRolePanels(interaction.client, guildId).catch(() => {});
+
+      const durationMs = Date.now() - startedAt;
+      await interaction.editReply({
+        content:
+          `✅ 已删除 grant：${grant.grantId}\n` +
+          `user=<@${grant.userId}> role=<@&${grant.primaryRoleId}>\n` +
+          `deletedGrantRoles=${del.deletedGrantRoles} deletedRenewalSessions=${del.deletedRenewalSessions} deletedAlerts=${del.deletedAlerts}\n` +
+          `耗时：${Math.round(durationMs / 1000)} 秒\n\n` +
+          `提示：该操作仅删除数据库记录，不会自动移除服务器内角色。`,
       });
       return;
     }
