@@ -1604,6 +1604,39 @@ async function endSelfRoleGrant(grantId, endedReason = 'ended', endedAt = Date.n
 }
 
 /**
+ * 删除 grant 记录（高风险运维操作）。
+ *
+ * 说明：
+ * - 该操作会从数据库中彻底删除 sr_grants 及其关联表记录（sr_grant_roles / sr_renewal_sessions / sr_system_alerts）。
+ * - 不会对服务器内真实身份组做任何修改（不会自动移除角色）。
+ * - 建议仅用于清理“已确认错误/不再需要追踪”的 grant（通常为 ended grant）。
+ *
+ * @param {string} grantId
+ * @returns {Promise<{deletedGrant:boolean, deletedGrantRoles:number, deletedRenewalSessions:number, deletedAlerts:number}>}
+ */
+async function deleteSelfRoleGrantCascade(grantId) {
+    if (!grantId) {
+        return { deletedGrant: false, deletedGrantRoles: 0, deletedRenewalSessions: 0, deletedAlerts: 0 };
+    }
+
+    const tx = selfRoleDb.transaction((gid) => {
+        const delRoles = selfRoleDb.prepare('DELETE FROM sr_grant_roles WHERE grant_id = ?').run(gid);
+        const delSessions = selfRoleDb.prepare('DELETE FROM sr_renewal_sessions WHERE grant_id = ?').run(gid);
+        const delAlerts = selfRoleDb.prepare('DELETE FROM sr_system_alerts WHERE grant_id = ?').run(gid);
+        const delGrant = selfRoleDb.prepare('DELETE FROM sr_grants WHERE grant_id = ?').run(gid);
+
+        return {
+            deletedGrant: (delGrant?.changes || 0) > 0,
+            deletedGrantRoles: delRoles?.changes || 0,
+            deletedRenewalSessions: delSessions?.changes || 0,
+            deletedAlerts: delAlerts?.changes || 0,
+        };
+    });
+
+    return tx(grantId);
+}
+
+/**
  * 获取 renewal session
  */
 async function getSelfRoleRenewalSession(sessionId) {
@@ -3440,6 +3473,7 @@ module.exports = {
     updateSelfRoleGrantInquiry,
     updateSelfRoleGrantLastDecision,
     endSelfRoleGrant,
+    deleteSelfRoleGrantCascade,
     // renewal sessions
     getSelfRoleRenewalSession,
     getPendingSelfRoleRenewalSessionByGrant,
