@@ -511,6 +511,7 @@ async function handleBasicConfig(interaction) {
       }
     }
     settings.roles[idx] = {
+      ...prev,
       roleId,
       label,
       description,

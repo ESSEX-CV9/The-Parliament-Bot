@@ -21,6 +21,8 @@ const {
 
 const { scheduleActiveUserSelfRolePanelsRefresh } = require('./panelService');
 const { checkExpiredSelfRoleApplications } = require('./applicationChecker');
+const { flushActivityCacheToDatabase } = require('./activityTracker');
+const { reportSelfRoleAlertOnce } = require('./alertReporter');
 
 const DEFAULT_PENDING_EXPIRE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -31,6 +33,88 @@ function formatDateTime(ts) {
         return String(ts);
     }
 }
+
+function formatErrorText(error) {
+    return error?.message ? String(error.message) : String(error);
+}
+
+async function reportDirectGrantFailure({
+    client,
+    guildId,
+    channelId,
+    roleId,
+    userId,
+    roleIdsToRollback,
+    roleIdsToAdd,
+    reason,
+}) {
+    await reportSelfRoleAlertOnce({
+        client,
+        guildId,
+        channelId,
+        roleId,
+        grantId: null,
+        applicationId: `direct:${guildId}:${userId}:${roleId}`,
+        alertType: 'direct_grant_failed',
+        severity: reason.includes('rollback_failed') ? 'high' : 'medium',
+        title: '⚠️ 直授身份组失败',
+        message:
+            `用户 ${userId} 的直授流程未能完整完成。\n` +
+            `身份组：<@&${roleId}>\n` +
+            `错误：${reason || 'unknown_error'}`,
+        actionRequired:
+            `系统已尽量回滚本次新增的身份组，避免服务器角色与数据库 grant 分叉。\n` +
+            `本次计划发放：${roleIdsToAdd.map(rid => `<@&${rid}>`).join(' ') || `<@&${roleId}>`}\n` +
+            `本次可回滚新增：${roleIdsToRollback.map(rid => `<@&${rid}>`).join(' ') || '（无，本次未新增或无法判断）'}\n` +
+            `如错误包含 rollback_failed，请立即核查该用户是否仍持有已发放但未落库的身份组。`,
+    }).catch(() => {});
+}
+
+async function grantSelfRoleDirectly({ interaction, member, roleConfig, roleId, guildId }) {
+    const bundleRoleIds = Array.isArray(roleConfig.bundleRoleIds) ? roleConfig.bundleRoleIds : [];
+    const roleIdsToAdd = [...new Set([roleId, ...bundleRoleIds])];
+    const roleIdsToRollback = roleIdsToAdd.filter(rid => !member.roles.cache.has(rid));
+
+    await member.roles.add(roleIdsToAdd);
+
+    try {
+        await createSelfRoleGrant({
+            guildId,
+            userId: member.id,
+            primaryRoleId: roleId,
+            applicationId: null,
+            grantedAt: Date.now(),
+            bundleRoleIds,
+        });
+    } catch (dbErr) {
+        const dbErrText = formatErrorText(dbErr);
+        let failureReason = `grant_record_failed: ${dbErrText}`;
+        try {
+            if (roleIdsToRollback.length > 0) {
+                await member.roles.remove(roleIdsToRollback);
+            }
+            failureReason += '; rollback_ok';
+        } catch (rollbackErr) {
+            failureReason += `; rollback_failed: ${formatErrorText(rollbackErr)}`;
+        }
+
+        await reportDirectGrantFailure({
+            client: interaction.client,
+            guildId,
+            channelId: interaction.channel?.id,
+            roleId,
+            userId: member.id,
+            roleIdsToRollback,
+            roleIdsToAdd,
+            reason: failureReason,
+        });
+
+        throw new Error(failureReason);
+    }
+
+    return { bundleRoleIds, roleIdsToAdd };
+}
+
 
 /**
  * 处理用户点击“自助身份组申请”按钮的事件。
@@ -222,7 +306,8 @@ async function handleSelfRoleSelect(interaction) {
                 : '请说明申请该身份组的理由（可选）';
 
             const modal = new ModalBuilder()
-                .setCustomId(`self_role_reason_modal_${roleId}`)
+                // 追加来源 panelMessageId，用于 modal 提交时再次校验多面板可申请范围。
+                .setCustomId(`self_role_reason_modal:${roleId}:${panelMessageId || ''}`)
                 .setTitle(`申请理由: ${roleConfig.label}`);
 
             const reasonInput = new TextInputBuilder()
@@ -243,6 +328,9 @@ async function handleSelfRoleSelect(interaction) {
 
     // 过期清理可能包含 Discord API 编辑消息等操作，可能较慢；因此必须在 defer 之后执行。
     await checkExpiredSelfRoleApplications(interaction.client).catch(() => {});
+
+    // 申请前先刷入内存活跃度增量，避免刚达标的发言仍停留在 5 分钟缓存窗口内。
+    await flushActivityCacheToDatabase().catch(() => {});
 
     const userActivity = await getUserActivity(guildId);
 
@@ -347,30 +435,25 @@ async function handleSelfRoleSelect(interaction) {
             }
             // 如果资格预审通过且无需审核
             else {
-                try {
-                    const bundleRoleIds = Array.isArray(roleConfig.bundleRoleIds) ? roleConfig.bundleRoleIds : [];
-                    const roleIdsToAdd = [...new Set([roleId, ...bundleRoleIds])];
-                    await member.roles.add(roleIdsToAdd);
+                const existingV2 = await getPendingSelfRoleApplicationV2ByApplicantRole(guildId, member.id, roleId);
+                const existingLegacy = await getPendingApplicationByApplicantRole(member.id, roleId);
+                if (existingV2 || existingLegacy) {
+                    const expireText = existingV2?.reservedUntil
+                        ? `（将于 ${formatDateTime(existingV2.reservedUntil)} 自动过期）`
+                        : '';
+                    results.push(`⏳ **${roleConfig.label}**: 您仍有同一身份组的待审核申请${expireText}。为避免审核记录和直授状态冲突，请先使用 /自助身份组申请-撤回申请 撤回后再申请。`);
+                    continue;
+                }
 
-                    try {
-                        await createSelfRoleGrant({
-                            guildId,
-                            userId: member.id,
-                            primaryRoleId: roleId,
-                            applicationId: null,
-                            grantedAt: Date.now(),
-                            bundleRoleIds,
-                        });
-                    } catch (dbErr) {
-                        console.error('[SelfRole] ❌ 写入 grant 记录失败（直授）:', dbErr);
-                    }
+                try {
+                    const { bundleRoleIds } = await grantSelfRoleDirectly({ interaction, member, roleConfig, roleId, guildId });
 
                     const bundleSuffix = bundleRoleIds.length > 0 ? '（含配套身份组）' : '';
                     results.push(`✅ **${roleConfig.label}**: 成功获取！${bundleSuffix}`);
                     scheduleActiveUserSelfRolePanelsRefresh(interaction.client, guildId, 'direct_grant');
                 } catch (error) {
                     console.error(`[SelfRole] ❌ 授予身份组 ${roleConfig.label} 时出错:`, error);
-                    results.push(`❌ **${roleConfig.label}**: 授予失败，可能是机器人权限不足。`);
+                    results.push(`❌ **${roleConfig.label}**: 授予失败或 grant 记录写入失败，系统已尽量回滚本次新增身份组，请联系管理员确认。`);
                 }
             }
         } else {
@@ -588,11 +671,43 @@ async function handleReasonModalSubmit(interaction) {
 
     const guildId = interaction.guild.id;
     const member = interaction.member;
-    const customId = interaction.customId; // self_role_reason_modal_<roleId>
-    const roleId = customId.replace('self_role_reason_modal_', '');
+    const customId = String(interaction.customId || ''); // legacy: self_role_reason_modal_<roleId>; new: self_role_reason_modal:<roleId>:<panelMessageId>
+    let roleId = '';
+    let panelMessageId = null;
+    if (customId.startsWith('self_role_reason_modal:')) {
+        const payload = customId.slice('self_role_reason_modal:'.length);
+        const [rid, panelId] = payload.split(':');
+        roleId = rid || '';
+        panelMessageId = panelId || null;
+    } else {
+        roleId = customId.replace('self_role_reason_modal_', '');
+    }
+
+    if (!roleId) {
+        await interaction.editReply({ content: '❌ 无法解析申请身份组，请重新从申请面板发起。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
+    }
+
+    if (panelMessageId) {
+        const panel = await getSelfRolePanel(panelMessageId).catch(() => null);
+        if (!panel || panel.panelType !== 'user' || !panel.isActive) {
+            await interaction.editReply({ content: '⚠️ 该申请面板已被停用或已过期，请重新从最新面板发起申请。' });
+            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+            return;
+        }
+        if (Array.isArray(panel.roleIds) && panel.roleIds.length > 0 && !panel.roleIds.includes(roleId)) {
+            await interaction.editReply({ content: '❌ 你申请的身份组不属于该面板允许申请的范围，请重新从对应面板发起申请。' });
+            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+            return;
+        }
+    }
 
     // 先做一次过期清理（避免“已过期但未清理”的 pending 卡住重复申请）
     await checkExpiredSelfRoleApplications(interaction.client).catch(() => {});
+
+    // modal 路径同样需要把最新消息增量落库后再做资格预审。
+    await flushActivityCacheToDatabase().catch(() => {});
 
     // 读取当前配置与活动数据
     const settings = await getSelfRoleSettings(guildId);
@@ -729,6 +844,17 @@ async function handleReasonModalSubmit(interaction) {
             await createApprovalPanel(interaction, roleConfig, sanitized || null);
             await interaction.editReply({ content: `⏳ **${roleConfig.label}**: 资格审查通过，已提交社区审核。` });
         } else {
+            const existingV2 = await getPendingSelfRoleApplicationV2ByApplicantRole(guildId, member.id, roleId);
+            const existingLegacy = await getPendingApplicationByApplicantRole(member.id, roleId);
+            if (existingV2 || existingLegacy) {
+                const expireText = existingV2?.reservedUntil
+                    ? `（将于 ${formatDateTime(existingV2.reservedUntil)} 自动过期）`
+                    : '';
+                await interaction.editReply({ content: `⏳ **${roleConfig.label}**: 您仍有同一身份组的待审核申请${expireText}。为避免审核记录和直授状态冲突，请先使用 /自助身份组申请-撤回申请 撤回后再申请。` });
+                setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+                return;
+            }
+
             // 直授场景：名额检查（现任 + 待审核预留名额）
             const maxMembers = roleConfig?.conditions?.capacity?.maxMembers;
             const hasLimit = typeof maxMembers === 'number' && maxMembers > 0;
@@ -749,22 +875,7 @@ async function handleReasonModalSubmit(interaction) {
             }
 
             // 直授场景：授予身份组
-            const bundleRoleIds = Array.isArray(roleConfig.bundleRoleIds) ? roleConfig.bundleRoleIds : [];
-            const roleIdsToAdd = [...new Set([roleId, ...bundleRoleIds])];
-            await member.roles.add(roleIdsToAdd);
-
-            try {
-                await createSelfRoleGrant({
-                    guildId,
-                    userId: member.id,
-                    primaryRoleId: roleId,
-                    applicationId: null,
-                    grantedAt: Date.now(),
-                    bundleRoleIds,
-                });
-            } catch (dbErr) {
-                console.error('[SelfRole] ❌ 写入 grant 记录失败（直授）:', dbErr);
-            }
+            const { bundleRoleIds } = await grantSelfRoleDirectly({ interaction, member, roleConfig, roleId, guildId });
 
             const bundleSuffix = bundleRoleIds.length > 0 ? '（含配套身份组）' : '';
             await interaction.editReply({ content: `✅ **${roleConfig.label}**: 成功获取！${bundleSuffix}` });

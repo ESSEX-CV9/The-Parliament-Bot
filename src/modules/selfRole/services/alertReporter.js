@@ -148,6 +148,10 @@ async function reportSelfRoleAlertOnce({
     return { alert: null, reported: false, reason: 'db_failed' };
   }
 
+  if (alert.deduped) {
+    return { alert, reported: false, reason: 'dedup_hit' };
+  }
+
   if (!channelId) {
     return { alert, reported: false, reason: 'no_channel' };
   }
@@ -188,7 +192,7 @@ async function reportSelfRoleAlertOnce({
   const finalMentionRoleId = mentionRoleId || getMentionRoleIdFromEnv();
   const content = finalMentionRoleId ? `<@&${finalMentionRoleId}> SelfRole 出现异常需要处理` : null;
 
-  await ch
+  const sent = await ch
     .send({
       content: content || undefined,
       embeds: [embed],
@@ -200,7 +204,12 @@ async function reportSelfRoleAlertOnce({
         `[SelfRole][Alert] ❌ 发送错误报告失败: guild=${guildId} channel=${channelId} alertType=${alertType} alertId=${alert.alertId}`,
         err,
       );
+      return null;
     });
+
+  if (!sent) {
+    return { alert, reported: false, reason: 'send_failed' };
+  }
 
   return { alert, reported: true, reason: 'ok' };
 }

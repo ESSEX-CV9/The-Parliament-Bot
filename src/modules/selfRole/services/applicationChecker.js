@@ -71,22 +71,25 @@ async function migrateLegacyPendingApplicationsToV2() {
 
         const applicationId = item.messageId; // 直接复用 messageId，便于排查
 
-        await saveSelfRoleApplicationV2(applicationId, {
-            guildId,
-            applicantId: item.applicantId,
-            roleId: item.roleId,
-            status: 'pending',
-            reason: item.reason || null,
-            reviewMessageId: item.messageId,
-            reviewChannelId: null,
-            slotReserved: true,
-            reservedUntil: now + DEFAULT_PENDING_EXPIRE_MS,
-            createdAt: now,
-            resolvedAt: null,
-            resolutionReason: null,
-        }).catch(() => {});
-
-        migrated++;
+        try {
+            await saveSelfRoleApplicationV2(applicationId, {
+                guildId,
+                applicantId: item.applicantId,
+                roleId: item.roleId,
+                status: 'pending',
+                reason: item.reason || null,
+                reviewMessageId: item.messageId,
+                reviewChannelId: null,
+                slotReserved: true,
+                reservedUntil: now + DEFAULT_PENDING_EXPIRE_MS,
+                createdAt: now,
+                resolvedAt: null,
+                resolutionReason: null,
+            });
+            migrated++;
+        } catch (err) {
+            console.error(`[SelfRole][AppChecker] ❌ legacy pending 申请迁移到 v2 失败: message=${item.messageId}`, err);
+        }
     }
 
     if (migrated > 0) {

@@ -1,5 +1,5 @@
 const { ChannelType } = require('discord.js');
-const { getAllSelfRoleSettings, saveUserActivityBatch, saveDailyUserActivityBatch } = require('../../../core/utils/database');
+const { getAllSelfRoleSettings, saveUserActivityAndDailyBatchByDate } = require('../../../core/utils/database');
 
 /**
  * @file autoSyncService.js
@@ -69,6 +69,7 @@ async function syncMissedActivity(client) {
     const allSettings = await getAllSelfRoleSettings();
 
     const batchData = {}; // 用于收集所有服务器的增量数据
+    const dailyBatchDataByDate = {}; // 按消息实际创建日期汇总每日活跃度
 
     for (const guildId in allSettings) {
         try {
@@ -112,6 +113,19 @@ async function syncMissedActivity(client) {
                     for (const message of missedMessages) {
                         if (message.author.bot) continue;
 
+                        const messageDate = new Date(message.createdTimestamp).toISOString().split('T')[0];
+                        if (!dailyBatchDataByDate[messageDate]) dailyBatchDataByDate[messageDate] = {};
+                        if (!dailyBatchDataByDate[messageDate][guildId]) dailyBatchDataByDate[messageDate][guildId] = {};
+                        if (!dailyBatchDataByDate[messageDate][guildId][channelId]) dailyBatchDataByDate[messageDate][guildId][channelId] = {};
+                        const dailyUsers = dailyBatchDataByDate[messageDate][guildId][channelId];
+
+                        const ensureDailyUser = (uid) => {
+                            if (!dailyUsers[uid]) {
+                                dailyUsers[uid] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
+                            }
+                            return dailyUsers[uid];
+                        };
+
                         const authorId = message.author.id;
                         if (!guildIncrements[channelId]) guildIncrements[channelId] = {};
                         if (!guildIncrements[channelId][authorId]) {
@@ -119,10 +133,12 @@ async function syncMissedActivity(client) {
                         }
                         
                         guildIncrements[channelId][authorId].messageCount++;
+                        ensureDailyUser(authorId).messageCount++;
 
                         const isMentioning = message.reference !== null || message.mentions.users.size > 0 || message.mentions.roles.size > 0;
                         if (isMentioning) {
                             guildIncrements[channelId][authorId].mentioningCount++;
+                            ensureDailyUser(authorId).mentioningCount++;
                         }
 
                         message.mentions.users.forEach(user => {
@@ -132,6 +148,7 @@ async function syncMissedActivity(client) {
                                 guildIncrements[channelId][mentionedId] = { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                             }
                             guildIncrements[channelId][mentionedId].mentionedCount++;
+                            ensureDailyUser(mentionedId).mentionedCount++;
                         });
                     }
                 }
@@ -149,29 +166,7 @@ async function syncMissedActivity(client) {
     if (Object.keys(batchData).length > 0) {
         console.log(`[SelfRole-AutoSync] 💾 Writing batch data for ${Object.keys(batchData).length} guilds to the database...`);
         try {
-            // 保存总体活跃度数据
-            await saveUserActivityBatch(batchData);
-
-            // 按日期保存每日活跃度数据
-            // 需要按消息的创建日期分组保存
-            const dailyBatchData = {};
-            for (const guildId in batchData) {
-                const channels = batchData[guildId];
-                for (const channelId in channels) {
-                    const users = channels[channelId];
-                    for (const userId in users) {
-                        // 这里简化处理，将所有数据归到今天
-                        // 实际应用中可能需要更复杂的日期处理逻辑
-                        const today = new Date().toISOString().split('T')[0];
-                        if (!dailyBatchData[guildId]) dailyBatchData[guildId] = {};
-                        if (!dailyBatchData[guildId][channelId]) dailyBatchData[guildId][channelId] = {};
-                        dailyBatchData[guildId][channelId][userId] = users[userId];
-                    }
-                }
-            }
-
-            const today = new Date().toISOString().split('T')[0];
-            await saveDailyUserActivityBatch(dailyBatchData, today);
+            await saveUserActivityAndDailyBatchByDate(batchData, dailyBatchDataByDate);
 
             console.log('[SelfRole-AutoSync] ✅ Batch write (总体和每日数据) successful.');
         } catch (error) {
