@@ -114,6 +114,61 @@ function normalizeSelfRoleSettings(input) {
     return { ...settings, roles };
 }
 
+function dedupeActiveSelfRoleSystemAlertsForUniqueIndexes() {
+    const dedupeColumn = (columnName) => {
+        const groupStmt = selfRoleDb.prepare(`
+            SELECT ${columnName} AS dedupe_key, alert_type, COUNT(*) AS cnt
+            FROM sr_system_alerts
+            WHERE resolved_at IS NULL
+              AND ${columnName} IS NOT NULL
+            GROUP BY ${columnName}, alert_type
+            HAVING COUNT(*) > 1
+        `);
+        const listStmt = selfRoleDb.prepare(`
+            SELECT alert_id
+            FROM sr_system_alerts
+            WHERE resolved_at IS NULL
+              AND ${columnName} = ?
+              AND alert_type = ?
+            ORDER BY created_at DESC, alert_id DESC
+        `);
+        const resolveStmt = selfRoleDb.prepare(`
+            UPDATE sr_system_alerts
+            SET resolved_at = ?
+            WHERE alert_id = ? AND resolved_at IS NULL
+        `);
+
+        let groups = 0;
+        let resolved = 0;
+        const now = Date.now();
+        for (const group of groupStmt.all()) {
+            groups += 1;
+            const rows = listStmt.all(group.dedupe_key, group.alert_type);
+            // 保留最新一条 unresolved 告警，其余旧重复项自动标记为已解决，确保唯一索引可创建。
+            for (const row of rows.slice(1)) {
+                resolved += resolveStmt.run(now, row.alert_id)?.changes || 0;
+            }
+        }
+
+        return { groups, resolved };
+    };
+
+    const tx = selfRoleDb.transaction(() => {
+        const grant = dedupeColumn('grant_id');
+        const application = dedupeColumn('application_id');
+        return { grant, application };
+    });
+
+    const summary = tx();
+    const totalResolved = (summary.grant?.resolved || 0) + (summary.application?.resolved || 0);
+    if (totalResolved > 0) {
+        console.warn(
+            `[SelfRole] ⚠️ 已自动归并 ${totalResolved} 条历史重复未解决告警，以便创建 sr_system_alerts 去重唯一索引。`,
+        );
+    }
+    return summary;
+}
+
 function initializeSelfRoleDatabase() {
     // role_settings 表
     selfRoleDb.exec(`
@@ -355,6 +410,25 @@ function initializeSelfRoleDatabase() {
             ON sr_system_alerts (alert_type);
     `);
 
+    // 告警去重约束：同一 grant/application 的同类未解决告警只允许存在一条。
+    // SQLite 允许多个 NULL，因此分别为 grant 与 application 建部分唯一索引。
+    try {
+        dedupeActiveSelfRoleSystemAlertsForUniqueIndexes();
+        selfRoleDb.exec(`
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_sr_alerts_active_grant_type
+                ON sr_system_alerts (grant_id, alert_type)
+                WHERE resolved_at IS NULL AND grant_id IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_sr_alerts_active_application_type
+                ON sr_system_alerts (application_id, alert_type)
+                WHERE resolved_at IS NULL AND application_id IS NOT NULL;
+        `);
+    } catch (idxErr) {
+        console.warn(
+            '[SelfRole] ⚠️ 创建 sr_system_alerts 去重唯一索引失败；告警仍可使用，但并发去重会退化为非唯一索引保护，请检查历史重复数据或 SQLite 版本。',
+            idxErr,
+        );
+    }
+
     console.log('[SelfRole] ✅ SQLite 数据库和表结构初始化完成。');
 }
 
@@ -583,6 +657,155 @@ async function saveDailyUserActivityBatch(batchData, date) {
 }
 
 /**
+ * 在同一个 SQLite 事务中同时保存总体活跃度与某日每日活跃度。
+ * 用于避免“总体表写入成功、每日表写入失败”后重试导致总体表重复累计。
+ * @param {object} batchData
+ * @param {string} date
+ * @returns {Promise<object>}
+ */
+async function saveUserActivityAndDailyBatch(batchData, date) {
+    const userStmt = selfRoleDb.prepare(`
+        INSERT INTO user_activity (guild_id, channel_id, user_id, message_count, mentioned_count, mentioning_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, channel_id, user_id) DO UPDATE SET
+            message_count = user_activity.message_count + excluded.message_count,
+            mentioned_count = user_activity.mentioned_count + excluded.mentioned_count,
+            mentioning_count = user_activity.mentioning_count + excluded.mentioning_count
+    `);
+
+    const dailyStmt = selfRoleDb.prepare(`
+        INSERT INTO daily_user_activity (guild_id, channel_id, user_id, date, message_count, mentioned_count, mentioning_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, channel_id, user_id, date) DO UPDATE SET
+            message_count = daily_user_activity.message_count + excluded.message_count,
+            mentioned_count = daily_user_activity.mentioned_count + excluded.mentioned_count,
+            mentioning_count = daily_user_activity.mentioning_count + excluded.mentioning_count
+    `);
+
+    const transaction = selfRoleDb.transaction((guilds, targetDate) => {
+        for (const guildId in guilds) {
+            const channels = guilds[guildId];
+            for (const channelId in channels) {
+                const users = channels[channelId];
+                for (const userId in users) {
+                    const activity = users[userId];
+                    const messageCount = activity.messageCount || 0;
+                    const mentionedCount = activity.mentionedCount || 0;
+                    const mentioningCount = activity.mentioningCount || 0;
+
+                    userStmt.run(
+                        guildId,
+                        channelId,
+                        userId,
+                        messageCount,
+                        mentionedCount,
+                        mentioningCount,
+                    );
+
+                    dailyStmt.run(
+                        guildId,
+                        channelId,
+                        userId,
+                        targetDate,
+                        messageCount,
+                        mentionedCount,
+                        mentioningCount,
+                    );
+                }
+            }
+        }
+    });
+
+    try {
+        transaction(batchData, date);
+    } catch (err) {
+        console.error('[SelfRole] ❌ 批量保存总体/每日用户活跃度数据到 SQLite 时出错:', err);
+        throw err;
+    }
+
+    return batchData;
+}
+
+/**
+ * 在同一个 SQLite 事务中保存总体活跃度与按日期分组的每日活跃度。
+ * 用于离线补偿同步，避免总体表成功、某日 daily 失败后重试导致总体重复累计。
+ * @param {object} batchData
+ * @param {Record<string, object>} dailyBatchDataByDate
+ * @returns {Promise<object>}
+ */
+async function saveUserActivityAndDailyBatchByDate(batchData, dailyBatchDataByDate = {}) {
+    const userStmt = selfRoleDb.prepare(`
+        INSERT INTO user_activity (guild_id, channel_id, user_id, message_count, mentioned_count, mentioning_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, channel_id, user_id) DO UPDATE SET
+            message_count = user_activity.message_count + excluded.message_count,
+            mentioned_count = user_activity.mentioned_count + excluded.mentioned_count,
+            mentioning_count = user_activity.mentioning_count + excluded.mentioning_count
+    `);
+
+    const dailyStmt = selfRoleDb.prepare(`
+        INSERT INTO daily_user_activity (guild_id, channel_id, user_id, date, message_count, mentioned_count, mentioning_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, channel_id, user_id, date) DO UPDATE SET
+            message_count = daily_user_activity.message_count + excluded.message_count,
+            mentioned_count = daily_user_activity.mentioned_count + excluded.mentioned_count,
+            mentioning_count = daily_user_activity.mentioning_count + excluded.mentioning_count
+    `);
+
+    const runActivityStmt = (stmt, guilds, targetDate = null) => {
+        for (const guildId in guilds) {
+            const channels = guilds[guildId];
+            for (const channelId in channels) {
+                const users = channels[channelId];
+                for (const userId in users) {
+                    const activity = users[userId];
+                    const messageCount = activity.messageCount || 0;
+                    const mentionedCount = activity.mentionedCount || 0;
+                    const mentioningCount = activity.mentioningCount || 0;
+
+                    if (targetDate == null) {
+                        stmt.run(
+                            guildId,
+                            channelId,
+                            userId,
+                            messageCount,
+                            mentionedCount,
+                            mentioningCount,
+                        );
+                    } else {
+                        stmt.run(
+                            guildId,
+                            channelId,
+                            userId,
+                            targetDate,
+                            messageCount,
+                            mentionedCount,
+                            mentioningCount,
+                        );
+                    }
+                }
+            }
+        }
+    };
+
+    const transaction = selfRoleDb.transaction((overall, dailyByDate) => {
+        runActivityStmt(userStmt, overall);
+        for (const [date, dailyBatchData] of Object.entries(dailyByDate || {})) {
+            runActivityStmt(dailyStmt, dailyBatchData, date);
+        }
+    });
+
+    try {
+        transaction(batchData || {}, dailyBatchDataByDate || {});
+    } catch (err) {
+        console.error('[SelfRole] ❌ 批量保存总体/多日每日用户活跃度数据到 SQLite 时出错:', err);
+        throw err;
+    }
+
+    return batchData;
+}
+
+/**
  * 获取用户在指定频道的每日活跃度数据。
  * @param {string} guildId - 服务器ID。
  * @param {string} channelId - 频道ID。
@@ -684,6 +907,60 @@ async function saveSelfRoleApplication(messageId, data) {
         JSON.stringify(data.rejectReasons || {})
     );
     return data;
+}
+
+/**
+ * 在申请仍为 pending 时原子写入投票数据。
+ * 用于避免某个审核操作已进入 processing 后，另一个并发投票把状态覆盖回 pending。
+ * @param {string} messageId
+ * @param {object} data
+ * @returns {Promise<boolean>} true 表示写入成功；false 表示申请已不再是 pending
+ */
+async function updatePendingSelfRoleApplicationVote(messageId, data) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE role_applications
+        SET approvers = ?,
+            rejecters = ?,
+            reason = ?,
+            reject_reasons = ?
+        WHERE message_id = ?
+          AND status = 'pending'
+    `);
+    const info = stmt.run(
+        JSON.stringify(data.approvers || []),
+        JSON.stringify(data.rejecters || []),
+        data.reason || null,
+        JSON.stringify(data.rejectReasons || {}),
+        messageId,
+    );
+    return (info?.changes || 0) > 0;
+}
+
+/**
+ * 原子地将 pending legacy 申请锁定为 processing，并同时写入最终投票快照。
+ * @param {string} messageId
+ * @param {object} data
+ * @returns {Promise<boolean>} true 表示成功取得终结锁；false 表示已被其他流程处理
+ */
+async function markSelfRoleApplicationProcessing(messageId, data) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE role_applications
+        SET status = 'processing',
+            approvers = ?,
+            rejecters = ?,
+            reason = ?,
+            reject_reasons = ?
+        WHERE message_id = ?
+          AND status = 'pending'
+    `);
+    const info = stmt.run(
+        JSON.stringify(data.approvers || []),
+        JSON.stringify(data.rejecters || []),
+        data.reason || null,
+        JSON.stringify(data.rejectReasons || {}),
+        messageId,
+    );
+    return (info?.changes || 0) > 0;
 }
 
 /**
@@ -1185,6 +1462,24 @@ async function listPendingSelfRoleApplicationsV2ByApplicant(guildId, applicantId
     `);
     const rows = stmt.all(guildId, applicantId);
     return Promise.all(rows.map(r => getSelfRoleApplicationV2(r.application_id)));
+}
+
+/**
+ * 原子地将 pending v2 申请标记为指定终态，并释放预留名额。
+ * @param {string} applicationId
+ * @param {string} status
+ * @param {string|null} resolutionReason
+ * @param {number} resolvedAt
+ * @returns {Promise<boolean>} true 表示成功终结；false 表示已不再是 pending
+ */
+async function resolvePendingSelfRoleApplicationV2(applicationId, status, resolutionReason = null, resolvedAt = Date.now()) {
+    const stmt = selfRoleDb.prepare(`
+        UPDATE sr_applications_v2
+        SET status = ?, resolved_at = ?, resolution_reason = ?, slot_reserved = 0, reserved_until = NULL
+        WHERE application_id = ? AND status = 'pending'
+    `);
+    const info = stmt.run(status, resolvedAt, resolutionReason, applicationId);
+    return (info?.changes || 0) > 0;
 }
 
 /**
@@ -1800,7 +2095,16 @@ async function createSelfRoleSystemAlert({
 }) {
     const alertId = randomUUID();
 
-    const stmt = selfRoleDb.prepare(`
+    const existingByGrant = grantId
+        ? await getActiveSelfRoleSystemAlertByGrantType(grantId, alertType).catch(() => null)
+        : null;
+    const existingByApplication = applicationId
+        ? await getActiveSelfRoleSystemAlertByApplicationType(applicationId, alertType).catch(() => null)
+        : null;
+    const existing = existingByGrant || existingByApplication;
+    if (existing) return { ...existing, deduped: true };
+
+    const insertStmt = selfRoleDb.prepare(`
         INSERT INTO sr_system_alerts (
             alert_id,
             guild_id,
@@ -1816,7 +2120,7 @@ async function createSelfRoleSystemAlert({
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
     `);
 
-    stmt.run(
+    const args = [
         alertId,
         guildId,
         roleId,
@@ -1827,7 +2131,25 @@ async function createSelfRoleSystemAlert({
         String(message || ''),
         actionRequired ? String(actionRequired) : null,
         createdAt,
-    );
+    ];
+
+    try {
+        insertStmt.run(...args);
+    } catch (err) {
+        const code = err?.code || '';
+        const text = err?.message ? String(err.message) : String(err);
+        if (code === 'SQLITE_CONSTRAINT_UNIQUE' || text.includes('UNIQUE constraint failed')) {
+            const afterConflictByGrant = grantId
+                ? await getActiveSelfRoleSystemAlertByGrantType(grantId, alertType).catch(() => null)
+                : null;
+            const afterConflictByApplication = applicationId
+                ? await getActiveSelfRoleSystemAlertByApplicationType(applicationId, alertType).catch(() => null)
+                : null;
+            const afterConflict = afterConflictByGrant || afterConflictByApplication;
+            if (afterConflict) return { ...afterConflict, deduped: true };
+        }
+        throw err;
+    }
 
     return {
         alertId,
@@ -1841,6 +2163,7 @@ async function createSelfRoleSystemAlert({
         actionRequired: actionRequired ? String(actionRequired) : null,
         createdAt,
         resolvedAt: null,
+        deduped: false,
     };
 }
 
@@ -3413,11 +3736,15 @@ module.exports = {
     getUserActivity,
     saveUserActivityBatch,
     saveDailyUserActivityBatch,
+    saveUserActivityAndDailyBatch,
+    saveUserActivityAndDailyBatchByDate,
     getUserDailyActivity,
     getUserActiveDaysCount,
     getSelfRoleApplication,
     saveSelfRoleApplication,
     deleteSelfRoleApplication,
+    updatePendingSelfRoleApplicationVote,
+    markSelfRoleApplicationProcessing,
     // 根据申请人+身份组查询是否存在“待审核”申请，防止重复创建面板
     getPendingApplicationByApplicantRole,
     // 被拒绝后的冷却期管理
@@ -3441,6 +3768,7 @@ module.exports = {
     listPendingSelfRoleApplicationsV2ByApplicant,
     listLegacyPendingSelfRoleApplications,
     resolveSelfRoleApplicationV2,
+    resolvePendingSelfRoleApplicationV2,
     expirePendingSelfRoleApplicationsV2,
 
     // SelfRole grants

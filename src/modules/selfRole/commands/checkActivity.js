@@ -3,6 +3,12 @@
 const { SlashCommandBuilder, EmbedBuilder, ChannelType } = require('discord.js');
 const { getSelfRoleSettings, getUserActivity, getUserActiveDaysCount } = require('../../../core/utils/database');
 
+function trimEmbedDescription(text, maxLen = 3900) {
+    const raw = String(text || '');
+    if (raw.length <= maxLen) return raw;
+    return raw.slice(0, maxLen - 80).trimEnd() + '\n\n…（内容过长，已截断。请指定频道查询更详细数据。）';
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('自助身份组申请-查询我的活跃度')
@@ -144,7 +150,7 @@ module.exports = {
                 description = '暂无您的活跃度数据。';
             }
 
-            embed.setDescription(description);
+            embed.setDescription(trimEmbedDescription(description));
 
             await interaction.editReply({ embeds: [embed] });
             setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);

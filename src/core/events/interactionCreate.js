@@ -620,7 +620,7 @@ async function interactionCreateHandler(interaction) {
                 await displayService.handleAwardModalSubmission(interaction);
             } else if (interaction.customId.startsWith('self_role_reason_reject_modal_')) {
                 await processRejectReasonModalSubmit(interaction);
-            } else if (interaction.customId.startsWith('self_role_reason_modal_')) {
+            } else if (interaction.customId.startsWith('self_role_reason_modal_') || interaction.customId.startsWith('self_role_reason_modal:')) {
                 // 自助身份组申请理由窗口提交
                 await handleReasonModalSubmit(interaction);
             } else if (interaction.customId.startsWith('sr_wiz:')) {

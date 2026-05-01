@@ -14,10 +14,13 @@ const {
     getSelfRoleApplication,
     saveSelfRoleApplication,
     deleteSelfRoleApplication,
+    updatePendingSelfRoleApplicationVote,
+    markSelfRoleApplicationProcessing,
     getSelfRoleSettings,
     setSelfRoleCooldown,
     getSelfRoleApplicationV2ByReviewMessageId,
     resolveSelfRoleApplicationV2,
+    resolvePendingSelfRoleApplicationV2,
     createSelfRoleGrant,
 } = require('../../../core/utils/database');
 
@@ -259,7 +262,12 @@ async function applyVote({ interaction, action, roleId, applicantId, voteMessage
         }
     }
 
-    await saveSelfRoleApplication(messageId, application);
+    const voteSaved = await updatePendingSelfRoleApplicationVote(messageId, application).catch(() => false);
+    if (!voteSaved) {
+        await interaction.editReply({ content: '❌ 该申请正在被其他审核操作处理，您的操作未被记录。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
+    }
 
     // 3. 检查阈值
     const approvalCount = application.approvers.length;
@@ -297,20 +305,35 @@ async function updateApprovalPanel(voteMessage, application, roleConfig) {
     const originalEmbed = voteMessage.embeds[0];
     const { requiredApprovals, requiredRejections } = roleConfig.conditions.approval;
 
+    if (!originalEmbed) {
+        console.warn(`[SelfRole] ⚠️ 审核投票消息 ${voteMessage.id} 缺少 embed，仅跳过面板票数刷新。`);
+        return;
+    }
+
+    const originalFields = Array.isArray(originalEmbed.fields) ? originalEmbed.fields : [];
+    let hasApprovalField = false;
+    let hasRejectionField = false;
+
     const updatedEmbed = new EmbedBuilder(originalEmbed.data)
         .setFields(
-            ...originalEmbed.fields.map(field => {
+            ...originalFields.map(field => {
                 if (field.name === '支持票数') {
+                    hasApprovalField = true;
                     return { ...field, value: `${application.approvers.length} / ${requiredApprovals}` };
                 }
                 if (field.name === '反对票数') {
+                    hasRejectionField = true;
                     return { ...field, value: `${application.rejecters.length} / ${requiredRejections}` };
                 }
                 return field;
-            })
+            }),
+            ...(hasApprovalField ? [] : [{ name: '支持票数', value: `${application.approvers.length} / ${requiredApprovals}`, inline: true }]),
+            ...(hasRejectionField ? [] : [{ name: '反对票数', value: `${application.rejecters.length} / ${requiredRejections}`, inline: true }]),
         );
 
-    await voteMessage.edit({ embeds: [updatedEmbed] });
+    await voteMessage.edit({ embeds: [updatedEmbed] }).catch(err => {
+        console.error(`[SelfRole] ❌ 刷新审核投票面板失败: message=${voteMessage.id}`, err);
+    });
 }
 
 /**
@@ -351,9 +374,14 @@ function getDefaultDmTemplate(status) {
  * @param {object} roleConfig
  */
 async function finalizeApplication(interaction, voteMessage, application, finalStatus, roleConfig) {
-    // 竞态条件修复：立即更新数据库状态为 "processing" 防止重复处理
+    // 竞态条件修复：原子更新数据库状态为 "processing"，防止重复终结。
+    const locked = await markSelfRoleApplicationProcessing(voteMessage.id, application).catch(() => false);
+    if (!locked) {
+        await interaction.editReply({ content: '❌ 该申请已被其他审核操作处理，本次终结已跳过。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        return;
+    }
     application.status = 'processing';
-    await saveSelfRoleApplication(voteMessage.id, application);
 
     const applicant = await interaction.guild.members.fetch(application.applicantId).catch(() => null);
     const role = await interaction.guild.roles.fetch(application.roleId).catch(() => null);
@@ -380,6 +408,8 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
     let dmMessage = '';
     // 发送给申请人的匿名拒绝理由
     let applicantRejectReasonChunks = [];
+    let grantOk = finalStatus !== 'approved';
+    let grantFailureReason = '';
 
     if (finalStatus === 'approved') {
         finalColor = 0x57F287; // Green
@@ -392,13 +422,10 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
             try {
                 const bundleRoleIds = Array.isArray(roleConfig.bundleRoleIds) ? roleConfig.bundleRoleIds : [];
                 const roleIdsToAdd = [...new Set([role.id, ...bundleRoleIds])];
-                await applicant.roles.add(roleIdsToAdd);
+                const roleIdsToRollback = roleIdsToAdd.filter(rid => !applicant.roles.cache.has(rid));
+                let rollbackStatus = null;
 
-                const bundleSuffix = bundleRoleIds.length > 0 ? '（含配套身份组）' : '';
-                finalDescription += `\n\n用户 <@${applicant.id}> 已被授予 **${role.name}** 身份组${bundleSuffix}。`;
-                if (bundleRoleIds.length > 0) {
-                    finalDescription += `\n配套身份组：${bundleRoleIds.map(rid => `<@&${rid}>`).join(' ')}`;
-                }
+                await applicant.roles.add(roleIdsToAdd);
 
                 try {
                     const v2 = await getSelfRoleApplicationV2ByReviewMessageId(voteMessage.id);
@@ -411,15 +438,48 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
                         bundleRoleIds,
                     });
                 } catch (dbErr) {
-                    console.error('[SelfRole] ❌ 写入 grant 记录失败（审核通过）:', dbErr);
+                    const dbErrText = dbErr?.message ? String(dbErr.message) : String(dbErr);
+                    console.error('[SelfRole] ❌ 写入 grant 记录失败（审核通过），准备回滚已发放身份组:', dbErr);
+
+                    try {
+                        if (roleIdsToRollback.length > 0) {
+                            await applicant.roles.remove(roleIdsToRollback);
+                        }
+                        rollbackStatus = 'rollback_ok';
+                    } catch (rollbackErr) {
+                        const rollbackErrText = rollbackErr?.message ? String(rollbackErr.message) : String(rollbackErr);
+                        rollbackStatus = 'rollback_failed';
+                        console.error('[SelfRole] ❌ grant 写入失败后回滚已发放身份组也失败:', rollbackErr);
+                        throw new Error(`grant_record_failed: ${dbErrText}; rollback_failed: ${rollbackErrText}`);
+                    }
+
+                    throw new Error(`grant_record_failed: ${dbErrText}; ${rollbackStatus}`);
                 }
+
+                const bundleSuffix = bundleRoleIds.length > 0 ? '（含配套身份组）' : '';
+                finalDescription += `\n\n用户 <@${applicant.id}> 已被授予 **${role.name}** 身份组${bundleSuffix}。`;
+                if (bundleRoleIds.length > 0) {
+                    finalDescription += `\n配套身份组：${bundleRoleIds.map(rid => `<@&${rid}>`).join(' ')}`;
+                }
+                grantOk = true;
             } catch (error) {
-                console.error(`[SelfRole] ❌ 授予身份组时出错: ${error}`);
-                finalDescription += `\n\n⚠️ 授予身份组时出错，请检查机器人权限。`;
-                dmMessage += `\n\n但机器人授予身份组时失败，请联系管理员。`;
+                console.error('[SelfRole] ❌ 授予身份组或写入 grant 记录时出错:', error);
+                grantFailureReason = error?.message ? String(error.message) : String(error);
+                finalStatusText = '⚠️ 通过但发放失败';
+                finalColor = 0xFEE75C;
+                finalDescription += `\n\n⚠️ 审核已达到通过阈值，但系统未能完成“身份组发放 + grant 记录写入”的完整流程。申请将标记为发放失败，不会结算为 approved。`;
+                if (grantFailureReason.includes('rollback_ok')) {
+                    finalDescription += `\n已自动回滚刚刚发放的身份组，避免服务器角色与数据库 grant 分叉。`;
+                } else if (grantFailureReason.includes('rollback_failed')) {
+                    finalDescription += `\n⚠️ 注意：身份组可能已发放但回滚失败，可能存在服务器角色与数据库 grant 不一致，请管理员立即核查。`;
+                }
+                dmMessage += `\n\n但机器人处理身份组发放时失败，请联系管理员。`;
             }
         } else {
-            finalDescription += `\n\n⚠️ 无法找到申请人或身份组，未能授予身份组。`;
+            grantFailureReason = !applicant ? 'applicant_missing' : 'role_missing';
+            finalStatusText = '⚠️ 通过但发放失败';
+            finalColor = 0xFEE75C;
+            finalDescription += `\n\n⚠️ 无法找到申请人或身份组，未能授予身份组。申请将标记为发放失败，不会结算为 approved。`;
         }
     } else {
         finalColor = 0xED4245; // Red
@@ -495,8 +555,12 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
     const rejectersList = await getVoterList(interaction.guild, application.rejecters);
 
     const originalEmbed = voteMessage.embeds[0];
-    const applicantField = originalEmbed.fields.find(f => f.name === '申请人') || { name: '申请人', value: `<@${application.applicantId}>`, inline: true };
-    const roleField = originalEmbed.fields.find(f => f.name === '申请身份组') || { name: '申请身份组', value: `<@&${application.roleId}>`, inline: true };
+    if (!originalEmbed) {
+        console.warn(`[SelfRole] ⚠️ 审核终结时投票消息 ${voteMessage.id} 缺少 embed，将使用 fallback embed 继续结算。`);
+    }
+    const originalFields = Array.isArray(originalEmbed?.fields) ? originalEmbed.fields : [];
+    const applicantField = originalFields.find(f => f.name === '申请人') || { name: '申请人', value: `<@${application.applicantId}>`, inline: true };
+    const roleField = originalFields.find(f => f.name === '申请身份组') || { name: '申请身份组', value: `<@&${application.roleId}>`, inline: true };
 
     const finalFields = [
         applicantField,
@@ -507,31 +571,92 @@ async function finalizeApplication(interaction, voteMessage, application, finalS
     ];
 
     // 拒绝时附带“反对理由（可选）”摘要
-    if (finalStatus === 'rejected') {
+    if (finalStatus === 'rejected' || (finalStatus === 'approved' && !grantOk)) {
         const rejectReasonsSummary = formatRejectReasonsForEmbed(application.rejectReasons, application.rejecters);
         if (rejectReasonsSummary) {
             finalFields.push({ name: '📝 反对理由（可选）', value: rejectReasonsSummary, inline: false });
         }
     }
 
-    const finalEmbed = new EmbedBuilder(originalEmbed.data)
+    if (finalStatus === 'approved' && !grantOk) {
+        finalFields.push({
+            name: '⚠️ 发放失败原因',
+            value: grantFailureReason ? grantFailureReason.slice(0, 1000) : 'unknown_error',
+            inline: false,
+        });
+    }
+
+    const finalEmbed = originalEmbed
+        ? new EmbedBuilder(originalEmbed.data)
+        : new EmbedBuilder().setTitle('自助身份组申请审核结果').setTimestamp();
+
+    finalEmbed
         .setColor(finalColor)
         .setDescription(finalDescription)
         .setFields(...finalFields);
 
     const disabledRows = buildDisabledRows(voteMessage);
 
-    await voteMessage.edit({ embeds: [finalEmbed], components: disabledRows });
+    await voteMessage.edit({ embeds: [finalEmbed], components: disabledRows }).catch(err => {
+        console.error(`[SelfRole] ❌ 更新审核终结面板失败，将继续执行 DB 结算: message=${voteMessage.id}`, err);
+    });
+
+    const v2 = await getSelfRoleApplicationV2ByReviewMessageId(voteMessage.id).catch(() => null);
+
+    if (finalStatus === 'approved' && !grantOk) {
+        await reportSelfRoleAlertOnce({
+            client: interaction.client,
+            guildId: interaction.guild.id,
+            channelId: voteMessage.channel?.id,
+            roleId: application.roleId,
+            grantId: null,
+            applicationId: v2?.applicationId || voteMessage.id,
+            alertType: 'application_approved_grant_failed',
+            severity: 'high',
+            title: '⚠️ 审核通过但身份组发放失败',
+            message:
+                `申请已达到通过阈值，但无法向申请人 ${application.applicantId} 发放身份组。\n` +
+                `身份组：<@&${application.roleId}>\n` +
+                `错误：${grantFailureReason || 'unknown_error'}`,
+            actionRequired:
+                `请管理员检查机器人 Manage Roles 权限、角色层级、目标成员是否仍在服务器。\n` +
+                `系统已将申请标记为 grant_failed 并清理 legacy 投票锁，避免 processing/pending 卡单。\n` +
+                `如错误包含 rollback_failed，请立即核查申请人是否仍持有相关身份组；如需补发，请管理员手动授予并使用运维命令同步 grant。`,
+        }).catch(() => {});
+
+        try {
+            if (v2 && v2.status === 'pending') {
+                await resolvePendingSelfRoleApplicationV2(
+                    v2.applicationId,
+                    'grant_failed',
+                    'approved_but_grant_failed',
+                    Date.now(),
+                );
+            }
+        } catch (err) {
+            console.error('[SelfRole] ❌ 标记 v2 申请为 grant_failed 时出错:', err);
+        }
+
+        // legacy 表当前已被锁定为 processing；失败分支必须清理，避免后续无法撤回/无法重试的卡单。
+        await deleteSelfRoleApplication(voteMessage.id).catch(err => {
+            console.error('[SelfRole] ❌ 清理 grant_failed legacy 申请记录时出错:', err);
+        });
+
+        scheduleActiveUserSelfRolePanelsRefresh(interaction.client, interaction.guild.id, 'application_grant_failed');
+        await interaction.editReply({ content: '⚠️ 投票已达通过阈值，但身份组发放失败；申请已标记为 grant_failed 并上报告警。' });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
+        console.log(`[SelfRole] ⚠️ 申请 ${voteMessage.id} 通过但发放身份组失败，已标记为 grant_failed`);
+        return;
+    }
 
     await interaction.editReply({ content: '✅ 投票已结束，申请已处理。' });
     setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
     console.log(`[SelfRole] 🗳️ 申请 ${voteMessage.id} 已终结，状态: ${finalStatus}`);
 
-     // v2：终结申请并释放预留名额
+    // v2：终结申请并释放预留名额
     try {
-        const v2 = await getSelfRoleApplicationV2ByReviewMessageId(voteMessage.id);
         if (v2 && v2.status === 'pending') {
-            await resolveSelfRoleApplicationV2(v2.applicationId, finalStatus, finalStatus, Date.now());
+            await resolvePendingSelfRoleApplicationV2(v2.applicationId, finalStatus, finalStatus, Date.now());
         }
     } catch (err) {
         console.error('[SelfRole] ❌ 终结 v2 申请记录时出错:', err);

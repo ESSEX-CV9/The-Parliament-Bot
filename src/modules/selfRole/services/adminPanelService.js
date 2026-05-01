@@ -142,11 +142,15 @@ async function handleModalSubmit(interaction) {
             return;
         }
 
+        const previousRoleConfig = isEdit
+            ? (settings.roles.find(r => r.roleId === roleId) || null)
+            : null;
         const newRoleConfig = {
+            ...(previousRoleConfig || {}),
             roleId,
             label,
             description,
-            conditions: {},
+            conditions: { ...(previousRoleConfig?.conditions || {}) },
         };
 
         // 解析并验证条件
@@ -158,6 +162,8 @@ async function handleModalSubmit(interaction) {
                 return;
             }
             newRoleConfig.conditions.prerequisiteRoleId = prerequisiteRoleId;
+        } else {
+            delete newRoleConfig.conditions.prerequisiteRoleId;
         }
 
         if (activityString) {
@@ -198,6 +204,8 @@ async function handleModalSubmit(interaction) {
                     requiredActiveDays,
                 };
             }
+        } else {
+            delete newRoleConfig.conditions.activity;
         }
 
         if (approvalString) {
@@ -267,6 +275,8 @@ async function handleModalSubmit(interaction) {
             if (typeof cooldownDays === 'number' && cooldownDays > 0) {
                 newRoleConfig.conditions.approval.cooldownDays = cooldownDays;
             }
+        } else {
+            delete newRoleConfig.conditions.approval;
         }
         
         // 解析申请理由设置
@@ -310,6 +320,8 @@ async function handleModalSubmit(interaction) {
                 if (minLen !== null) newRoleConfig.conditions.reason.minLen = minLen;
                 if (maxLen !== null) newRoleConfig.conditions.reason.maxLen = maxLen;
             }
+        } else {
+            delete newRoleConfig.conditions.reason;
         }
 
         if (isEdit) {

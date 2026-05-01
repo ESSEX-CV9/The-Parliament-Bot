@@ -1,6 +1,6 @@
 // src/modules/selfRole/services/activityTracker.js
 
-const { saveUserActivityBatch, saveDailyUserActivityBatch, getSelfRoleSettings, getAllSelfRoleSettings, saveSelfRoleSettings } = require('../../../core/utils/database');
+const { saveUserActivityAndDailyBatch, getSelfRoleSettings, getAllSelfRoleSettings, saveSelfRoleSettings } = require('../../../core/utils/database');
 
 /**
  * 单个用户在某频道内的活跃度增量数据。
@@ -50,6 +50,9 @@ let monitoredChannelsCache = {};
 // 定时器ID
 let saveInterval = null;
 
+// flush 互斥锁：避免定时写入与申请前立即写入重入，造成失败回滚后重复累计。
+let flushPromise = null;
+
 // 批量写入间隔（毫秒），例如5分钟
 const SAVE_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -58,9 +61,40 @@ const SAVE_INTERVAL_MS = 5 * 60 * 1000;
  * @private
  */
 async function _writeCacheToDatabase() {
+    return flushActivityCacheToDatabase();
+}
+
+/**
+ * 立即将内存中的 selfRole 活跃度增量写入数据库。
+ * 申请前可调用它，避免刚达标的消息还停留在 5 分钟缓存窗口内。
+ * @returns {Promise<boolean>} true=执行了写入；false=缓存为空
+ */
+async function flushActivityCacheToDatabase() {
+    if (flushPromise) {
+        // 等待当前 flush 完成后，若期间产生了新的缓存增量，再串行补 flush 一次。
+        await flushPromise;
+        if (Object.keys(activityCache).length === 0) {
+            return false;
+        }
+        return flushActivityCacheToDatabase();
+    }
+
     // 如果缓存为空，则不执行任何操作
     if (Object.keys(activityCache).length === 0) {
-        return;
+        return false;
+    }
+
+    flushPromise = doFlushActivityCacheToDatabase()
+        .finally(() => {
+            flushPromise = null;
+        });
+
+    return await flushPromise;
+}
+
+async function doFlushActivityCacheToDatabase() {
+    if (Object.keys(activityCache).length === 0) {
+        return false;
     }
 
     // 复制并立即清空主缓存，以防在异步的数据库操作期间丢失新的消息数据
@@ -71,12 +105,9 @@ async function _writeCacheToDatabase() {
 
     try {
         // 保存总体活跃度数据
-        await saveUserActivityBatch(cacheToWrite);
-
-        // 保存每日活跃度数据
         // 使用 UTC 时间确保与历史数据回溯的日期计算一致
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
-        await saveDailyUserActivityBatch(cacheToWrite, today);
+        await saveUserActivityAndDailyBatch(cacheToWrite, today);
 
         // 批量更新所有涉及服务器的最后成功保存时间戳
         const guildIds = Object.keys(cacheToWrite);
@@ -89,6 +120,7 @@ async function _writeCacheToDatabase() {
         }
 
         console.log('[SelfRole] ✅ 活跃度数据成功写入数据库。');
+        return true;
     } catch (error) {
         console.error('[SelfRole] ❌ 写入活跃度数据到数据库时出错:', error);
         // 如果写入失败，将数据合并回主缓存，以便下次重试
@@ -110,6 +142,7 @@ async function _writeCacheToDatabase() {
             }
         }
         console.log('[SelfRole] ⚠️ 数据已合并回缓存，将在下次定时任务时重试。');
+        throw error;
     }
 }
 
@@ -160,13 +193,13 @@ async function startActivityTracker() {
 /**
  * 停止定时器
  */
-function stopActivityTracker() {
+async function stopActivityTracker() {
     if (saveInterval) {
         clearInterval(saveInterval);
         saveInterval = null;
         console.log('[SelfRole] 🛑 活跃度追踪器已停止。');
         // 停止前最后执行一次写入，确保数据不丢失
-        _writeCacheToDatabase();
+        await _writeCacheToDatabase();
     }
 }
 
@@ -225,4 +258,5 @@ module.exports = {
     stopActivityTracker,
     handleMessage,
     updateMonitoredChannels, // 导出此函数，以便其他服务可以调用
+    flushActivityCacheToDatabase,
 };

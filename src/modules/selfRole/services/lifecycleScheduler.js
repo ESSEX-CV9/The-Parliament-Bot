@@ -107,7 +107,11 @@ async function ensureGrantSchedule(grant, roleConfig) {
     let forceRemoveAt = grant.forceRemoveAt;
     let changed = false;
 
-    if (nextInquiryAt == null && inquiryDays > 0) {
+    // nextInquiryAt === null has two meanings in persisted rows:
+    // 1) first-cycle grants created before schedule initialization;
+    // 2) intentionally no further inquiry before forceRemoveAt.
+    // Only initialize the first cycle when no inquiry has ever been sent.
+    if (nextInquiryAt == null && inquiryDays > 0 && grant.lastInquiryAt == null) {
         nextInquiryAt = grant.grantedAt + inquiryDays * DAY_MS;
         changed = true;
     }
@@ -310,9 +314,38 @@ async function processForceRemove(client, grant, roleConfig, scheduleInfo) {
     const roles = await listSelfRoleGrantRoles(grant.grantId);
     const roleIdsToRemove = roles.map(r => r.roleId);
 
-    await member.roles.remove(roleIdsToRemove).catch(err => {
+    let removeOk = false;
+    let removeErrText = '';
+    try {
+        if (roleIdsToRemove.length > 0) {
+            await member.roles.remove(roleIdsToRemove);
+        }
+        removeOk = true;
+    } catch (err) {
+        removeErrText = err?.message ? String(err.message) : String(err);
         console.error('[SelfRole][Lifecycle] ❌ 强制清退移除身份组失败:', err);
-    });
+    }
+
+    if (!removeOk) {
+        await setSelfRoleGrantManualAttentionRequired(grant.grantId, true).catch(() => {});
+        await reportSelfRoleAlertOnce({
+            client,
+            guildId: grant.guildId,
+            channelId: reportChannelId,
+            roleId: grant.primaryRoleId,
+            grantId: grant.grantId,
+            applicationId: grant.applicationId,
+            alertType: 'lifecycle_force_remove_role_remove_failed',
+            severity: 'high',
+            title: '⚠️ 强制清退失败：无法移除身份组',
+            message: `强制清退到期，但无法从用户 ${grant.userId} 移除身份组：${removeErrText || 'unknown_error'}`,
+            actionRequired:
+                `grant 已保持 active，避免名额统计与服务器真实角色不一致。\n` +
+                `请管理员检查机器人角色层级/权限，并手动移除：${roleIdsToRemove.map(rid => `<@&${rid}>`).join(' ') || `<@&${grant.primaryRoleId}>`}。\n` +
+                `处理完成后可使用 /自助身份组申请-运维 开除岗位成员 结束 grant。`,
+        }).catch(() => {});
+        return;
+    }
 
     await endSelfRoleGrant(grant.grantId, 'force_remove', now).catch(() => {});
     scheduleActiveUserSelfRolePanelsRefresh(client, grant.guildId, 'lifecycle_force_removed');
@@ -558,9 +591,39 @@ async function handleSelfRoleRenewalDecision(interaction) {
     const roles = await listSelfRoleGrantRoles(grant.grantId);
     const roleIdsToRemove = roles.map(r => r.roleId);
 
-    await member.roles.remove(roleIdsToRemove).catch(err => {
+    let removeOk = false;
+    let removeErrText = '';
+    try {
+        if (roleIdsToRemove.length > 0) {
+            await member.roles.remove(roleIdsToRemove);
+        }
+        removeOk = true;
+    } catch (err) {
+        removeErrText = err?.message ? String(err.message) : String(err);
         console.error('[SelfRole][Lifecycle] ❌ 用户选择退出时移除身份组失败:', err);
-    });
+    }
+
+    if (!removeOk) {
+        await setSelfRoleGrantManualAttentionRequired(grant.grantId, true).catch(() => {});
+        await reportSelfRoleAlertOnce({
+            client: interaction.client,
+            guildId: grant.guildId,
+            channelId: reportChannelId,
+            roleId: grant.primaryRoleId,
+            grantId: grant.grantId,
+            applicationId: grant.applicationId,
+            alertType: 'lifecycle_user_exit_role_remove_failed',
+            severity: 'high',
+            title: '⚠️ 用户退出失败：无法移除身份组',
+            message: `用户 ${grant.userId} 已选择退出，但机器人无法移除身份组：${removeErrText || 'unknown_error'}`,
+            actionRequired:
+                `grant 已保持 active，避免数据库显示已结束但服务器角色仍存在。\n` +
+                `请管理员检查机器人角色层级/权限，并手动移除：${roleIdsToRemove.map(rid => `<@&${rid}>`).join(' ') || `<@&${grant.primaryRoleId}>`}。\n` +
+                `处理完成后可使用 /自助身份组申请-运维 开除岗位成员 结束 grant。`,
+        }).catch(() => {});
+        await interaction.editReply({ content: '⚠️ 已收到你的退出选择，但机器人移除身份组失败；已通知管理员处理，grant 暂未结束。' });
+        return;
+    }
 
     await endSelfRoleGrant(grant.grantId, 'user_exit', now).catch(() => {});
 
