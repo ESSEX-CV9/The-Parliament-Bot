@@ -79,6 +79,13 @@ const { processEditProposal, processEditProposalSubmission } = require('../../mo
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../core/utils/database');
 
+// 频道总结预设交互处理
+const {
+  handlePresetButton,
+  handlePresetModal,
+  handlePresetSelect,
+} = require('../../modules/channelSummary/services/presetInteractionHandler');
+
 const INTERACTION_DEBUG_LOG = String(process.env.INTERACTION_DEBUG_LOG || '').toLowerCase() === 'true';
 
 const {
@@ -556,7 +563,12 @@ async function interactionCreateHandler(interaction) {
                 const { handleInviteRequest } = require('../../modules/controlledInvite/services/inviteService');
                 await handleInviteRequest(interaction);
             }
-            
+
+            // === 频道总结预设按钮处理 ===
+            if (interaction.customId.startsWith('preset_')) {
+                await handlePresetButton(interaction);
+            }
+
             return;
         }
         
@@ -628,6 +640,10 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('admin_add_role_modal_') || interaction.customId.startsWith('admin_edit_role_modal_')) {
                 await handleModalSubmit(interaction);
             }
+            // === 频道总结预设 Modal 处理 ===
+            else if (interaction.customId.startsWith('preset_edit_modal_')) {
+                await handlePresetModal(interaction);
+            }
             return;
         }
         
@@ -684,6 +700,10 @@ async function interactionCreateHandler(interaction) {
                 await handleRoleSelectForRemove(interaction);
             } else if (interaction.customId === 'admin_edit_role_select') {
                 await handleRoleSelectForEdit(interaction);
+            }
+            // === 频道总结预设选择菜单处理 ===
+            else if (interaction.customId.startsWith('preset_panel_')) {
+                await handlePresetSelect(interaction);
             }
             return;
         }
