@@ -58,6 +58,12 @@ function applyTimeDefaults(startTimeStr, endTimeStr) {
   return { startTimeStr: resolvedStart, endTimeStr: resolvedEnd, usedDefaultTime };
 }
 
+function formatPrivateErrorMessage(error) {
+  const rawMessage = error?.message || String(error) || "未知错误";
+  const trimmedMessage = rawMessage.slice(0, 1500);
+  return `⚠️ AI总结生成时发生错误，已回退为基础总结。\n\n错误信息：\n\`\`\`${trimmedMessage}\`\`\``;
+}
+
 const data = new SlashCommandBuilder()
   .setName("总结频道内容")
   .setDescription("总结指定时间段内的频道消息")
@@ -211,6 +217,13 @@ async function executeSummary(interaction, params) {
     extraPrompt,
   });
 
+  if (aiSummary.generation_error?.message) {
+    await interaction.followUp({
+      content: formatPrivateErrorMessage(aiSummary.generation_error),
+      ephemeral: true,
+    });
+  }
+
   await interaction.editReply("📝 正在生成文件和总结...");
 
   const messagesData = generateMessagesJSON(channelInfo, messages);
@@ -324,7 +337,7 @@ async function execute(interaction) {
       error.message.includes("无效的时间") ||
       error.message.includes("时间范围")
         ? error.message
-        : "执行总结时发生错误，请稍后重试。";
+        : `执行总结时发生错误，请稍后重试。\n\n详细信息：\n\`\`\`${(error?.message || String(error) || "未知错误").slice(0, 1500)}\`\`\``;
 
     try {
       if (interaction.deferred || interaction.replied) {
