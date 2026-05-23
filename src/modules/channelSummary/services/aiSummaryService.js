@@ -62,12 +62,16 @@ async function generateSummary(
     // 如果用户没有指定模型，则使用配置中的默认模型
     const targetModel = model || config.OPENAI_API_CONFIG.MODEL;
 
-    const response = await ai.chat.completions.create({
+    const stream = await ai.chat.completions.create({
       model: targetModel,
       messages: promptMessages,
+      stream: true,
     });
 
-    const summaryText = response.choices[0]?.message?.content || "";
+    let summaryText = "";
+    for await (const chunk of stream) {
+      summaryText += chunk.choices?.[0]?.delta?.content || "";
+    }
 
     if (!summaryText) {
       throw new Error("AI响应为空");
@@ -76,7 +80,7 @@ async function generateSummary(
     return parseSummaryResponse(summaryText, messages);
   } catch (error) {
     console.error("AI总结生成失败:", error);
-    return generateFallbackSummary(messages, channelInfo);
+    return generateFallbackSummary(messages, channelInfo, error);
   }
 }
 
@@ -160,6 +164,7 @@ function parseSummaryResponse(summaryText, messages) {
       message_distribution: userStats,
     },
     generated_at: new Date().toISOString(),
+    generation_error: null,
   };
 }
 
@@ -186,7 +191,7 @@ function extractTopics(summaryText) {
 /**
  * 生成备用总结（当AI失败时）
  */
-function generateFallbackSummary(messages, channelInfo) {
+function generateFallbackSummary(messages, channelInfo, error = null) {
   const userStats = {};
   const contentWords = [];
 
@@ -213,6 +218,13 @@ function generateFallbackSummary(messages, channelInfo) {
       message_distribution: userStats,
     },
     generated_at: new Date().toISOString(),
+    generation_error: error
+      ? {
+          message: error.message || String(error),
+        }
+      : {
+          message: "未知错误",
+        },
   };
 }
 
