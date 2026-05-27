@@ -192,6 +192,11 @@ const controlledInviteParamsCommand = require('../modules/controlledInvite/comma
 const controlledInviteToggleCommand = require('../modules/controlledInvite/commands/controlledInviteToggle');
 const viewMyControlledInviteStatusCommand = require('../modules/controlledInvite/commands/viewMyControlledInviteStatus');
 
+// 备份系统命令
+const backupModule = require('../modules/backup');
+const backupCommand = backupModule.commands.find(c => c.data.name === 'backup');
+const channelsCommand = backupModule.commands.find(c => c.data.name === 'channels');
+
 const DISCORD_REST_TIMEOUT_MS = (() => {
     const n = Number(process.env.DISCORD_REST_TIMEOUT_MS);
     return Number.isFinite(n) && n > 0 ? n : 15000;
@@ -386,6 +391,10 @@ client.commands.set(controlledInviteConfigCommand.data.name, controlledInviteCon
 client.commands.set(controlledInviteParamsCommand.data.name, controlledInviteParamsCommand);
 client.commands.set(controlledInviteToggleCommand.data.name, controlledInviteToggleCommand);
 client.commands.set(viewMyControlledInviteStatusCommand.data.name, viewMyControlledInviteStatusCommand);
+
+// 备份系统命令
+client.commands.set(backupCommand.data.name, backupCommand);
+client.commands.set(channelsCommand.data.name, channelsCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     try {

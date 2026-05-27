@@ -13,8 +13,12 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=18.13.0"
+  },
   "dependencies": {
     "@google/genai": "^1.4.0",
+    "archiver": "^7.0.1",
     "better-sqlite3": "^11.10.0",
     "discord.js": "^14.19.3",
     "dotenv": "^16.5.0",
