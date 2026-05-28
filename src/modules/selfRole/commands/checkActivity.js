@@ -1,12 +1,38 @@
 // src/modules/selfRole/commands/checkActivity.js
 
 const { SlashCommandBuilder, EmbedBuilder, ChannelType } = require('discord.js');
-const { getSelfRoleSettings, getUserActivity, getUserActiveDaysCount } = require('../../../core/utils/database');
+const { getSelfRoleSettings, getUserActivity, getUserActiveDaysCount, getUserDailyActivity } = require('../../../core/utils/database');
 
 function trimEmbedDescription(text, maxLen = 3900) {
     const raw = String(text || '');
     if (raw.length <= maxLen) return raw;
     return raw.slice(0, maxLen - 80).trimEnd() + '\n\n…（内容过长，已截断。请指定频道查询更详细数据。）';
+}
+
+/**
+ * 获取当前 UTC 日期字符串（YYYY-MM-DD）。
+ * 注意：UTC 0:00 = 北京时间 8:00，因此每日统计以北京时间的上午 8:00 为分割点，
+ * 而非北京时间的 0:00 午夜。
+ * @returns {string} UTC 日期，格式 YYYY-MM-DD
+ */
+function getUTCToday() {
+    return new Date().toISOString().split('T')[0];
+}
+
+/**
+ * 根据每日活跃度查询结果，格式化"今日已发送"条目。
+ * 从查询到的每日活跃度数据中匹配今天的 UTC 日期，展示今日发言/被提及/主动提及数。
+ * 若今日尚无数据，则显示"暂无数据"。
+ * @param {Array<{date: string, messageCount: number, mentionedCount: number, mentioningCount: number}>} dailyRows - getUserDailyActivity 返回的每日数据
+ * @returns {string} 格式化后的今日活跃度描述行
+ */
+function formatTodayDailyActivity(dailyRows) {
+    const today = getUTCToday();
+    const todayRow = dailyRows.find(r => r.date === today);
+    if (!todayRow) {
+        return `> • **今日已发送（UTC日）**: 暂无数据\n`;
+    }
+    return `> • **今日已发送（UTC日 ${today}）**: 发言 ${todayRow.messageCount} | 被提及 ${todayRow.mentionedCount} | 主动提及 ${todayRow.mentioningCount}\n`;
 }
 
 module.exports = {
@@ -88,16 +114,22 @@ module.exports = {
             if (specificChannel) {
                 const activity = userActivity[specificChannel.id]?.[userId] || { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                 description += `您在 <#${specificChannel.id}> 的活跃度数据：\n`;
-                description += `> • **发言数**: ${activity.messageCount}\n`;
-                description += `> • **被提及数**: ${activity.mentionedCount}\n`;
-                description += `> • **主动提及数**: ${activity.mentioningCount}\n\n`;
+                // 累计活跃度数据（自统计开始以来的总和）
+                description += `> • **发言数（累计）**: ${activity.messageCount}\n`;
+                description += `> • **被提及数（累计）**: ${activity.mentionedCount}\n`;
+                description += `> • **主动提及数（累计）**: ${activity.mentioningCount}\n`;
+
+                // 今日已发送数据：查询今日 UTC 日期的每日活跃度并展示
+                const dailyRows = await getUserDailyActivity(guildId, specificChannel.id, userId, 1).catch(() => []);
+                description += formatTodayDailyActivity(dailyRows);
+                description += '\n';
 
                 // 活跃天数（仅当该频道下存在 activeDaysThreshold 配置时显示）
                 const roleCfgs = activeDaysRoleConfigsByChannel[specificChannel.id] || [];
                 if (roleCfgs.length > 0) {
                     // 同一 dailyMessageThreshold 只计算一次，避免重复查询
                     const cache = new Map();
-                    description += `该频道的 **活跃天数**（近90天，按UTC日切分；“每日发言≥阈值” 计为1天）：\n`;
+                    description += `该频道的 **活跃天数**（近90天，按UTC日切分；每日发言≥阈值计为1天；⚠ UTC 0:00 = 北京时间 8:00）：\n`;
 
                     // 限制展示条数，避免 Embed 过长
                     const MAX_LINES = 12;
@@ -119,14 +151,20 @@ module.exports = {
                 for (const channelId of channelIdsToCheck) {
                     const activity = userActivity[channelId]?.[userId] || { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                     description += `在 <#${channelId}>:\n`;
-                    description += `> • **发言数**: ${activity.messageCount}\n`;
-                    description += `> • **被提及数**: ${activity.mentionedCount}\n`;
-                    description += `> • **主动提及数**: ${activity.mentioningCount}\n\n`;
+                    // 累计活跃度数据（自统计开始以来的总和）
+                    description += `> • **发言数（累计）**: ${activity.messageCount}\n`;
+                    description += `> • **被提及数（累计）**: ${activity.mentionedCount}\n`;
+                    description += `> • **主动提及数（累计）**: ${activity.mentioningCount}\n`;
+
+                    // 今日已发送数据：查询今日 UTC 日期的每日活跃度并展示
+                    const dailyRows = await getUserDailyActivity(guildId, channelId, userId, 1).catch(() => []);
+                    description += formatTodayDailyActivity(dailyRows);
+                    description += '\n';
 
                     const roleCfgs = activeDaysRoleConfigsByChannel[channelId] || [];
                     if (roleCfgs.length > 0) {
                         const cache = new Map();
-                        description += `该频道的 **活跃天数**（近90天，按UTC日切分；“每日发言≥阈值” 计为1天）：\n`;
+                        description += `该频道的 **活跃天数**（近90天，按UTC日切分；每日发言≥阈值计为1天；⚠ UTC 0:00 = 北京时间 8:00）：\n`;
 
                         const MAX_LINES = 8;
                         const showList = roleCfgs.slice(0, MAX_LINES);
