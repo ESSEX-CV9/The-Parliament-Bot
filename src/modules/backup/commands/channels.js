@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, ChannelType, AttachmentBuilder } = require('discord.js');
+const { SlashCommandBuilder, ChannelType, AttachmentBuilder, MessageFlags } = require('discord.js');
 const { checkAdminPermission } = require('../../../core/utils/permissionManager');
 const { fetchThreads } = require('../fetchers/threadFetcher');
 
@@ -17,19 +17,25 @@ const ICON = {
 
 const data = new SlashCommandBuilder()
   .setName('channels')
-  .setDescription('列出全服所有类别、频道、子区及其 ID');
+  .setDescription('列出全服所有类别、频道、子区及其 ID')
+  .addBooleanOption(opt =>
+    opt.setName('include_threads')
+      .setDescription('是否同时获取帖子/子区 ID（较慢，默认否）')
+      .setRequired(false));
+const EPHEMERAL = MessageFlags.Ephemeral;
 
 async function execute(interaction) {
   if (!checkAdminPermission(interaction.member)) {
-    return interaction.reply({ content: '❌ 你没有权限执行此操作。', ephemeral: true });
+    return interaction.reply({ content: '❌ 你没有权限执行此操作。', flags: EPHEMERAL });
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: EPHEMERAL });
   await interaction.editReply({ content: '\u{1F4CB} 正在获取频道列表，将通过私信发送。' });
   setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
 
   const guild = interaction.guild;
   const channels = guild.channels.cache;
+  const includeThreads = interaction.options.getBoolean('include_threads') ?? false;
 
   const categories = new Map();
   const uncategorized = [];
@@ -55,7 +61,7 @@ async function execute(interaction) {
       ChannelType.GuildMedia,
     ].includes(ch.type);
 
-    if (canHaveThreads && ch.threads) {
+    if (includeThreads && canHaveThreads && ch.threads) {
       const threads = await fetchThreads(ch);
       for (const t of threads) {
         entry.threads.push({ name: t.name, id: t.id });
@@ -108,7 +114,7 @@ async function execute(interaction) {
     const dm = await interaction.user.createDM();
     await dm.send({ files: [attachment] });
   } catch {
-    await interaction.followUp({ content: '❌ 无法发送私信，请检查你的私信设置。', ephemeral: true });
+    await interaction.followUp({ content: '❌ 无法发送私信，请检查你的私信设置。', flags: EPHEMERAL });
   }
 }
 
