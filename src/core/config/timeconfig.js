@@ -119,7 +119,7 @@ function getTimeRangeDescription() {
 const LINEAR_MUTE_CONFIG = {
     BASE_THRESHOLD: 10,        // 开始禁言的票数
     BASE_DURATION: 10,         // 基础禁言时长（分钟）
-    ADDITIONAL_MINUTES_PER_VOTE: 2  // 每票增加的分钟数
+    ADDITIONAL_MINUTES_PER_VOTE: 3  // 每票增加的分钟数
 };
 
 // 禁言状态检查配置
@@ -162,7 +162,7 @@ const BASE_MUTE_DURATIONS = {
 };
 
 // 删除消息阈值 - 原始配置
-const BASE_DELETE_THRESHOLD = 10; // 10个⚠️删除消息
+const BASE_DELETE_THRESHOLD = 5; // 5个⚠️删除消息
 
 /**
  * 计算线性禁言时长

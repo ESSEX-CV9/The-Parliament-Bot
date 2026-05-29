@@ -807,6 +807,8 @@ async function saveUserActivityAndDailyBatchByDate(batchData, dailyBatchDataByDa
 
 /**
  * 获取用户在指定频道的每日活跃度数据。
+ * 注意：日期字段 date 为 UTC 日期（YYYY-MM-DD），UTC 0:00 = 北京时间 8:00，
+ * 因此每日统计以北京时间的上午 8:00 为分割点。
  * @param {string} guildId - 服务器ID。
  * @param {string} channelId - 频道ID。
  * @param {string} userId - 用户ID。
@@ -840,7 +842,7 @@ async function getUserDailyActivity(guildId, channelId, userId, days = 30) {
  * @returns {Promise<number>} 满足阈值的天数。
  */
 async function getUserActiveDaysCount(guildId, channelId, userId, dailyThreshold, days = 90) {
-    // 使用 UTC 时间计算起始日期，确保与数据存储时的日期计算一致
+    // 使用 UTC 时间计算起始日期。UTC 0:00 = 北京时间 8:00，即每日统计以北京时间的上午 8:00 为分割点。
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
