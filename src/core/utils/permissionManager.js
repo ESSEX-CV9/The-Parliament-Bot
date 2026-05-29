@@ -2,20 +2,13 @@
 const { PermissionFlagsBits } = require('discord.js');
 const { isUserInSelfModerationBlacklist } = require('./database');
 
-// 配置允许使用管理指令的身份组ID
-// TODO: 替换为实际的身份组ID
-const ALLOWED_ROLE_IDS = [
-    '1290637015821451315', // 总管理
-    '1385066450829705226', // 执行管理
-    '1289224017789583453', 
-    '1487365045020262481', // 管理组
-    // 在这里添加更多允许的身份组ID
-];
-
 // 配置允许使用管理指令的用户ID
 const ALLOWED_USER_IDS = [
     '1231975942725963816',
 ];
+
+// 不再按指定身份组放行；仅保留空数组用于兼容调试函数和导出接口。
+const ALLOWED_ROLE_IDS = [];
 
 // 配置允许使用管理指令的Discord原生权限
 const ALLOWED_PERMISSIONS = [
@@ -53,15 +46,6 @@ function checkAdminPermission(member) {
             }
         }
 
-        // 检查是否拥有允许的身份组（按ID匹配）
-        if (member.roles.cache) {
-            for (const userRole of member.roles.cache.values()) {
-                if (ALLOWED_ROLE_IDS.includes(userRole.id)) {
-                    return true;
-                }
-            }
-        }
-
         return false;
 
     } catch (error) {
@@ -76,8 +60,7 @@ function checkAdminPermission(member) {
  * @returns {boolean} 是否包含管理员角色
  */
 function checkAdminByRoleIds(roleIds) {
-    if (!roleIds || !Array.isArray(roleIds)) return false;
-    return roleIds.some(id => ALLOWED_ROLE_IDS.includes(id));
+    return false;
 }
 
 /**
@@ -85,7 +68,7 @@ function checkAdminByRoleIds(roleIds) {
  * @returns {string} 错误消息
  */
 function getPermissionDeniedMessage() {
-    return `❌ **权限不足**\n\n您没有权限使用此指令。\n\n**需要以下权限之一：**\n• 服务器所有者\n• 管理员权限\n• 指定管理身份组之一\n\n请联系服务器管理员获取相应权限。`;
+    return `❌ **权限不足**\n\n您没有权限使用此指令。\n\n**需要以下权限之一：**\n• 服务器所有者\n• 管理员权限\n• 指定允许用户\n\n请联系服务器管理员获取相应权限。`;
 }
 
 /**
@@ -93,7 +76,7 @@ function getPermissionDeniedMessage() {
  * @returns {string[]} 允许的身份组ID数组
  */
 function getAllowedRoles() {
-    return [...ALLOWED_ROLE_IDS];
+    return [];
 }
 
 /**
@@ -406,6 +389,7 @@ module.exports = {
     getAllowedPermissions,
     getUserPermissionDetails,
     ALLOWED_ROLE_IDS,
+    ALLOWED_USER_IDS,
     ALLOWED_PERMISSIONS,
 
     // 表单权限相关导出
