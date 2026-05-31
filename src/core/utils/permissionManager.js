@@ -12,11 +12,6 @@ const ALLOWED_ROLE_IDS = [
     // 在这里添加更多允许的身份组ID
 ];
 
-// 配置允许使用管理指令的用户ID
-const ALLOWED_USER_IDS = [
-    '1231975942725963816',
-];
-
 // 配置允许使用管理指令的Discord原生权限
 const ALLOWED_PERMISSIONS = [
     PermissionFlagsBits.Administrator,
@@ -36,11 +31,6 @@ function checkAdminPermission(member) {
 
         // 检查是否是服务器所有者
         if (member.guild.ownerId === member.user.id) {
-            return true;
-        }
-
-        // 检查是否是允许的指定用户
-        if (ALLOWED_USER_IDS.includes(member.user.id)) {
             return true;
         }
 
