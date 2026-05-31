@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, ChannelType, MessageFlags } = require('discord.js');
-const { checkAdminPermission } = require('../../../core/utils/permissionManager');
+const { checkBackupPermission, getBackupPermissionDeniedMessage } = require('../utils/backupPermissions');
 const { ProgressReporter } = require('../utils/progressReporter');
 const { runBackup } = require('../services/orchestrator');
 
@@ -40,8 +40,8 @@ const data = new SlashCommandBuilder()
           .setRequired(true)));
 
 async function execute(interaction) {
-  if (!checkAdminPermission(interaction.member)) {
-    return interaction.reply({ content: '❌ 你没有权限执行备份操作。', flags: EPHEMERAL });
+  if (!checkBackupPermission(interaction.user.id)) {
+    return interaction.reply({ content: getBackupPermissionDeniedMessage(), flags: EPHEMERAL });
   }
 
   const guildId = interaction.guildId;

@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, ChannelType, AttachmentBuilder, MessageFlags } = require('discord.js');
-const { checkAdminPermission } = require('../../../core/utils/permissionManager');
+const { checkBackupPermission, getBackupPermissionDeniedMessage } = require('../utils/backupPermissions');
 const { fetchThreads } = require('../fetchers/threadFetcher');
 
 function sleep(ms) {
@@ -25,8 +25,8 @@ const data = new SlashCommandBuilder()
 const EPHEMERAL = MessageFlags.Ephemeral;
 
 async function execute(interaction) {
-  if (!checkAdminPermission(interaction.member)) {
-    return interaction.reply({ content: '❌ 你没有权限执行此操作。', flags: EPHEMERAL });
+  if (!checkBackupPermission(interaction.user.id)) {
+    return interaction.reply({ content: getBackupPermissionDeniedMessage(), flags: EPHEMERAL });
   }
 
   await interaction.deferReply({ flags: EPHEMERAL });
