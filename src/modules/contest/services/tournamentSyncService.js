@@ -66,6 +66,15 @@ async function retroSync(guildId, targetChannelId) {
                 channelData.contestTitle,
             );
 
+            // 1.5 同步标题（createTournament 幂等，已存在时不更新标题，此处兜底自愈标题漂移）
+            if (channelData.contestTitle) {
+                try {
+                    await forumApi.updateTournament(channelData.channelId, { title: channelData.contestTitle });
+                } catch (e) {
+                    console.warn(`[TournamentSync] 同步标题失败 - 频道 ${channelData.channelId}:`, e.message);
+                }
+            }
+
             // 2. 分页获取 API 上已有的帖子 ID 集合
             const existingIds = new Set();
             let offset = 0;
@@ -115,4 +124,65 @@ async function retroSync(guildId, targetChannelId) {
     return stats;
 }
 
-module.exports = { onContestCreated, onSubmissionAdded, onSubmissionRemoved, onContestTitleUpdated, retroSync };
+// 删除单个赛事书单
+async function deleteBooklist(channelId) {
+    await forumApi.deleteTournament(channelId);
+}
+
+// 列出本服在索引页上已建的赛事书单（与本地 contestChannels 按 guildId 交叉过滤，避免误删其他服）
+async function listGuildBooklists(guildId) {
+    const allChannels = getAllContestChannels();
+    const guildChannelIds = new Set(
+        Object.values(allChannels)
+            .filter(ch => ch.guildId === guildId)
+            .map(ch => String(ch.channelId))
+    );
+
+    const booklists = [];
+    let offset = 0;
+    const pageSize = 100;
+    while (true) {
+        const page = await forumApi.listTournaments(pageSize, offset);
+        const results = page?.results || [];
+        for (const t of results) {
+            const chId = String(t.tournament_channel_id);
+            if (guildChannelIds.has(chId)) {
+                booklists.push({
+                    channelId: chId,
+                    title: t.title || allChannels[chId]?.contestTitle || chId,
+                    itemCount: t.item_count ?? 0,
+                });
+            }
+        }
+        if (results.length < pageSize) break;
+        offset += pageSize;
+    }
+    return booklists;
+}
+
+// 删除本服全部赛事书单，返回删除统计
+async function deleteAllGuildBooklists(guildId) {
+    const booklists = await listGuildBooklists(guildId);
+    const stats = { total: booklists.length, deleted: 0, errors: [] };
+    for (const bl of booklists) {
+        try {
+            await forumApi.deleteTournament(bl.channelId);
+            stats.deleted++;
+        } catch (e) {
+            stats.errors.push({ channelId: bl.channelId, title: bl.title, error: e.message });
+            console.warn(`[TournamentSync] 删除书单失败 - 频道 ${bl.channelId}:`, e.message);
+        }
+    }
+    return stats;
+}
+
+module.exports = {
+    onContestCreated,
+    onSubmissionAdded,
+    onSubmissionRemoved,
+    onContestTitleUpdated,
+    retroSync,
+    deleteBooklist,
+    listGuildBooklists,
+    deleteAllGuildBooklists,
+};

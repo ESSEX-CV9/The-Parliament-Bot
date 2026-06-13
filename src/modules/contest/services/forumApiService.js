@@ -46,4 +46,12 @@ async function getItems(channelId, limit = 100, offset = 0) {
     return apiRequest('GET', `/v1/tournament/${channelId}/items?limit=${limit}&offset=${offset}`);
 }
 
-module.exports = { createTournament, updateTournament, addItems, removeItems, getItems };
+async function deleteTournament(channelId) {
+    return apiRequest('DELETE', `/v1/tournament/${channelId}`);
+}
+
+async function listTournaments(limit = 100, offset = 0) {
+    return apiRequest('GET', `/v1/tournament/list/page?limit=${limit}&offset=${offset}&sort_method=4&sort_order=desc`);
+}
+
+module.exports = { createTournament, updateTournament, addItems, removeItems, getItems, deleteTournament, listTournaments };
