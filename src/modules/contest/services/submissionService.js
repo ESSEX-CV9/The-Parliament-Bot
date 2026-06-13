@@ -10,6 +10,7 @@ const {
 const { validateSubmissionLink, checkDuplicateSubmission } = require('./linkParser');
 const { displayService } = require('./displayService');
 const {grantRoleOnSubmission} = require("./participantRoleService");
+const { onSubmissionAdded } = require('./tournamentSyncService');
 
 async function processContestSubmission(interaction) {
     try {
@@ -117,7 +118,8 @@ async function processContestSubmission(interaction) {
         };
         
         const savedSubmission = await saveContestSubmission(submissionData);
-        
+        onSubmissionAdded(savedSubmission); // 静默同步到索引页书单
+
         // 更新赛事频道的投稿列表（使用全局ID）
         const updatedSubmissions = [...contestChannelData.submissions, savedSubmission.globalId];
         await updateContestChannel(contestChannelId, {

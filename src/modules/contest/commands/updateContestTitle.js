@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, MessageFlags, EmbedBuilder } = require('discord.js');
 const { getContestChannel, updateContestChannel } = require('../utils/contestDatabase');
 const { checkContestManagePermission, getManagePermissionDeniedMessage } = require('../utils/contestPermissions');
+const { onContestTitleUpdated } = require('../services/tournamentSyncService');
 
 const data = new SlashCommandBuilder()
     .setName('赛事-更新赛事标题')
@@ -79,6 +80,7 @@ async function execute(interaction) {
             await updateContestChannel(interaction.channel.id, {
                 contestTitle: newTitle
             });
+            onContestTitleUpdated(interaction.channel.id, newTitle); // 静默同步书单标题
 
             await interaction.editReply({
                 content: `✅ 赛事标题已成功更新为：**${newTitle}**`

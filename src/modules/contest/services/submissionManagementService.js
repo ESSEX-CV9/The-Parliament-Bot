@@ -1,10 +1,11 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { 
+const {
     getContestChannel,
     updateContestChannel,
     deleteContestSubmission,
     getContestSubmissionByGlobalId
 } = require('../utils/contestDatabase');
+const { onSubmissionRemoved } = require('./tournamentSyncService');
 
 /**
  * 处理删除确认
@@ -145,6 +146,7 @@ async function deleteSubmissionWithReason(interaction, globalId, contestChannelI
         
         // 删除投稿数据
         await deleteContestSubmission(globalId);
+        onSubmissionRemoved(submission); // 静默从索引页书单移除
         
         // 更新赛事频道的投稿列表
         const contestChannelData = await getContestChannel(contestChannelId);

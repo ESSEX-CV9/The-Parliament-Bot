@@ -571,6 +571,10 @@ async function removeSubmissionAward(globalId) {
 }
 
 // 新增：设置比赛完赛状态
+function getAllContestChannels() {
+    return readJsonFile(CONTEST_CHANNELS_FILE);
+}
+
 async function setContestFinished(contestChannelId, finished = true) {
     const channels = readJsonFile(CONTEST_CHANNELS_FILE);
     if (channels[contestChannelId]) {
@@ -608,6 +612,7 @@ module.exports = {
     saveContestChannel,
     getContestChannel,
     updateContestChannel,
+    getAllContestChannels,
     
     // 投稿相关
     getNextSubmissionId,

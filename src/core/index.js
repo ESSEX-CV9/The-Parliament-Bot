@@ -106,6 +106,7 @@ const setExternalSubmissionOptInCommand = require('../modules/contest/commands/s
 const viewSubmissionsCommand = require('../modules/contest/commands/viewSubmissions');
 const viewSubmissionsContextCommand = require('../modules/contest/commands/viewSubmissionsContext');
 const manageApplicationNotifyCommand = require('../modules/contest/commands/manageApplicationNotify');
+const syncTournamentCommand = require('../modules/contest/commands/syncTournament');
 
 // 自动清理系统命令（合并后）
 const keywordManagerCommand = require('../modules/autoCleanup/commands/keywordManager');
@@ -310,6 +311,7 @@ client.commands.set(setExternalSubmissionOptInCommand.data.name, setExternalSubm
 client.commands.set(viewSubmissionsCommand.data.name, viewSubmissionsCommand);
 client.commands.set(viewSubmissionsContextCommand.data.name, viewSubmissionsContextCommand);
 client.commands.set(manageApplicationNotifyCommand.data.name, manageApplicationNotifyCommand);
+client.commands.set(syncTournamentCommand.data.name, syncTournamentCommand);
 
 // 自动清理系统命令（合并后）
 client.commands.set(keywordManagerCommand.data.name, keywordManagerCommand);
