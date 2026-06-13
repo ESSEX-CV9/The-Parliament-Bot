@@ -20,6 +20,7 @@ async function onSubmissionAdded(submission) {
         await forumApi.addItems(submission.contestChannelId, [{
             thread_id: submission.parsedInfo.channelId,
             tournament_participated_at: submission.submittedAt,
+            ...(submission.submissionDescription ? { comment: submission.submissionDescription } : {}),
         }]);
         console.log(`[TournamentSync] 投稿已同步到书单 - 帖子: ${submission.parsedInfo.channelId}`);
     } catch (e) {
@@ -91,6 +92,7 @@ async function retroSync(guildId, targetChannelId) {
                     await forumApi.addItems(channelData.channelId, [{
                         thread_id: sub.parsedInfo.channelId,
                         tournament_participated_at: sub.submittedAt,
+                        ...(sub.submissionDescription ? { comment: sub.submissionDescription } : {}),
                     }]);
                     stats.addedItems++;
                 } catch (e) {
