@@ -156,6 +156,7 @@ async function createContestChannel(client, guild, applicationData, channelName,
             applicantId: applicationData.applicantId,
             guildId: guild.id,
             contestTitle: applicationData.formData.title,
+            contestTheme: applicationData.formData.theme, // 主题和参赛要求，用作书单简介
             contestInfo: infoMessage.id,
             submissionEntry: submissionMessage.id,
             displayMessage: displayMessage.id,

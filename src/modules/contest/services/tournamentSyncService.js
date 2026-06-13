@@ -1,13 +1,44 @@
 // src/modules/contest/services/tournamentSyncService.js
 const forumApi = require('./forumApiService');
-const { getSubmissionsByChannel, getAllContestChannels } = require('../utils/contestDatabase');
+const { getSubmissionsByChannel, getAllContestChannels, getContestApplication } = require('../utils/contestDatabase');
+
+// 前端简介显示上限 600 字，留安全余量截断到 580
+const DESCRIPTION_MAX_LEN = 580;
+
+// 解析书单简介：优先用 channelData 上持久化的主题，历史赛事则回查申请的「主题和参赛要求」
+async function resolveDescription(channelData) {
+    let theme = channelData.contestTheme;
+    if (!theme && channelData.applicationId) {
+        try {
+            const app = await getContestApplication(channelData.applicationId);
+            theme = app?.formData?.theme;
+        } catch (_) { /* 回查失败则留空 */ }
+    }
+    if (!theme || typeof theme !== 'string') return undefined;
+    const trimmed = theme.trim();
+    if (!trimmed) return undefined;
+    return trimmed.length > DESCRIPTION_MAX_LEN
+        ? `${trimmed.slice(0, DESCRIPTION_MAX_LEN - 1)}…`
+        : trimmed;
+}
+
+// 索引页 API 的日期解析（Python datetime.fromisoformat）不接受带 Z/时区后缀的字符串，
+// 否则插入时报 500。此处统一转成无时区的 naive ISO 格式（如 2025-06-05T02:52:45.403）。
+function toApiDateTime(value) {
+    if (!value) return undefined;
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return undefined;
+    return d.toISOString().replace('Z', '');
+}
 
 async function onContestCreated(channelData) {
     try {
+        const description = await resolveDescription(channelData);
         const result = await forumApi.createTournament(
             channelData.channelId,
             channelData.applicantId,
             channelData.contestTitle,
+            description,
         );
         console.log(`[TournamentSync] 书单已创建 - 频道: ${channelData.channelId}, 新建: ${result?.created}`);
     } catch (e) {
@@ -17,9 +48,10 @@ async function onContestCreated(channelData) {
 
 async function onSubmissionAdded(submission) {
     try {
+        const participatedAt = toApiDateTime(submission.submittedAt);
         await forumApi.addItems(submission.contestChannelId, [{
             thread_id: submission.parsedInfo.channelId,
-            tournament_participated_at: submission.submittedAt,
+            ...(participatedAt ? { tournament_participated_at: participatedAt } : {}),
             ...(submission.submissionDescription ? { comment: submission.submissionDescription } : {}),
         }]);
         console.log(`[TournamentSync] 投稿已同步到书单 - 帖子: ${submission.parsedInfo.channelId}`);
@@ -60,18 +92,23 @@ async function retroSync(guildId, targetChannelId) {
     for (const channelData of channels) {
         try {
             // 1. 创建赛事书单（幂等，已存在则直接返回）
+            const description = await resolveDescription(channelData);
             await forumApi.createTournament(
                 channelData.channelId,
                 channelData.applicantId,
                 channelData.contestTitle,
+                description,
             );
 
-            // 1.5 同步标题（createTournament 幂等，已存在时不更新标题，此处兜底自愈标题漂移）
-            if (channelData.contestTitle) {
+            // 1.5 同步标题与简介（createTournament 幂等，已存在时不更新元信息，此处兜底自愈漂移）
+            const patch = {};
+            if (channelData.contestTitle) patch.title = channelData.contestTitle;
+            if (description) patch.description = description;
+            if (Object.keys(patch).length > 0) {
                 try {
-                    await forumApi.updateTournament(channelData.channelId, { title: channelData.contestTitle });
+                    await forumApi.updateTournament(channelData.channelId, patch);
                 } catch (e) {
-                    console.warn(`[TournamentSync] 同步标题失败 - 频道 ${channelData.channelId}:`, e.message);
+                    console.warn(`[TournamentSync] 同步元信息失败 - 频道 ${channelData.channelId}:`, e.message);
                 }
             }
 
@@ -98,9 +135,10 @@ async function retroSync(guildId, targetChannelId) {
             // 4. 逐条添加，精确统计成功/跳过数
             for (const sub of toAdd) {
                 try {
+                    const participatedAt = toApiDateTime(sub.submittedAt);
                     await forumApi.addItems(channelData.channelId, [{
                         thread_id: sub.parsedInfo.channelId,
-                        tournament_participated_at: sub.submittedAt,
+                        ...(participatedAt ? { tournament_participated_at: participatedAt } : {}),
                         ...(sub.submissionDescription ? { comment: sub.submissionDescription } : {}),
                     }]);
                     stats.addedItems++;
