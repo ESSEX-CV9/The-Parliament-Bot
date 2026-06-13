@@ -2,6 +2,16 @@
 const BASE_URL = (process.env.FORUM_API_BASE || 'https://forum.shimmerday.top').replace(/\/$/, '');
 const API_KEY = (process.env.FORUM_API_KEY || '').trim();
 
+// 启动诊断：脱敏打印 API Key 状态，便于在生产日志中确认 .env 是否被正确加载
+if (!API_KEY) {
+    console.warn('[ForumAPI] ⚠️ 未读取到 FORUM_API_KEY（空值）！书单同步将全部失败。请检查 bot 工作目录下的 .env 文件。');
+} else {
+    const masked = API_KEY.length <= 8
+        ? '****'
+        : `${API_KEY.slice(0, 3)}...${API_KEY.slice(-3)}`;
+    console.log(`[ForumAPI] FORUM_API_KEY 已加载（长度 ${API_KEY.length}，${masked}），BASE=${BASE_URL}`);
+}
+
 async function apiRequest(method, path, body) {
     const url = `${BASE_URL}${path}`;
     const options = {
