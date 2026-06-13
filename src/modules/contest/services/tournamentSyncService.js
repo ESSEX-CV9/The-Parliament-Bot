@@ -1,6 +1,6 @@
 // src/modules/contest/services/tournamentSyncService.js
 const forumApi = require('./forumApiService');
-const { getSubmissionsByChannel, getAllContestChannels, getContestApplication } = require('../utils/contestDatabase');
+const { getSubmissionsByChannel, getAllContestChannels, getContestApplication, getSyncExclusions } = require('../utils/contestDatabase');
 
 // 前端简介显示上限 600 字，留安全余量截断到 580
 const DESCRIPTION_MAX_LEN = 580;
@@ -78,16 +78,43 @@ async function onContestTitleUpdated(channelId, newTitle) {
     }
 }
 
-async function retroSync(guildId, targetChannelId) {
+// onProgress(progress) 可选回调：每处理完一场赛事调用一次，用于上报实时进度（异常被吞，绝不影响同步）
+async function retroSync(guildId, targetChannelId, onProgress) {
     const allChannels = getAllContestChannels();
+    const exclusions = new Set(getSyncExclusions(guildId).map(String));
 
+    let excludedCount = 0;
     const channels = Object.values(allChannels).filter(ch => {
         if (ch.guildId !== guildId) return false;
-        if (targetChannelId && ch.channelId !== targetChannelId) return false;
+        if (targetChannelId) {
+            // 显式指定单个频道时按指定执行（视为人工覆盖，不受排除名单限制）
+            return ch.channelId === targetChannelId;
+        }
+        // 全量同步时跳过排除名单中的赛事
+        if (exclusions.has(String(ch.channelId))) {
+            excludedCount++;
+            return false;
+        }
         return true;
     });
 
-    const stats = { total: channels.length, synced: 0, addedItems: 0, skippedItems: 0, errors: [] };
+    const stats = { total: channels.length, synced: 0, addedItems: 0, skippedItems: 0, excluded: excludedCount, errors: [] };
+
+    const reportProgress = (currentTitle) => {
+        if (typeof onProgress !== 'function') return;
+        try {
+            onProgress({
+                processed: stats.synced + stats.errors.length,
+                total: stats.total,
+                addedItems: stats.addedItems,
+                skippedItems: stats.skippedItems,
+                errorCount: stats.errors.length,
+                currentTitle,
+            });
+        } catch (_) { /* 进度回调异常不影响同步主流程 */ }
+    };
+
+    reportProgress(null); // 初始进度（0/total）
 
     for (const channelData of channels) {
         try {
@@ -157,6 +184,7 @@ async function retroSync(guildId, targetChannelId) {
             });
             console.error(`[TournamentSync] retroSync 失败 - 频道 ${channelData.channelId}:`, e.message);
         }
+        reportProgress(channelData.contestTitle);
     }
 
     return stats;
@@ -175,6 +203,7 @@ async function listGuildBooklists(guildId) {
             .filter(ch => ch.guildId === guildId)
             .map(ch => String(ch.channelId))
     );
+    const exclusions = new Set(getSyncExclusions(guildId).map(String));
 
     const booklists = [];
     let offset = 0;
@@ -189,6 +218,7 @@ async function listGuildBooklists(guildId) {
                     channelId: chId,
                     title: t.title || allChannels[chId]?.contestTitle || chId,
                     itemCount: t.item_count ?? 0,
+                    isExcluded: exclusions.has(chId),
                 });
             }
         }

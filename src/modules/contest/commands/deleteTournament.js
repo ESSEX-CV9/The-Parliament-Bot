@@ -20,6 +20,10 @@ const data = new SlashCommandBuilder()
             .setDescription('要删除书单的赛事频道')
             .setRequired(false)
             .addChannelTypes(ChannelType.GuildText))
+    .addStringOption(option =>
+        option.setName('频道id')
+            .setDescription('要删除书单的频道ID（用于频道已删除的孤儿书单，可从 /赛事-书单列表 复制）')
+            .setRequired(false))
     .addBooleanOption(option =>
         option.setName('删除全部')
             .setDescription('删除本服全部赛事书单（用于清空重建，谨慎操作）')
@@ -44,18 +48,30 @@ async function execute(interaction) {
         }
 
         const targetChannel = interaction.options.getChannel('频道');
+        const rawChannelId = interaction.options.getString('频道id');
         const deleteAll = interaction.options.getBoolean('删除全部') || false;
 
-        // 参数校验：必须二选一，不能都填也不能都不填
-        if (targetChannel && deleteAll) {
+        // 解析单频道目标：优先频道选择器，其次手填的频道ID（用于已删除频道的孤儿书单）
+        const cleanedId = rawChannelId ? rawChannelId.trim().replace(/[<#>]/g, '') : null;
+        const singleTargetId = targetChannel?.id || cleanedId || null;
+        const singleCount = [targetChannel, cleanedId, deleteAll].filter(Boolean).length;
+
+        // 参数校验：三者只能选其一
+        if (singleCount > 1) {
             return interaction.reply({
-                content: '❌ 「频道」和「删除全部」不能同时指定，请只选其一。',
+                content: '❌ 「频道」「频道id」「删除全部」只能指定其中一个。',
                 flags: MessageFlags.Ephemeral,
             });
         }
-        if (!targetChannel && !deleteAll) {
+        if (singleCount === 0) {
             return interaction.reply({
-                content: '❌ 请指定要删除书单的「频道」，或勾选「删除全部」。',
+                content: '❌ 请指定要删除书单的「频道」或「频道id」，或勾选「删除全部」。',
+                flags: MessageFlags.Ephemeral,
+            });
+        }
+        if (cleanedId && !/^\d{5,}$/.test(cleanedId)) {
+            return interaction.reply({
+                content: '❌ 「频道id」格式不对，应为纯数字。可从 `/赛事-书单列表` 复制。',
                 flags: MessageFlags.Ephemeral,
             });
         }
@@ -81,7 +97,7 @@ async function execute(interaction) {
         } else {
             confirmText =
                 `⚠️ **确认删除该赛事书单？**\n\n` +
-                `频道：<#${targetChannel.id}>\n\n` +
+                `频道：<#${singleTargetId}>（ID: \`${singleTargetId}\`）\n\n` +
                 `将永久删除该书单及其下所有帖子记录。删除后可用 \`/赛事-同步书单\` 重建。是否继续？`;
         }
 
@@ -129,9 +145,9 @@ async function execute(interaction) {
             });
         } else {
             try {
-                await deleteBooklist(targetChannel.id);
+                await deleteBooklist(singleTargetId);
                 await interaction.editReply({
-                    content: `🗑️ 已删除 <#${targetChannel.id}> 的赛事书单。`,
+                    content: `🗑️ 已删除 <#${singleTargetId}>（\`${singleTargetId}\`）的赛事书单。`,
                     components: [],
                 });
             } catch (e) {

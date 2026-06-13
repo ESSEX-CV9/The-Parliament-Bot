@@ -12,9 +12,11 @@ const CONTEST_SETTINGS_FILE = path.join(DATA_DIR, 'contestSettings.json');
 const CONTEST_APPLICATIONS_FILE = path.join(DATA_DIR, 'contestApplications.json');
 const CONTEST_CHANNELS_FILE = path.join(DATA_DIR, 'contestChannels.json');
 const CONTEST_SUBMISSIONS_FILE = path.join(DATA_DIR, 'contestSubmissions.json');
+// 书单同步排除名单：{ [guildId]: [channelId, ...] }，名单内的赛事在对账同步时被跳过
+const CONTEST_SYNC_EXCLUSIONS_FILE = path.join(DATA_DIR, 'contestSyncExclusions.json');
 
 // 初始化文件
-[CONTEST_SETTINGS_FILE, CONTEST_APPLICATIONS_FILE, CONTEST_CHANNELS_FILE, CONTEST_SUBMISSIONS_FILE].forEach(file => {
+[CONTEST_SETTINGS_FILE, CONTEST_APPLICATIONS_FILE, CONTEST_CHANNELS_FILE, CONTEST_SUBMISSIONS_FILE, CONTEST_SYNC_EXCLUSIONS_FILE].forEach(file => {
     if (!fs.existsSync(file)) {
         fs.writeFileSync(file, '{}', 'utf8');
     }
@@ -587,6 +589,39 @@ async function setContestFinished(contestChannelId, finished = true) {
     return null;
 }
 
+// ===== 书单同步排除名单 =====
+// 返回某服务器的排除频道ID数组（字符串）
+function getSyncExclusions(guildId) {
+    const all = readJsonFile(CONTEST_SYNC_EXCLUSIONS_FILE);
+    const list = all[guildId];
+    return Array.isArray(list) ? list.map(String) : [];
+}
+
+// 添加一个排除项，返回 true 表示新增，false 表示已存在
+function addSyncExclusion(guildId, channelId) {
+    const all = readJsonFile(CONTEST_SYNC_EXCLUSIONS_FILE);
+    const list = Array.isArray(all[guildId]) ? all[guildId].map(String) : [];
+    const id = String(channelId);
+    if (list.includes(id)) return false;
+    list.push(id);
+    all[guildId] = list;
+    writeJsonFile(CONTEST_SYNC_EXCLUSIONS_FILE, all);
+    console.log(`[ContestSync] 已加入排除名单 - 服务器: ${guildId}, 频道: ${id}`);
+    return true;
+}
+
+// 移除一个排除项，返回 true 表示移除成功，false 表示原本不存在
+function removeSyncExclusion(guildId, channelId) {
+    const all = readJsonFile(CONTEST_SYNC_EXCLUSIONS_FILE);
+    const list = Array.isArray(all[guildId]) ? all[guildId].map(String) : [];
+    const id = String(channelId);
+    if (!list.includes(id)) return false;
+    all[guildId] = list.filter(x => x !== id);
+    writeJsonFile(CONTEST_SYNC_EXCLUSIONS_FILE, all);
+    console.log(`[ContestSync] 已移出排除名单 - 服务器: ${guildId}, 频道: ${id}`);
+    return true;
+}
+
 module.exports = {
     // 设置相关
     saveContestSettings,
@@ -627,5 +662,10 @@ module.exports = {
     getAwardedSubmissions,
     setSubmissionAward,
     removeSubmissionAward,
-    setContestFinished
+    setContestFinished,
+
+    // 书单同步排除名单
+    getSyncExclusions,
+    addSyncExclusion,
+    removeSyncExclusion
 };
