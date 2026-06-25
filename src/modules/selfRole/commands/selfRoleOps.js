@@ -21,6 +21,7 @@ const {
   deleteSelfRoleGrantCascade,
   updateSelfRoleGrantSchedule,
   listSelfRoleGrantRoles,
+  listActiveSelfRoleGrantRolesForUser,
   countActiveSelfRoleGrantHoldersByRole,
   countReservedPendingSelfRoleApplicationsV2,
   getPendingSelfRoleRenewalSessionByGrant,
@@ -64,6 +65,20 @@ function formatRoleMentionList(roleIds, limit = 10) {
   const shown = ids.slice(0, limit).map((rid) => `<@&${rid}>`).join(' ');
   if (ids.length > limit) return `${shown} ...（+${ids.length - limit}）`;
   return shown || '（无）';
+}
+
+async function filterRoleIdsManagedByActiveGrants(guildId, userId, roleIds, excludeGrantId = null) {
+  const removeIds = [...new Set((Array.isArray(roleIds) ? roleIds : []).filter(Boolean))];
+  if (!guildId || !userId || removeIds.length === 0) {
+    return { roleIdsToRemove: removeIds, protectedRoleIds: [] };
+  }
+
+  const activeRoles = await listActiveSelfRoleGrantRolesForUser(guildId, userId, excludeGrantId);
+  const activeRoleIds = new Set((activeRoles || []).map((r) => r.roleId).filter(Boolean));
+  const roleIdsToRemove = removeIds.filter((rid) => !activeRoleIds.has(rid));
+  const protectedRoleIds = removeIds.filter((rid) => activeRoleIds.has(rid));
+
+  return { roleIdsToRemove, protectedRoleIds };
 }
 
 function buildEndedReason(prefix, operatorId, note) {
@@ -1083,6 +1098,13 @@ module.exports = {
       }
 
       roleIdsToRemove = [...new Set(roleIdsToRemove.filter(Boolean))];
+      if (role && role.id && !roleIdsToRemove.includes(role.id)) {
+        roleIdsToRemove.push(role.id);
+      }
+
+      const removalPlan = await filterRoleIdsManagedByActiveGrants(guildId, user.id, roleIdsToRemove, grant?.grantId || null);
+      roleIdsToRemove = removalPlan.roleIdsToRemove;
+      const protectedRoleIds = removalPlan.protectedRoleIds;
 
       const previewLines = [
         `目标用户：<@${user.id}>`,
@@ -1090,6 +1112,7 @@ module.exports = {
         `active grant：${grant ? `✅ grantId=${grant.grantId}` : '❌ 无（可能为手动授予，或已无 active grant）'}`,
         `移除配套身份组：${removeBundle ? '是' : '否'}`,
         `将移除身份组：${roleIdsToRemove.length > 0 ? formatRoleMentionList(roleIdsToRemove, 20) : '（无）'}`,
+        protectedRoleIds.length > 0 ? `将保留重叠身份组（仍被其它 active grant 管理）：${formatRoleMentionList(protectedRoleIds, 20)}` : null,
         `将结束 grant：${grant ? '是（结束该用户该岗位的所有 active grants）' : '否（未找到 active grant）'}`,
         note ? `备注：${note}` : null,
         '',
@@ -1127,14 +1150,11 @@ module.exports = {
         }
       }
 
-      // 确保至少移除主身份组（避免 grant_roles 异常时出现“移除列表为空”）
-      if (role && role.id && !roleIdsToRemove.includes(role.id)) {
-        roleIdsToRemove.push(role.id);
-      }
-
       if (member) {
         try {
-          await member.roles.remove(roleIdsToRemove, `SelfRole ${endedReason}`);
+          if (roleIdsToRemove.length > 0) {
+            await member.roles.remove(roleIdsToRemove, `SelfRole ${endedReason}`);
+          }
           removedOk = true;
         } catch (err) {
           removeErrText = err?.message ? String(err.message) : String(err);
