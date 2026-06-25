@@ -407,7 +407,7 @@ module.exports = {
         .addBooleanOption((opt) =>
           opt
             .setName('移除配套身份组')
-            .setDescription('是否同时移除该岗位 grant 关联的配套身份组（默认是）')
+            .setDescription('是否同时移除该岗位相关的配套身份组（默认是）')
             .setRequired(false),
         )
         .addStringOption((opt) =>
@@ -1066,6 +1066,14 @@ module.exports = {
         roleIdsToRemove = grantRoles
           .filter((r) => r.roleKind === 'primary' || (removeBundle && r.roleKind === 'bundle'))
           .map((r) => r.roleId);
+        if (!roleIdsToRemove.includes(role.id)) {
+          roleIdsToRemove.push(role.id);
+        }
+        const hasRecordedBundle = grantRoles.some((r) => r?.roleKind === 'bundle');
+        if (removeBundle && !hasRecordedBundle) {
+          const bundle = Array.isArray(roleConfig.bundleRoleIds) ? roleConfig.bundleRoleIds : [];
+          roleIdsToRemove.push(...bundle);
+        }
       } else {
         roleIdsToRemove = [role.id];
         if (removeBundle) {

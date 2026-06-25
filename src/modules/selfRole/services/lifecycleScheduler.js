@@ -98,6 +98,27 @@ function computeNextInquiryAt(now, inquiryDays, forceRemoveAt) {
     return next;
 }
 
+function buildRoleIdsToRemoveForGrant(grant, roleConfig, grantRoles, includeBundle = true) {
+    const roleIds = [];
+    const roles = Array.isArray(grantRoles) ? grantRoles : [];
+
+    if (grant?.primaryRoleId) roleIds.push(grant.primaryRoleId);
+
+    for (const item of roles) {
+        if (!item?.roleId) continue;
+        if (item.roleKind === 'primary' || includeBundle || item.roleKind !== 'bundle') {
+            roleIds.push(item.roleId);
+        }
+    }
+
+    const hasRecordedBundle = roles.some(item => item?.roleKind === 'bundle');
+    if (includeBundle && !hasRecordedBundle && Array.isArray(roleConfig?.bundleRoleIds)) {
+        roleIds.push(...roleConfig.bundleRoleIds);
+    }
+
+    return [...new Set(roleIds.filter(Boolean))];
+}
+
 async function ensureGrantSchedule(grant, roleConfig) {
     const lc = roleConfig?.lifecycle || {};
     const inquiryDays = Number(lc.inquiryDays || 0);
@@ -312,7 +333,7 @@ async function processForceRemove(client, grant, roleConfig, scheduleInfo) {
     }
 
     const roles = await listSelfRoleGrantRoles(grant.grantId);
-    const roleIdsToRemove = roles.map(r => r.roleId);
+    const roleIdsToRemove = buildRoleIdsToRemoveForGrant(grant, roleConfig, roles, true);
 
     let removeOk = false;
     let removeErrText = '';
@@ -589,7 +610,7 @@ async function handleSelfRoleRenewalDecision(interaction) {
     }
 
     const roles = await listSelfRoleGrantRoles(grant.grantId);
-    const roleIdsToRemove = roles.map(r => r.roleId);
+    const roleIdsToRemove = buildRoleIdsToRemoveForGrant(grant, roleConfig, roles, true);
 
     let removeOk = false;
     let removeErrText = '';

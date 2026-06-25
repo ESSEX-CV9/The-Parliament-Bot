@@ -97,7 +97,7 @@ module.exports = {
                 if (roleCfgs.length > 0) {
                     // 同一 dailyMessageThreshold 只计算一次，避免重复查询
                     const cache = new Map();
-                    description += `该频道的 **活跃天数**（近90天，按UTC日切分；“每日发言≥阈值” 计为1天）：\n`;
+                    description += `该频道的 **活跃天数**（全部已统计记录，按UTC日切分；“每日发言≥阈值” 计为1天）：\n`;
 
                     // 限制展示条数，避免 Embed 过长
                     const MAX_LINES = 12;
@@ -126,7 +126,7 @@ module.exports = {
                     const roleCfgs = activeDaysRoleConfigsByChannel[channelId] || [];
                     if (roleCfgs.length > 0) {
                         const cache = new Map();
-                        description += `该频道的 **活跃天数**（近90天，按UTC日切分；“每日发言≥阈值” 计为1天）：\n`;
+                        description += `该频道的 **活跃天数**（全部已统计记录，按UTC日切分；“每日发言≥阈值” 计为1天）：\n`;
 
                         const MAX_LINES = 8;
                         const showList = roleCfgs.slice(0, MAX_LINES);

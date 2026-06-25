@@ -836,23 +836,33 @@ async function getUserDailyActivity(guildId, channelId, userId, days = 30) {
  * @param {string} channelId - 频道ID。
  * @param {string} userId - 用户ID。
  * @param {number} dailyThreshold - 每日发言数阈值。
- * @param {number} days - 查询最近多少天的数据（可选，默认90天）。
+ * @param {number|null} days - 查询最近多少天的数据；不传则不限制时间范围。
  * @returns {Promise<number>} 满足阈值的天数。
  */
-async function getUserActiveDaysCount(guildId, channelId, userId, dailyThreshold, days = 90) {
-    // 使用 UTC 时间计算起始日期，确保与数据存储时的日期计算一致
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
+async function getUserActiveDaysCount(guildId, channelId, userId, dailyThreshold, days = null) {
+    const safeDays = Number(days);
+    const hasWindow = Number.isFinite(safeDays) && safeDays > 0;
 
+    const dateFilter = hasWindow ? 'AND date >= ?' : '';
     const stmt = selfRoleDb.prepare(`
         SELECT COUNT(*) as active_days
         FROM daily_user_activity
         WHERE guild_id = ? AND channel_id = ? AND user_id = ?
         AND message_count >= ?
-        AND date >= ?
+        ${dateFilter}
     `);
-    const row = stmt.get(guildId, channelId, userId, dailyThreshold, startDateStr);
+
+    let row;
+    if (hasWindow) {
+        // 使用 UTC 时间计算起始日期，确保与数据存储时的日期计算一致
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - Math.floor(safeDays));
+        const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
+        row = stmt.get(guildId, channelId, userId, dailyThreshold, startDateStr);
+    } else {
+        row = stmt.get(guildId, channelId, userId, dailyThreshold);
+    }
+
     return row ? row.active_days : 0;
 }
 
