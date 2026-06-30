@@ -7,6 +7,7 @@ const {
     getContestSettings
 } = require('../utils/contestDatabase');
 const { sendChannelCreatedNotification } = require('./notificationService');
+const { onContestCreated } = require('./tournamentSyncService');
 const { ensureContestStatusTags, updateThreadStatusTag } = require('../utils/forumTagManager');
 
 async function processChannelConfirmation(interaction) {
@@ -155,6 +156,7 @@ async function createContestChannel(client, guild, applicationData, channelName,
             applicantId: applicationData.applicantId,
             guildId: guild.id,
             contestTitle: applicationData.formData.title,
+            contestTheme: applicationData.formData.theme, // 主题和参赛要求，用作书单简介
             contestInfo: infoMessage.id,
             submissionEntry: submissionMessage.id,
             displayMessage: displayMessage.id,
@@ -167,7 +169,8 @@ async function createContestChannel(client, guild, applicationData, channelName,
         };
         
         await saveContestChannel(channelData);
-        
+        onContestCreated(channelData); // 静默同步到索引页，不阻塞主流程
+
         console.log(`赛事频道数据已保存 - 频道: ${contestChannel.id} (年龄限制已启用), 轨道: ${trackId}, 外部服务器: ${allowExternalServers}`);
         
         return contestChannel;

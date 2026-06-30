@@ -119,7 +119,7 @@ function getTimeRangeDescription() {
 const LINEAR_MUTE_CONFIG = {
     BASE_THRESHOLD: 10,        // 开始禁言的票数
     BASE_DURATION: 10,         // 基础禁言时长（分钟）
-    ADDITIONAL_MINUTES_PER_VOTE: 2  // 每票增加的分钟数
+    ADDITIONAL_MINUTES_PER_VOTE: 3  // 每票增加的分钟数
 };
 
 // 禁言状态检查配置
@@ -136,11 +136,20 @@ const SERIOUS_MUTE_STABILITY_CONFIG = {
     LIMIT_SINGLE_STEP_JUMP: null // 单次跳级上限，null 表示不限制
 };
 
+// 严肃禁言累计时长阶梯（分钟）
+const SERIOUS_MUTE_DURATION_STEPS_MINUTES = [180, 360, 720, 1440, 2880, 4320];
+
 // 计算严肃禁言基准阈值：ceil(base0*1.5)，并应用下限保护
 function computeSeriousBase(base0) {
     const computed = Math.ceil(base0 * 1.5);
     const minBase = SERIOUS_MUTE_STABILITY_CONFIG.MIN_BASE || 5;
     return Math.max(computed, minBase);
+}
+
+function getSeriousMuteTotalDurationMinutes(levelIndex) {
+    const normalizedLevelIndex = Math.max(1, Number(levelIndex) || 1);
+    const stepIndex = Math.min(normalizedLevelIndex, SERIOUS_MUTE_DURATION_STEPS_MINUTES.length) - 1;
+    return SERIOUS_MUTE_DURATION_STEPS_MINUTES[stepIndex];
 }
 
 // 禁言时长配置（分钟）- 保留用于兼容性，但已改为使用线性计算
@@ -153,7 +162,7 @@ const BASE_MUTE_DURATIONS = {
 };
 
 // 删除消息阈值 - 原始配置
-const BASE_DELETE_THRESHOLD = 10; // 10个⚠️删除消息
+const BASE_DELETE_THRESHOLD = 5; // 5个⚠️删除消息
 
 /**
  * 计算线性禁言时长
@@ -385,5 +394,7 @@ module.exports = {
     MUTE_STATUS_CHECK_CONFIG,
     // 严肃禁言稳定性默认参数与计算工具导出
     SERIOUS_MUTE_STABILITY_CONFIG,
-    computeSeriousBase
+    SERIOUS_MUTE_DURATION_STEPS_MINUTES,
+    computeSeriousBase,
+    getSeriousMuteTotalDurationMinutes
 };

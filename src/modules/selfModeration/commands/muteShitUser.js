@@ -78,10 +78,12 @@ async function execute(interaction) {
         console.log(`目标消息链接: ${messageUrl}`);
 
         // 调用通用的消息处理函数
-        await processMessageUrlSubmission(interaction, 'mute', messageUrl);
-        
-        // 更新用户最后使用时间（在成功处理后）
-        await updateUserLastUsage(interaction.guild.id, interaction.user.id, 'mute');
+        const result = await processMessageUrlSubmission(interaction, 'mute', messageUrl);
+
+        // 仅在成功创建新投票时消耗冷却时间
+        if (result?.isNewVote === true) {
+            await updateUserLastUsage(interaction.guild.id, interaction.user.id, 'mute');
+        }
         
     } catch (error) {
         console.error('执行禁言搬屎用户指令时出错:', error);

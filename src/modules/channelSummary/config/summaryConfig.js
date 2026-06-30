@@ -1,8 +1,11 @@
 // src/modules/channelSummary/config/summaryConfig.js
 
 module.exports = {
-    // 最大消息数量限制
-    MAX_MESSAGES: process.env.SUMMARY_MAX_MESSAGES || 1000,
+    // 最大消息数量限制 (单次总结拉取上限)
+    MAX_MESSAGES: 3000,
+
+    // 默认时间范围（天）：当用户未提供开始时间时的回看天数
+    DEFAULT_TIME_RANGE_DAYS: 30,
     
     // 最大时间范围（天）
     MAX_TIME_RANGE_DAYS: 30,

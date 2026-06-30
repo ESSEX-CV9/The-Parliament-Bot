@@ -1,4 +1,9 @@
 {
+  "env": {
+    "HTTPS_PROXY": "http://127.0.0.1:7897",
+    "HTTP_PROXY": "http://127.0.0.1:7897",
+    "NO_PROXY": "localhost,127.0.0.1"
+  },
   "permissions": {
     "allow": [
       "Bash(git checkout:*)",
@@ -6,7 +11,8 @@
       "Bash(git add:*)",
       "WebFetch(domain:docs.discord.com)",
       "Bash(node -c src/modules/roleSync/dashboard/queries.js)",
-      "Bash(node -c src/modules/roleSync/dashboard/views/i18n.js)"
+      "Bash(node -c src/modules/roleSync/dashboard/views/i18n.js)",
+      "WebFetch(domain:forum.shimmerday.top)"
     ],
     "deny": [],
     "ask": []

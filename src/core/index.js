@@ -106,6 +106,10 @@ const setExternalSubmissionOptInCommand = require('../modules/contest/commands/s
 const viewSubmissionsCommand = require('../modules/contest/commands/viewSubmissions');
 const viewSubmissionsContextCommand = require('../modules/contest/commands/viewSubmissionsContext');
 const manageApplicationNotifyCommand = require('../modules/contest/commands/manageApplicationNotify');
+const syncTournamentCommand = require('../modules/contest/commands/syncTournament');
+const deleteTournamentCommand = require('../modules/contest/commands/deleteTournament');
+const listBooklistsCommand = require('../modules/contest/commands/listBooklists');
+const manageSyncExclusionCommand = require('../modules/contest/commands/manageSyncExclusion');
 
 // 自动清理系统命令（合并后）
 const keywordManagerCommand = require('../modules/autoCleanup/commands/keywordManager');
@@ -114,6 +118,7 @@ const cleanupManagerCommand = require('../modules/autoCleanup/commands/cleanupMa
 
 // 频道总结系统命令
 const summarizeChannelCommand = require('../modules/channelSummary/commands/summarizeChannel');
+const summaryPresetCommand = require('../modules/channelSummary/commands/summaryPreset');
 
 // 投票系统命令
 const createVoteCommand = require('../modules/voting/commands/createVote');
@@ -309,6 +314,10 @@ client.commands.set(setExternalSubmissionOptInCommand.data.name, setExternalSubm
 client.commands.set(viewSubmissionsCommand.data.name, viewSubmissionsCommand);
 client.commands.set(viewSubmissionsContextCommand.data.name, viewSubmissionsContextCommand);
 client.commands.set(manageApplicationNotifyCommand.data.name, manageApplicationNotifyCommand);
+client.commands.set(syncTournamentCommand.data.name, syncTournamentCommand);
+client.commands.set(deleteTournamentCommand.data.name, deleteTournamentCommand);
+client.commands.set(listBooklistsCommand.data.name, listBooklistsCommand);
+client.commands.set(manageSyncExclusionCommand.data.name, manageSyncExclusionCommand);
 
 // 自动清理系统命令（合并后）
 client.commands.set(keywordManagerCommand.data.name, keywordManagerCommand);
@@ -330,6 +339,7 @@ client.commands.set(deleteRebuiltMessageCommand.data.name, deleteRebuiltMessageC
 
 // 频道总结系统命令
 client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);
+client.commands.set(summaryPresetCommand.data.name, summaryPresetCommand);
 
 // 投票系统命令
 client.commands.set(createVoteCommand.data.name, createVoteCommand);

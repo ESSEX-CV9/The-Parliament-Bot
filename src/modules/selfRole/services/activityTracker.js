@@ -105,7 +105,7 @@ async function doFlushActivityCacheToDatabase() {
 
     try {
         // 保存总体活跃度数据
-        // 使用 UTC 时间确保与历史数据回溯的日期计算一致
+        // 按 UTC 日期（YYYY-MM-DD）存储每日数据。UTC 0:00 = 北京时间 8:00，即每日统计以北京时间的上午 8:00 为分割点。
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
         await saveUserActivityAndDailyBatch(cacheToWrite, today);
 

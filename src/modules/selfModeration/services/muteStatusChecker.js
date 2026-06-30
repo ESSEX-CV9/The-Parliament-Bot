@@ -127,31 +127,49 @@ async function attemptUnmute(client, voteData) {
             throw new Error(`频道 ${muteChannelId} 不支持权限覆盖`);
         }
         
+        // 检查是否还有其他类型的活跃禁言，避免提前解除另一种禁言
+        const allVotesForCheck = await getAllSelfModerationVotes();
+        const nowCheck = Date.now();
+        const otherMuteActive = Object.values(allVotesForCheck).some(v =>
+            v.guildId === guildId &&
+            v.targetUserId === targetUserId &&
+            v.muteChannelId === muteChannelId &&
+            v.muteStatus === 'active' &&
+            v.type !== type &&
+            v.muteEndTime &&
+            new Date(v.muteEndTime).getTime() > nowCheck
+        );
+
         // 尝试删除权限覆盖（解封）
-        await channel.permissionOverwrites.delete(member);
-        console.log(`已删除用户 ${targetUserId} 在频道 ${muteChannelId} 的权限覆盖`);
-        
-        // 如果配置要求验证解封，再次尝试解封以确保执行
         let verified = false;
-        if (MUTE_STATUS_CHECK_CONFIG.VERIFY_UNMUTE) {
-            try {
-                // 等待一小段时间后再次检查
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                
-                // 再次尝试删除权限覆盖（如果已经删除，这个操作应该不会报错）
-                await channel.permissionOverwrites.delete(member);
-                verified = true;
-                console.log(`已验证解封：用户 ${targetUserId} 在频道 ${muteChannelId} 的权限覆盖已确认删除`);
-            } catch (verifyError) {
-                // 如果报错说明权限覆盖不存在，这是好事
-                if (verifyError.code === 10009 || verifyError.message.includes('Unknown Overwrite')) {
+        if (!otherMuteActive) {
+            await channel.permissionOverwrites.delete(member);
+            console.log(`已删除用户 ${targetUserId} 在频道 ${muteChannelId} 的权限覆盖`);
+
+            // 如果配置要求验证解封，再次尝试解封以确保执行
+            if (MUTE_STATUS_CHECK_CONFIG.VERIFY_UNMUTE) {
+                try {
+                    // 等待一小段时间后再次检查
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+
+                    // 再次尝试删除权限覆盖（如果已经删除，这个操作应该不会报错）
+                    await channel.permissionOverwrites.delete(member);
                     verified = true;
-                    console.log(`验证解封成功：权限覆盖已不存在`);
-                } else {
-                    console.warn(`验证解封时出现异常:`, verifyError.message);
-                    verified = false;
+                    console.log(`已验证解封：用户 ${targetUserId} 在频道 ${muteChannelId} 的权限覆盖已确认删除`);
+                } catch (verifyError) {
+                    // 如果报错说明权限覆盖不存在，这是好事
+                    if (verifyError.code === 10009 || verifyError.message.includes('Unknown Overwrite')) {
+                        verified = true;
+                        console.log(`验证解封成功：权限覆盖已不存在`);
+                    } else {
+                        console.warn(`验证解封时出现异常:`, verifyError.message);
+                        verified = false;
+                    }
                 }
             }
+        } else {
+            console.log(`用户 ${targetUserId} 仍有其他活跃禁言（${type} 已到期），跳过权限覆盖删除`);
+            verified = true;
         }
         
         // 更新投票状态为已完成

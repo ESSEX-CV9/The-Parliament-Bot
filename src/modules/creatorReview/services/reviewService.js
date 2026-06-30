@@ -336,6 +336,24 @@ async function processReviewSubmission(interaction) {
             });
         }
         
+        // 检查帖子是否已发布满72小时
+        const REQUIRED_POST_AGE_HOURS = 72;
+        const postCreatedAt = targetChannel.createdTimestamp;
+        const postAgeMs = Date.now() - postCreatedAt;
+        const postAgeHours = postAgeMs / (1000 * 60 * 60);
+        
+        if (postAgeHours < REQUIRED_POST_AGE_HOURS) {
+            const remainingMs = (REQUIRED_POST_AGE_HOURS * 60 * 60 * 1000) - postAgeMs;
+            const remainingHours = Math.floor(remainingMs / (1000 * 60 * 60));
+            const remainingMinutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+            
+            return interaction.editReply({ 
+                content: `❌ **审核未通过 — 帖子发布时间不足**\n\n您的帖子需要发布满 **${REQUIRED_POST_AGE_HOURS} 小时**后才能提交审核。\n\n**帖子信息：**\n• 服务器：${targetGuild.name}\n• 帖子：${targetChannel.name}\n• 发布时间：<t:${Math.floor(postCreatedAt / 1000)}:F>\n• 距离可提交还需：**${remainingHours} 小时 ${remainingMinutes} 分钟**\n• 链接：[点击查看](${postLink})\n\n请在帖子满 ${REQUIRED_POST_AGE_HOURS} 小时后再次提交。`
+            });
+        }
+        
+        console.log(`帖子年龄检查通过: 已发布 ${postAgeHours.toFixed(1)} 小时 (要求 ${REQUIRED_POST_AGE_HOURS} 小时)`);
+        
         // 计算不重复用户反应数
         const totalReactions = await getThreadFirstMessageReactions(targetChannel);
         const requiredReactions = reviewSettings.requiredReactions;

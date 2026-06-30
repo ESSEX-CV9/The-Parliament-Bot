@@ -809,6 +809,8 @@ async function saveUserActivityAndDailyBatchByDate(batchData, dailyBatchDataByDa
 
 /**
  * 获取用户在指定频道的每日活跃度数据。
+ * 注意：日期字段 date 为 UTC 日期（YYYY-MM-DD），UTC 0:00 = 北京时间 8:00，
+ * 因此每日统计以北京时间的上午 8:00 为分割点。
  * @param {string} guildId - 服务器ID。
  * @param {string} channelId - 频道ID。
  * @param {string} userId - 用户ID。
@@ -841,9 +843,11 @@ async function getUserDailyActivity(guildId, channelId, userId, days = 30) {
  * @param {number|null} days - 查询最近多少天的数据；不传则不限制时间范围。
  * @returns {Promise<number>} 满足阈值的天数。
  */
-async function getUserActiveDaysCount(guildId, channelId, userId, dailyThreshold, days = null) {
-    const safeDays = Number(days);
-    const hasWindow = Number.isFinite(safeDays) && safeDays > 0;
+async function getUserActiveDaysCount(guildId, channelId, userId, dailyThreshold, days = 90) {
+    // 使用 UTC 时间计算起始日期。UTC 0:00 = 北京时间 8:00，即每日统计以北京时间的上午 8:00 为分割点。
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
 
     const dateFilter = hasWindow ? 'AND date >= ?' : '';
     const stmt = selfRoleDb.prepare(`
@@ -3008,6 +3012,8 @@ async function saveSelfModerationGlobalCooldown(guildId, type, cooldownMinutes) 
         settings[guildId].deleteCooldownMinutes = cooldownMinutes;
     } else if (type === 'mute') {
         settings[guildId].muteCooldownMinutes = cooldownMinutes;
+    } else if (type === 'serious_mute') {
+        settings[guildId].seriousMuteCooldownMinutes = cooldownMinutes;
     }
     
     settings[guildId].updatedAt = new Date().toISOString();
@@ -3028,6 +3034,20 @@ async function getSelfModerationGlobalCooldown(guildId, type) {
         return settings[guildId].deleteCooldownMinutes || 0;
     } else if (type === 'mute') {
         return settings[guildId].muteCooldownMinutes || 0;
+    } else if (type === 'serious_mute') {
+        if (settings[guildId].seriousMuteCooldownMinutes !== undefined) {
+            return settings[guildId].seriousMuteCooldownMinutes || 0;
+        }
+
+        // 一次性迁移旧配置：首次访问严肃禁言冷却时，将旧的禁言冷却固化为独立字段
+        if (settings[guildId].muteCooldownMinutes !== undefined) {
+            settings[guildId].seriousMuteCooldownMinutes = settings[guildId].muteCooldownMinutes;
+            settings[guildId].updatedAt = new Date().toISOString();
+            writeSelfModerationSettings(settings);
+            return settings[guildId].seriousMuteCooldownMinutes || 0;
+        }
+
+        return 0;
     }
     
     return 0;

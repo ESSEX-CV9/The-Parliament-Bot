@@ -63,8 +63,8 @@ async function execute(interaction) {
             });
         }
 
-        // 全局冷却校验（沿用 mute 冷却键，最小改动）
-        const cooldownCheck = await checkUserGlobalCooldown(interaction.guild.id, interaction.user.id, 'mute');
+        // 全局冷却校验（独立于普通禁言）
+        const cooldownCheck = await checkUserGlobalCooldown(interaction.guild.id, interaction.user.id, 'serious_mute');
         if (cooldownCheck.inCooldown) {
             const hours = Math.floor(cooldownCheck.remainingMinutes / 60);
             const minutes = cooldownCheck.remainingMinutes % 60;
@@ -73,7 +73,7 @@ async function execute(interaction) {
             if (minutes > 0) timeText += `${minutes}分钟`;
 
             return interaction.editReply({
-                content: `❌ 您的禁言用户功能正在冷却中，请等待 **${timeText}** 后再试。`
+                content: `❌ 您的严肃禁言功能正在冷却中，请等待 **${timeText}** 后再试。`
             });
         }
 
@@ -102,10 +102,12 @@ async function execute(interaction) {
 
         // 统一走通用流程：
         // 仅差异：type 使用 'serious_mute'，并附加 { severity: 'serious' } 透传（当前通用函数可忽略多余参数，后续子任务接入）。
-        await processMessageUrlSubmission(interaction, 'serious_mute', messageUrl, { severity: 'serious', earlyDelete, originalDescription: originalDesc });
+        const result = await processMessageUrlSubmission(interaction, 'serious_mute', messageUrl, { severity: 'serious', earlyDelete, originalDescription: originalDesc });
 
-        // 成功后更新最后使用时间（沿用 mute 键，最小改动）
-        await updateUserLastUsage(interaction.guild.id, interaction.user.id, 'mute');
+        // 仅在成功创建新投票时消耗冷却时间（独立于普通禁言）
+        if (result?.isNewVote === true) {
+            await updateUserLastUsage(interaction.guild.id, interaction.user.id, 'serious_mute');
+        }
 
     } catch (error) {
         console.error('执行严肃禁言指令时出错:', error);

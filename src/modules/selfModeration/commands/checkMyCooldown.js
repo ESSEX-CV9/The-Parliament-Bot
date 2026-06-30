@@ -23,6 +23,8 @@ async function execute(interaction) {
         const deleteCooldown = await checkUserGlobalCooldown(interaction.guild.id, interaction.user.id, 'delete');
         // 检查禁言用户冷却
         const muteCooldown = await checkUserGlobalCooldown(interaction.guild.id, interaction.user.id, 'mute');
+        // 检查严肃禁言冷却
+        const seriousMuteCooldown = await checkUserGlobalCooldown(interaction.guild.id, interaction.user.id, 'serious_mute');
 
         let response = `**🕐 您的冷却状态**\n\n`;
 
@@ -54,6 +56,21 @@ async function execute(interaction) {
             response += `🔇 **禁言用户：** ❌ 冷却中，还需等待 **${timeText}**\n`;
         } else {
             response += `🔇 **禁言用户：** ✅ 可以使用\n`;
+        }
+
+        // 严肃禁言状态
+        if (seriousMuteCooldown.cooldownMinutes === 0) {
+            response += `🚨 **严肃禁言：** 无冷却限制\n`;
+        } else if (seriousMuteCooldown.inCooldown) {
+            const hours = Math.floor(seriousMuteCooldown.remainingMinutes / 60);
+            const minutes = seriousMuteCooldown.remainingMinutes % 60;
+            let timeText = '';
+            if (hours > 0) timeText += `${hours}小时`;
+            if (minutes > 0) timeText += `${minutes}分钟`;
+
+            response += `🚨 **严肃禁言：** ❌ 冷却中，还需等待 **${timeText}**\n`;
+        } else {
+            response += `🚨 **严肃禁言：** ✅ 可以使用\n`;
         }
 
         await interaction.editReply({ content: response });
