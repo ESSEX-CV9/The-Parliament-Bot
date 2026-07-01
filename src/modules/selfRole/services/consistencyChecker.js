@@ -8,9 +8,11 @@ const {
     deactivateSelfRolePanel,
     createSelfRoleSystemAlert,
     getActiveSelfRoleSystemAlertByGrantType,
+    countActiveSelfRoleSystemAlertsByGrant,
     listEndedSelfRoleGrantsSince,
     listAllActiveSelfRoleGrants,
     listSelfRoleGrantRoles,
+    resolveSelfRoleSystemAlert,
     setSelfRoleGrantManualAttentionRequired,
 } = require('../../../core/utils/database');
 
@@ -109,6 +111,50 @@ async function checkPanels(client, allSettings) {
     return summary;
 }
 
+function getGrantUserKey(guildId, userId) {
+    return `${guildId}:${userId}`;
+}
+
+async function buildActiveRoleIdsByGrantUser(endedGrants) {
+    const targetUsers = new Set((endedGrants || []).map(g => getGrantUserKey(g.guildId, g.userId)));
+    if (targetUsers.size === 0) return new Map();
+
+    const roleIdsByUser = new Map();
+    const activeGrants = await listAllActiveSelfRoleGrants();
+
+    for (const activeGrant of activeGrants || []) {
+        const key = getGrantUserKey(activeGrant.guildId, activeGrant.userId);
+        if (!targetUsers.has(key)) continue;
+
+        let roleIds = roleIdsByUser.get(key);
+        if (!roleIds) {
+            roleIds = new Set();
+            roleIdsByUser.set(key, roleIds);
+        }
+
+        const roles = await listSelfRoleGrantRoles(activeGrant.grantId);
+        for (const role of roles || []) {
+            if (role?.roleId) roleIds.add(role.roleId);
+        }
+    }
+
+    return roleIdsByUser;
+}
+
+async function resolveGrantAlertIfPresent(grantId, existingAlert) {
+    if (!existingAlert?.alertId) return false;
+
+    const resolved = await resolveSelfRoleSystemAlert(existingAlert.alertId, Date.now()).catch(() => false);
+    if (!resolved) return false;
+
+    const remain = await countActiveSelfRoleSystemAlertsByGrant(grantId).catch(() => 0);
+    if (remain === 0) {
+        await setSelfRoleGrantManualAttentionRequired(grantId, false).catch(() => {});
+    }
+
+    return true;
+}
+
 async function checkEndedGrants(client, allSettings) {
     const now = Date.now();
     const since = now - ENDED_GRANT_LOOKBACK_DAYS * DAY_MS;
@@ -122,20 +168,20 @@ async function checkEndedGrants(client, allSettings) {
         guildMissing: 0,
         memberMissing: 0,
         noGrantRoles: 0,
+        skippedCoveredByActiveGrant: 0,
+        resolvedStaleAlert: 0,
         residualFound: 0,
         errors: 0,
     };
 
     if (!ended || ended.length === 0) return summary;
 
+    const activeRoleIdsByUser = await buildActiveRoleIdsByGrantUser(ended);
+
     for (const grant of ended) {
         try {
             summary.checked += 1;
             const existing = await getActiveSelfRoleSystemAlertByGrantType(grant.grantId, 'ended_grant_roles_still_present');
-            if (existing) {
-                summary.skippedExistingAlert += 1;
-                continue;
-            }
 
             const guild = client.guilds.cache.get(grant.guildId) || (await client.guilds.fetch(grant.guildId).catch(() => null));
             if (!guild) {
@@ -155,8 +201,28 @@ async function checkEndedGrants(client, allSettings) {
                 continue;
             }
 
-            const stillHas = grantRoles.filter(r => member.roles.cache.has(r.roleId));
-            if (stillHas.length === 0) continue;
+            const heldGrantRoles = grantRoles.filter(r => member.roles.cache.has(r.roleId));
+            if (heldGrantRoles.length === 0) {
+                if (await resolveGrantAlertIfPresent(grant.grantId, existing)) {
+                    summary.resolvedStaleAlert += 1;
+                }
+                continue;
+            }
+
+            const activeRoleIds = activeRoleIdsByUser.get(getGrantUserKey(grant.guildId, grant.userId)) || new Set();
+            const stillHas = heldGrantRoles.filter(r => !activeRoleIds.has(r.roleId));
+            if (stillHas.length === 0) {
+                summary.skippedCoveredByActiveGrant += 1;
+                if (await resolveGrantAlertIfPresent(grant.grantId, existing)) {
+                    summary.resolvedStaleAlert += 1;
+                }
+                continue;
+            }
+
+            if (existing) {
+                summary.skippedExistingAlert += 1;
+                continue;
+            }
 
             summary.residualFound += 1;
 
@@ -209,6 +275,7 @@ async function checkActiveGrantsMissingRoles(client, allSettings) {
         guildMissing: 0,
         memberMissing: 0,
         noGrantRoles: 0,
+        resolvedStaleAlert: 0,
         missingFound: 0,
         missingPrimaryFound: 0,
         missingBundleFound: 0,
@@ -235,12 +302,7 @@ async function checkActiveGrantsMissingRoles(client, allSettings) {
         try {
             summary.checked += 1;
 
-            // 去重：同一 grant 的同类异常只上报一次，避免刷屏。
             const existing = await getActiveSelfRoleSystemAlertByGrantType(grant.grantId, 'active_grant_roles_missing');
-            if (existing) {
-                summary.skippedExistingAlert += 1;
-                continue;
-            }
 
             const guildSettings = allSettings?.[grant.guildId];
             const roleConfig = guildSettings?.roles?.find(r => r.roleId === grant.primaryRoleId) || null;
@@ -276,6 +338,11 @@ async function checkActiveGrantsMissingRoles(client, allSettings) {
             if (!member) {
                 summary.memberMissing += 1;
 
+                if (existing) {
+                    summary.skippedExistingAlert += 1;
+                    continue;
+                }
+
                 await setSelfRoleGrantManualAttentionRequired(grant.grantId, true).catch(() => {});
 
                 await reportSelfRoleAlertOnce({
@@ -308,7 +375,17 @@ async function checkActiveGrantsMissingRoles(client, allSettings) {
             }
 
             const missing = grantRoles.filter(r => !member.roles.cache.has(r.roleId));
-            if (missing.length === 0) continue;
+            if (missing.length === 0) {
+                if (await resolveGrantAlertIfPresent(grant.grantId, existing)) {
+                    summary.resolvedStaleAlert += 1;
+                }
+                continue;
+            }
+
+            if (existing) {
+                summary.skippedExistingAlert += 1;
+                continue;
+            }
 
             summary.missingFound += 1;
 

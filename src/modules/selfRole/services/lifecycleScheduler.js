@@ -13,6 +13,7 @@ const {
     getAllSelfRoleSettings,
     listAllActiveSelfRoleGrants,
     listSelfRoleGrantRoles,
+    listActiveSelfRoleGrantRolesForUser,
     updateSelfRoleGrantSchedule,
     updateSelfRoleGrantInquiry,
     updateSelfRoleGrantLastDecision,
@@ -96,6 +97,38 @@ function computeNextInquiryAt(now, inquiryDays, forceRemoveAt) {
     const next = now + inquiryDays * DAY_MS;
     if (forceRemoveAt != null && next > forceRemoveAt) return null;
     return next;
+}
+
+function buildRoleIdsToRemoveForGrant(grant, roleConfig, grantRoles, includeBundle = true) {
+    const roleIds = [];
+    const roles = Array.isArray(grantRoles) ? grantRoles : [];
+
+    if (grant?.primaryRoleId) roleIds.push(grant.primaryRoleId);
+
+    for (const item of roles) {
+        if (!item?.roleId) continue;
+        if (item.roleKind === 'primary' || includeBundle || item.roleKind !== 'bundle') {
+            roleIds.push(item.roleId);
+        }
+    }
+
+    const hasRecordedBundle = roles.some(item => item?.roleKind === 'bundle');
+    if (includeBundle && !hasRecordedBundle && Array.isArray(roleConfig?.bundleRoleIds)) {
+        roleIds.push(...roleConfig.bundleRoleIds);
+    }
+
+    return [...new Set(roleIds.filter(Boolean))];
+}
+
+async function filterRoleIdsManagedByOtherActiveGrants(grant, roleIds) {
+    const removeIds = [...new Set((Array.isArray(roleIds) ? roleIds : []).filter(Boolean))];
+    if (!grant?.guildId || !grant?.userId || removeIds.length === 0) return removeIds;
+
+    const activeRoles = await listActiveSelfRoleGrantRolesForUser(grant.guildId, grant.userId, grant.grantId);
+    const protectedRoleIds = new Set((activeRoles || []).map(r => r.roleId).filter(Boolean));
+    if (protectedRoleIds.size === 0) return removeIds;
+
+    return removeIds.filter(rid => !protectedRoleIds.has(rid));
 }
 
 async function ensureGrantSchedule(grant, roleConfig) {
@@ -312,7 +345,10 @@ async function processForceRemove(client, grant, roleConfig, scheduleInfo) {
     }
 
     const roles = await listSelfRoleGrantRoles(grant.grantId);
-    const roleIdsToRemove = roles.map(r => r.roleId);
+    const roleIdsToRemove = await filterRoleIdsManagedByOtherActiveGrants(
+        grant,
+        buildRoleIdsToRemoveForGrant(grant, roleConfig, roles, true),
+    );
 
     let removeOk = false;
     let removeErrText = '';
@@ -356,7 +392,8 @@ async function processForceRemove(client, grant, roleConfig, scheduleInfo) {
         let dmOk = true;
         try {
             await user.send(
-                `你拥有的身份组 <@&${grant.primaryRoleId}> 已到期，系统已执行强制清退。${delayedNotice}\n\n如需重新加入，请再次通过自助申请流程报名。`,
+                `你拥有的身份组 <@&${grant.primaryRoleId}> 已到期，系统已结束该 grant。${delayedNotice}\n\n` +
+                `若部分重叠身份组仍由你的其它 active grant 管理，系统会保留这些身份组。`,
             );
         } catch (err) {
             dmOk = false;
@@ -589,7 +626,10 @@ async function handleSelfRoleRenewalDecision(interaction) {
     }
 
     const roles = await listSelfRoleGrantRoles(grant.grantId);
-    const roleIdsToRemove = roles.map(r => r.roleId);
+    const roleIdsToRemove = await filterRoleIdsManagedByOtherActiveGrants(
+        grant,
+        buildRoleIdsToRemoveForGrant(grant, roleConfig, roles, true),
+    );
 
     let removeOk = false;
     let removeErrText = '';
@@ -643,7 +683,7 @@ async function handleSelfRoleRenewalDecision(interaction) {
 
     scheduleActiveUserSelfRolePanelsRefresh(interaction.client, grant.guildId, 'lifecycle_leave');
 
-    await interaction.editReply({ content: '✅ 已为你执行退出操作，身份组已移除。' });
+    await interaction.editReply({ content: '✅ 已为你执行退出操作；其它 active grant 仍需要的重叠身份组已保留。' });
 }
 
 module.exports = {
