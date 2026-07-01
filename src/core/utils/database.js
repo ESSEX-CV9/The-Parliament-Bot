@@ -835,6 +835,28 @@ async function getUserDailyActivity(guildId, channelId, userId, days = 30) {
 }
 
 /**
+ * 汇总用户在指定频道中已有每日明细覆盖的活跃度数据。
+ */
+async function getUserDailyActivitySummary(guildId, channelId, userId) {
+    const stmt = selfRoleDb.prepare(`
+        SELECT
+            COUNT(*) AS day_rows,
+            COALESCE(SUM(message_count), 0) AS message_count,
+            MIN(date) AS first_date,
+            MAX(date) AS last_date
+        FROM daily_user_activity
+        WHERE guild_id = ? AND channel_id = ? AND user_id = ?
+    `);
+    const row = stmt.get(guildId, channelId, userId) || {};
+    return {
+        dayRows: Number(row.day_rows || 0),
+        messageCount: Number(row.message_count || 0),
+        firstDate: row.first_date || null,
+        lastDate: row.last_date || null,
+    };
+}
+
+/**
  * 计算用户在指定频道中满足每日发言阈值的天数。
  * @param {string} guildId - 服务器ID。
  * @param {string} channelId - 频道ID。
@@ -843,11 +865,9 @@ async function getUserDailyActivity(guildId, channelId, userId, days = 30) {
  * @param {number|null} days - 查询最近多少天的数据；不传则不限制时间范围。
  * @returns {Promise<number>} 满足阈值的天数。
  */
-async function getUserActiveDaysCount(guildId, channelId, userId, dailyThreshold, days = 90) {
-    // 使用 UTC 时间计算起始日期。UTC 0:00 = 北京时间 8:00，即每日统计以北京时间的上午 8:00 为分割点。
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
+async function getUserActiveDaysCount(guildId, channelId, userId, dailyThreshold, days = null) {
+    const safeDays = Number(days);
+    const hasWindow = Number.isFinite(safeDays) && safeDays > 0;
 
     const dateFilter = hasWindow ? 'AND date >= ?' : '';
     const stmt = selfRoleDb.prepare(`
@@ -860,7 +880,7 @@ async function getUserActiveDaysCount(guildId, channelId, userId, dailyThreshold
 
     let row;
     if (hasWindow) {
-        // 使用 UTC 时间计算起始日期，确保与数据存储时的日期计算一致
+        // 使用 UTC 时间计算起始日期。UTC 0:00 = 北京时间 8:00，即每日统计以北京时间的上午 8:00 为分割点。
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - Math.floor(safeDays));
         const startDateStr = startDate.toISOString().split('T')[0]; // YYYY-MM-DD 格式（UTC）
@@ -3808,6 +3828,7 @@ module.exports = {
     saveUserActivityAndDailyBatch,
     saveUserActivityAndDailyBatchByDate,
     getUserDailyActivity,
+    getUserDailyActivitySummary,
     getUserActiveDaysCount,
     getSelfRoleApplication,
     saveSelfRoleApplication,
