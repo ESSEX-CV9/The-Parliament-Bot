@@ -1,7 +1,8 @@
 // src/modules/selfRole/commands/checkActivity.js
 
 const { SlashCommandBuilder, EmbedBuilder, ChannelType } = require('discord.js');
-const { getSelfRoleSettings, getUserActivity, getUserActiveDaysCount, getUserDailyActivity } = require('../../../core/utils/database');
+const { getSelfRoleSettings, getUserActivity, getUserDailyActivitySummary, getUserActiveDaysCount, getUserDailyActivity } = require('../../../core/utils/database');
+const { flushActivityCacheToDatabase } = require('../services/activityTracker');
 
 function trimEmbedDescription(text, maxLen = 3900) {
     const raw = String(text || '');
@@ -81,6 +82,7 @@ module.exports = {
                 return;
             }
 
+            await flushActivityCacheToDatabase().catch(() => {});
             const userActivity = await getUserActivity(guildId);
 
             // 预先构建“频道 -> 该频道下配置了 activeDaysThreshold 的岗位配置”映射
@@ -110,33 +112,57 @@ module.exports = {
                 .setColor(0x5865F2)
                 .setTimestamp();
 
+            const dailySummaryCache = new Map();
+            async function getDailySummary(channelId) {
+                if (!dailySummaryCache.has(channelId)) {
+                    const summary = await getUserDailyActivitySummary(guildId, channelId, userId);
+                    dailySummaryCache.set(channelId, summary);
+                }
+                return dailySummaryCache.get(channelId);
+            }
+
+            function appendActivitySummary(description, totalActivity) {
+                let text = description;
+                text += `> • **总发言数**: ${totalActivity.messageCount}\n`;
+                text += `> • **总被提及数**: ${totalActivity.mentionedCount}\n`;
+                text += `> • **总主动提及数**: ${totalActivity.mentioningCount}\n`;
+                return text + '\n';
+            }
+
+            function appendDailyActivityScope(description, dailyActivity) {
+                let text = description;
+                text += `> • **日表内发言数**: ${dailyActivity.messageCount}\n`;
+                if (dailyActivity.firstDate && dailyActivity.lastDate) {
+                    text += `> • **日表覆盖范围**: ${dailyActivity.firstDate} 至 ${dailyActivity.lastDate}\n`;
+                }
+                return text;
+            }
+
             let description = '';
             if (specificChannel) {
-                const activity = userActivity[specificChannel.id]?.[userId] || { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
+                const totalActivity = userActivity[specificChannel.id]?.[userId] || { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                 description += `您在 <#${specificChannel.id}> 的活跃度数据：\n`;
-                // 累计活跃度数据（自统计开始以来的总和）
-                description += `> • **发言数（累计）**: ${activity.messageCount}\n`;
-                description += `> • **被提及数（累计）**: ${activity.mentionedCount}\n`;
-                description += `> • **主动提及数（累计）**: ${activity.mentioningCount}\n`;
+                description = appendActivitySummary(description, totalActivity);
 
-                // 今日已发送数据：查询今日 UTC 日期的每日活跃度并展示
-                const dailyRows = await getUserDailyActivity(guildId, specificChannel.id, userId, 1).catch(() => []);
+                const dailyRows = await getUserDailyActivity(guildId, specificChannel.id, userId, 1);
                 description += formatTodayDailyActivity(dailyRows);
                 description += '\n';
 
                 // 活跃天数（仅当该频道下存在 activeDaysThreshold 配置时显示）
                 const roleCfgs = activeDaysRoleConfigsByChannel[specificChannel.id] || [];
                 if (roleCfgs.length > 0) {
+                    const dailyActivity = await getDailySummary(specificChannel.id);
                     // 同一 dailyMessageThreshold 只计算一次，避免重复查询
                     const cache = new Map();
-                    description += `该频道的 **活跃天数**（近90天，按UTC日切分；每日发言≥阈值计为1天；⚠ UTC 0:00 = 北京时间 8:00）：\n`;
+                    description += `该频道的 **活跃天数**（全部已统计记录，按UTC日切分；“每日发言≥阈值” 计为1天）：\n`;
+                    description = appendDailyActivityScope(description, dailyActivity);
 
                     // 限制展示条数，避免 Embed 过长
                     const MAX_LINES = 12;
                     const showList = roleCfgs.slice(0, MAX_LINES);
                     for (const cfg of showList) {
                         if (!cache.has(cfg.dailyMessageThreshold)) {
-                            const c = await getUserActiveDaysCount(guildId, specificChannel.id, userId, cfg.dailyMessageThreshold).catch(() => 0);
+                            const c = await getUserActiveDaysCount(guildId, specificChannel.id, userId, cfg.dailyMessageThreshold);
                             cache.set(cfg.dailyMessageThreshold, c);
                         }
                         const actual = cache.get(cfg.dailyMessageThreshold) ?? 0;
@@ -149,28 +175,26 @@ module.exports = {
                 }
             } else {
                 for (const channelId of channelIdsToCheck) {
-                    const activity = userActivity[channelId]?.[userId] || { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
+                    const totalActivity = userActivity[channelId]?.[userId] || { messageCount: 0, mentionedCount: 0, mentioningCount: 0 };
                     description += `在 <#${channelId}>:\n`;
-                    // 累计活跃度数据（自统计开始以来的总和）
-                    description += `> • **发言数（累计）**: ${activity.messageCount}\n`;
-                    description += `> • **被提及数（累计）**: ${activity.mentionedCount}\n`;
-                    description += `> • **主动提及数（累计）**: ${activity.mentioningCount}\n`;
+                    description = appendActivitySummary(description, totalActivity);
 
-                    // 今日已发送数据：查询今日 UTC 日期的每日活跃度并展示
-                    const dailyRows = await getUserDailyActivity(guildId, channelId, userId, 1).catch(() => []);
+                    const dailyRows = await getUserDailyActivity(guildId, channelId, userId, 1);
                     description += formatTodayDailyActivity(dailyRows);
                     description += '\n';
 
                     const roleCfgs = activeDaysRoleConfigsByChannel[channelId] || [];
                     if (roleCfgs.length > 0) {
+                        const dailyActivity = await getDailySummary(channelId);
                         const cache = new Map();
-                        description += `该频道的 **活跃天数**（近90天，按UTC日切分；每日发言≥阈值计为1天；⚠ UTC 0:00 = 北京时间 8:00）：\n`;
+                        description += `该频道的 **活跃天数**（全部已统计记录，按UTC日切分；“每日发言≥阈值” 计为1天）：\n`;
+                        description = appendDailyActivityScope(description, dailyActivity);
 
                         const MAX_LINES = 8;
                         const showList = roleCfgs.slice(0, MAX_LINES);
                         for (const cfg of showList) {
                             if (!cache.has(cfg.dailyMessageThreshold)) {
-                                const c = await getUserActiveDaysCount(guildId, channelId, userId, cfg.dailyMessageThreshold).catch(() => 0);
+                                const c = await getUserActiveDaysCount(guildId, channelId, userId, cfg.dailyMessageThreshold);
                                 cache.set(cfg.dailyMessageThreshold, c);
                             }
                             const actual = cache.get(cfg.dailyMessageThreshold) ?? 0;
