@@ -527,11 +527,20 @@ function createPagedRoleSelectMenu(roles, page, totalPages, type) {
     const startIndex = (page - 1) * ROLES_PER_PAGE;
     const pageRoles = roleArray.slice(startIndex, startIndex + ROLES_PER_PAGE);
 
-    const options = pageRoles.map(role => ({
-        label: type === 'add' ? role.name : role.label,
-        description: `ID: ${type === 'add' ? role.id : role.roleId}`,
-        value: type === 'add' ? role.id : role.roleId,
-    }));
+    const options = pageRoles.map(role => {
+        const id = type === 'add' ? role.id : role.roleId;
+        // Discord 要求选项 label 长度为 1–100，某些身份组名称可能为空，需兜底并截断
+        let rawLabel = (type === 'add' ? role.name : role.label) || '';
+        rawLabel = String(rawLabel).trim();
+        const label = rawLabel.length > 0
+            ? rawLabel.slice(0, 100)
+            : `未命名身份组 (${id})`.slice(0, 100);
+        return {
+            label,
+            description: `ID: ${id}`.slice(0, 100),
+            value: id,
+        };
+    });
 
     const selectMenu = new StringSelectMenuBuilder()
         .setCustomId(`admin_${type}_role_select`)
