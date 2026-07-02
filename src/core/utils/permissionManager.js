@@ -348,6 +348,54 @@ function getSupportPermissionDeniedMessage(allowedRoleNames = []) {
 }
 
 /**
+ * 检查用户是否有权限使用风纪（受限处罚）指令
+ * @param {GuildMember} member - 服务器成员对象
+ * @param {string[]} allowedRoles - 允许使用的身份组ID数组
+ * @returns {boolean} 是否有权限
+ */
+function checkDisciplinePermission(member, allowedRoles) {
+    try {
+        if (!member || !member.user || !member.guild || !member.roles) {
+            return false;
+        }
+
+        // 服务器所有者 / 管理员（含 ALLOWED_ROLE_IDS）总是有权限
+        if (member.guild.ownerId === member.user.id) {
+            return true;
+        }
+        if (checkAdminPermission(member)) {
+            return true;
+        }
+
+        // 与表单权限不同：这是处罚类受限指令，未配置身份组时非管理员一律拒绝
+        if (!allowedRoles || allowedRoles.length === 0) {
+            return false;
+        }
+
+        if (member.roles.cache) {
+            for (const userRole of member.roles.cache.values()) {
+                if (allowedRoles.includes(userRole.id)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    } catch (error) {
+        console.error('风纪权限检查过程中出错:', error);
+        return false;
+    }
+}
+
+/**
+ * 获取风纪权限不足时的错误消息
+ * @returns {string} 错误消息
+ */
+function getDisciplinePermissionDeniedMessage() {
+    return `❌ **权限不足**\n\n您没有权限使用风纪指令。\n\n请联系管理员将您的身份组加入风纪可用名单（\`/风纪配置 身份组\`）。`;
+}
+
+/**
  * 检查用户是否在自助管理黑名单中
  * @param {string} guildId - 服务器ID
  * @param {string} userId - 用户ID
@@ -412,5 +460,9 @@ module.exports = {
 
     // 自助管理黑名单相关导出
     checkSelfModerationBlacklist,
-    getSelfModerationBlacklistMessage
+    getSelfModerationBlacklistMessage,
+
+    // 风纪（受限处罚）权限相关导出
+    checkDisciplinePermission,
+    getDisciplinePermissionDeniedMessage
 };

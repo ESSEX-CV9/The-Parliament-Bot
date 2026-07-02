@@ -12,7 +12,8 @@
       "WebFetch(domain:docs.discord.com)",
       "Bash(node -c src/modules/roleSync/dashboard/queries.js)",
       "Bash(node -c src/modules/roleSync/dashboard/views/i18n.js)",
-      "WebFetch(domain:forum.shimmerday.top)"
+      "WebFetch(domain:forum.shimmerday.top)",
+      "PowerShell(node -e \"const d=require\\('./src/modules/punishment/commands/discipline.js'\\); const c=require\\('./src/modules/punishment/commands/disciplineConfig.js'\\); console.log\\('discipline:', d.data.name, '| subs:', d.data.toJSON\\(\\).options.map\\(o=>o.name\\).join\\(','\\)\\); console.log\\('config:', c.data.name, '| subs:', c.data.toJSON\\(\\).options.map\\(o=>o.name\\).join\\(','\\)\\); console.log\\('exec types:', typeof d.execute, typeof c.execute\\);\")"
     ],
     "deny": [],
     "ask": []

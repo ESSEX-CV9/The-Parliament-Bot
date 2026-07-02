@@ -188,6 +188,8 @@ const roleSyncConfigCommand = require('../modules/roleSync/commands/roleSyncConf
 // 处罚系统
 const { startPunishmentSystem } = require('../modules/punishment');
 const punishCommand = require('../modules/punishment/commands/punish');
+const disciplineCommand = require('../modules/punishment/commands/discipline');
+const disciplineConfigCommand = require('../modules/punishment/commands/disciplineConfig');
 
 // 分服受控邀请系统
 const { startControlledInviteSystem, controlledInviteGuildMemberAddHandler } = require('../modules/controlledInvite');
@@ -388,6 +390,8 @@ client.commands.set(roleSyncConfigCommand.data.name, roleSyncConfigCommand);
 
 // 处罚系统命令
 client.commands.set(punishCommand.data.name, punishCommand);
+client.commands.set(disciplineCommand.data.name, disciplineCommand);
+client.commands.set(disciplineConfigCommand.data.name, disciplineConfigCommand);
 
 // 分服受控邀请系统命令
 client.commands.set(controlledInviteConfigCommand.data.name, controlledInviteConfigCommand);

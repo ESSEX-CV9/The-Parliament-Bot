@@ -249,6 +249,50 @@ function setSetting(guildId, key, value) {
     return stmts.setSetting.run({ guildId, key, value, updatedAt: nowIso() });
 }
 
+// ========== 风纪（受限处罚）配置 ==========
+
+const DISCIPLINE_DEFAULT_MAX_MS = 28 * 24 * 3600 * 1000; // 默认上限 28 天
+const DISCIPLINE_DEFAULT_LABEL = '28天';
+
+function getDisciplineAllowedRoles(guildId) {
+    const raw = getSetting(guildId, 'discipline_allowed_roles');
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+function setDisciplineAllowedRoles(guildId, roleIds) {
+    const value = JSON.stringify(Array.isArray(roleIds) ? roleIds : []);
+    return setSetting(guildId, 'discipline_allowed_roles', value);
+}
+
+function getDisciplineLimits(guildId) {
+    const defaults = {
+        maxMuteMs: DISCIPLINE_DEFAULT_MAX_MS,
+        maxMuteLabel: DISCIPLINE_DEFAULT_LABEL,
+        maxWarnMs: DISCIPLINE_DEFAULT_MAX_MS,
+        maxWarnLabel: DISCIPLINE_DEFAULT_LABEL,
+    };
+    const raw = getSetting(guildId, 'discipline_limits');
+    if (!raw) return defaults;
+    try {
+        const parsed = JSON.parse(raw);
+        return { ...defaults, ...parsed };
+    } catch (_) {
+        return defaults;
+    }
+}
+
+function setDisciplineLimits(guildId, limits) {
+    const current = getDisciplineLimits(guildId);
+    const merged = { ...current, ...limits };
+    return setSetting(guildId, 'discipline_limits', JSON.stringify(merged));
+}
+
 module.exports = {
     initializePunishmentDatabase,
     insertPunishmentRecord,
@@ -268,4 +312,8 @@ module.exports = {
     setWarnRoleForGuild,
     getSetting,
     setSetting,
+    getDisciplineAllowedRoles,
+    setDisciplineAllowedRoles,
+    getDisciplineLimits,
+    setDisciplineLimits,
 };
