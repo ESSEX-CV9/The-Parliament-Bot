@@ -20,3 +20,4 @@ rename_json_files.py
 backupdata/
 backupdata/
 .limcode/
+.claude/

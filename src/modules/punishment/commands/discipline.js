@@ -12,11 +12,12 @@ const data = new SlashCommandBuilder()
     .setDescription('风纪委员处罚工具（受限版）')
     .setDefaultMemberPermissions(0)
     .addSubcommand(sub => sub
-        .setName('禁言')
-        .setDescription('对成员执行超时禁言（受时长上限约束）')
+        .setName('处罚')
+        .setDescription('禁言成员，可同时附加警告身份组（均受时长上限约束）')
         .addUserOption(opt => opt.setName('用户').setDescription('要禁言的用户').setRequired(true))
-        .addStringOption(opt => opt.setName('时长').setDescription('时长格式：2h 或 3d').setRequired(true))
-        .addStringOption(opt => opt.setName('原因').setDescription('禁言原因').setRequired(false))
+        .addStringOption(opt => opt.setName('时长').setDescription('禁言时长格式：2h 或 3d').setRequired(true))
+        .addStringOption(opt => opt.setName('原因').setDescription('处罚原因').setRequired(false))
+        .addStringOption(opt => opt.setName('警告时长').setDescription('同时添加警告身份组的时长，如 7 或 7d 或 12h').setRequired(false))
         .addBooleanOption(opt => opt.setName('同步').setDescription('是否同步至关联服务器（默认开启）').setRequired(false))
     )
     .addSubcommand(sub => sub
@@ -54,10 +55,11 @@ async function execute(interaction) {
 
     try {
         switch (sub) {
-            case '禁言': {
+            case '处罚': {
                 const targetUser = interaction.options.getUser('用户');
                 const durationStr = interaction.options.getString('时长');
                 const reason = interaction.options.getString('原因');
+                const warnDurationStr = interaction.options.getString('警告时长');
                 const sync = interaction.options.getBoolean('同步') ?? true;
 
                 const duration = parseDuration(durationStr);
@@ -72,6 +74,19 @@ async function execute(interaction) {
                     return;
                 }
 
+                let warnDuration = null;
+                if (warnDurationStr) {
+                    warnDuration = parseDuration(warnDurationStr);
+                    if (!warnDuration) {
+                        await interaction.editReply('❌ 警告时长格式错误，请使用如 `7`（7天）、`12h`（12小时）或 `3d`（3天）');
+                        return;
+                    }
+                    if (warnDuration.ms > limits.maxWarnMs) {
+                        await interaction.editReply(`❌ 警告时长超过上限，风纪警告最长为 ${limits.maxWarnLabel}`);
+                        return;
+                    }
+                }
+
                 const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
                 if (!targetMember) {
                     await interaction.editReply('❌ 无法找到该用户');
@@ -83,7 +98,7 @@ async function execute(interaction) {
                     durationMs: duration.ms,
                     durationLabel: duration.label,
                     reason,
-                    warnDuration: null,
+                    warnDuration,
                     sync,
                 });
                 break;
