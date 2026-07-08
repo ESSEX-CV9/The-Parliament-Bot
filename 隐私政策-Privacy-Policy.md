@@ -42,7 +42,6 @@
 
 ### 6. 你的权利与选择
 - 上述功能均由服务器管理员按频道配置和触发，你可通过所在服务器管理员调整配置来退出；
-- 你可通过下方联系方式，要求查询或删除与你相关的数据。
 
 ### 7. 年龄要求
 本 Bot 服务于可能包含成人（NSFW）内容的社区，仅面向 18 岁及以上、且达到你所在地区
@@ -102,7 +101,6 @@ We do not sell, rent, or share your data with any third party, except:
 ### 6. Your Rights and Choices
 - All features above are configured and triggered per-channel by server
   administrators; you may opt out via your server's administrators;
-- You may request access to or deletion of your data via the contact below.
 
 ### 7. Age Requirement
 The Bot operates in communities that may contain adult (NSFW) content and is intended
