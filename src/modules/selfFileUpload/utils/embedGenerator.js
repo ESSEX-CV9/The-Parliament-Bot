@@ -1,4 +1,4 @@
-// src/modules/backupCards/utils/embedGenerator.js
+// src/modules/selfFileUpload/utils/embedGenerator.js
 
 class EmbedGenerator {
     constructor() {

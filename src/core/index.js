@@ -145,24 +145,11 @@ const updateVotingCandidatesCommand = require('../modules/election/commands/upda
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
-// 论坛重建系统命令
-const rebuildForumCommand = require('../modules/forumRebuilder/commands/rebuildForum');
-
-// 帖子重建系统命令
-const rebuildThreadsCommand = require('../modules/threadRebuilder/commands/rebuildThreads');
-const deleteRebuiltMessageCommand = require('../modules/threadRebuilder/commands/deleteRebuiltMessage');
-
 // 自助文件上传系统命令
 const uploadCommand = require('../modules/selfFileUpload/commands/uploadFile');
 const whoisCommand = require('../modules/selfFileUpload/commands/queryAnonymousLog');
 const manageOptOutCommand = require('../modules/selfFileUpload/commands/manageOptOut.js');
 const collectBackupsCommand = require('../modules/selfFileUpload/commands/collectBackups.js');
-
-// 补卡系统命令
-// const processBackupCardsCommand = require('../modules/backupCards/commands/processBackupCards');
-// const testBackupCardsCommand = require('../modules/backupCards/commands/testBackupCards');
-// const archiveBackupThreadsCommand = require('../modules/backupCards/commands/archiveBackupThreads');
-// const cleanupFuzzyMatchesCommand = require('../modules/backupCards/commands/cleanupFuzzyMatches');
 
 //// 自助身份组系统命令
 const setupRolePanelCommand = require('../modules/selfRole/commands/setupRolePanel');
@@ -190,6 +177,11 @@ const { startPunishmentSystem } = require('../modules/punishment');
 const punishCommand = require('../modules/punishment/commands/punish');
 const disciplineCommand = require('../modules/punishment/commands/discipline');
 const disciplineConfigCommand = require('../modules/punishment/commands/disciplineConfig');
+
+// 机器人消息管理系统（编辑 bot 已发出的常驻消息）
+const { startBotMessageSystem } = require('../modules/botMessage');
+const botMessageCommand = require('../modules/botMessage/commands/botMessage');
+const editBotMessageContextCommand = require('../modules/botMessage/commands/editBotMessageContext');
 
 // 分服受控邀请系统
 const { startControlledInviteSystem, controlledInviteGuildMemberAddHandler } = require('../modules/controlledInvite');
@@ -326,19 +318,6 @@ client.commands.set(keywordManagerCommand.data.name, keywordManagerCommand);
 client.commands.set(exemptManagerCommand.data.name, exemptManagerCommand);
 client.commands.set(cleanupManagerCommand.data.name, cleanupManagerCommand);
 
-// 论坛重建系统命令
-client.commands.set(rebuildForumCommand.data.name, rebuildForumCommand);
-
-// 帖子重建系统命令
-client.commands.set(rebuildThreadsCommand.data.name, rebuildThreadsCommand);
-client.commands.set(deleteRebuiltMessageCommand.data.name, deleteRebuiltMessageCommand);
-
-// 补卡系统命令
-// client.commands.set(processBackupCardsCommand.data.name, processBackupCardsCommand);
-// client.commands.set(testBackupCardsCommand.data.name, testBackupCardsCommand);
-// client.commands.set(archiveBackupThreadsCommand.data.name, archiveBackupThreadsCommand);
-// client.commands.set(cleanupFuzzyMatchesCommand.data.name, cleanupFuzzyMatchesCommand);
-
 // 频道总结系统命令
 client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);
 client.commands.set(summaryPresetCommand.data.name, summaryPresetCommand);
@@ -392,6 +371,10 @@ client.commands.set(roleSyncConfigCommand.data.name, roleSyncConfigCommand);
 client.commands.set(punishCommand.data.name, punishCommand);
 client.commands.set(disciplineCommand.data.name, disciplineCommand);
 client.commands.set(disciplineConfigCommand.data.name, disciplineConfigCommand);
+
+// 机器人消息管理系统命令
+client.commands.set(botMessageCommand.data.name, botMessageCommand);
+client.commands.set(editBotMessageContextCommand.data.name, editBotMessageContextCommand);
 
 // 分服受控邀请系统命令
 client.commands.set(controlledInviteConfigCommand.data.name, controlledInviteConfigCommand);
@@ -455,6 +438,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     // 启动处罚系统
     await startPunishmentSystem(readyClient);
 
+    // 启动机器人消息管理系统
+    await startBotMessageSystem(readyClient);
+
     // 启动分服受控邀请系统
     await startControlledInviteSystem(readyClient);
 
@@ -462,7 +448,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log('🏆 赛事管理系统已加载');
     console.log('🧹 自动消息清理系统已加载');
     console.log('🗳️ 选举系统已完全加载 (包含16个命令)');
-    console.log('🎴 补卡管理系统已加载 (包含3个命令)');
+    console.log('📝 机器人消息管理系统已加载');
 })
 
 client.on(Events.InteractionCreate, interactionCreateHandler)

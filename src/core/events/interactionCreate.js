@@ -76,6 +76,12 @@ const { createRejectionModal } = require('../../modules/contest/components/rejec
 // 议案编辑相关处理
 const { processEditProposal, processEditProposalSubmission } = require('../../modules/proposal/services/proposalEditService');
 
+// 机器人消息管理（编辑已发出的常驻消息）
+const {
+    handleBotMessageInteraction,
+    BOT_MESSAGE_CUSTOM_ID_PREFIX,
+} = require('../../modules/botMessage');
+
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../core/utils/database');
 
@@ -173,6 +179,12 @@ async function interactionCreateHandler(interaction) {
         
         // 处理按钮点击
         if (interaction.isButton()) {
+            // === 机器人消息管理（优先短路，避免与其它模块前缀冲突） ===
+            if (interaction.customId.startsWith(BOT_MESSAGE_CUSTOM_ID_PREFIX)) {
+                await handleBotMessageInteraction(interaction);
+                return;
+            }
+
             if (interaction.customId === 'open_form') {
                 // 检查表单使用权限
                 const formPermissionSettings = await getFormPermissionSettings(interaction.guild.id);
@@ -574,6 +586,12 @@ async function interactionCreateHandler(interaction) {
         
         // 处理模态窗口提交
         if (interaction.isModalSubmit()) {
+            // === 机器人消息管理（优先短路，避免与其它模块前缀冲突） ===
+            if (interaction.customId.startsWith(BOT_MESSAGE_CUSTOM_ID_PREFIX)) {
+                await handleBotMessageInteraction(interaction);
+                return;
+            }
+
             if (interaction.customId === 'form_submission') {
                 // 表单提交处理
                 await processFormSubmission(interaction);
