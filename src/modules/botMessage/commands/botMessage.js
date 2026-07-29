@@ -17,6 +17,8 @@ const {
     startForumPost,
     stashForumPost,
     createForumPostFromSource,
+    resolveSendTarget,
+    validateSendChannel,
 } = require('../services/botMessageService');
 const {
     buildSendTextModal,
@@ -59,12 +61,16 @@ const data = new SlashCommandBuilder()
             .setRequired(true)))
     .addSubcommand(sub => sub
         .setName('发送')
-        .setDescription('用机器人在指定频道发一条新消息')
+        .setDescription('用机器人在指定频道或帖子里发一条新消息')
         .addChannelOption(opt => opt
             .setName('频道')
-            .setDescription('要发送到的频道')
+            .setDescription('要发送到的频道（选择器列不出论坛帖/子区，那种请用下面的「帖子或频道」）')
             .addChannelTypes(...TEXT_CHANNEL_TYPES)
-            .setRequired(true))
+            .setRequired(false))
+        .addStringOption(opt => opt
+            .setName('帖子或频道')
+            .setDescription('帖子/频道的链接或ID，也可填帖子里任意一条消息的链接。留空则发到当前所在位置')
+            .setRequired(false))
         .addStringOption(opt => opt
             .setName('形式')
             .setDescription('默认：弹窗写纯文本')
@@ -235,7 +241,24 @@ async function handleEdit(interaction) {
 async function handleSend(interaction) {
     const mode = interaction.options.getString('形式') || 'text';
     const allowMentions = interaction.options.getBoolean('允许提及') ?? false;
-    const channelOption = interaction.options.getChannel('频道');
+
+    const target = await resolveSendTarget(
+        interaction,
+        interaction.options.getChannel('频道'),
+        interaction.options.getString('帖子或频道'),
+    );
+
+    if (!target.ok) {
+        await interaction.reply({ content: target.error, flags: MessageFlags.Ephemeral });
+        return;
+    }
+
+    // 目标不可发送时也要在弹窗弹出前拦下，否则用户白填一遍内容
+    const channelError = await validateSendChannel(interaction, target.channel);
+    if (channelError) {
+        await interaction.reply({ content: channelError, flags: MessageFlags.Ephemeral });
+        return;
+    }
 
     if (mode === 'copy') {
         const sourceInput = interaction.options.getString('来源消息');
@@ -246,19 +269,13 @@ async function handleSend(interaction) {
             return;
         }
 
-        const channel = await interaction.guild.channels.fetch(channelOption.id).catch(() => null);
-        if (!channel) {
-            await interaction.editReply({ content: '❌ 无法访问目标频道。' });
-            return;
-        }
-
-        await sendFromSource(interaction, channel, sourceInput, allowMentions);
+        await sendFromSource(interaction, target.channel, sourceInput, allowMentions);
         return;
     }
 
     const modal = mode === 'embed'
-        ? buildSendEmbedModal(channelOption.id, allowMentions)
-        : buildSendTextModal(channelOption.id, allowMentions);
+        ? buildSendEmbedModal(target.channel.id, allowMentions)
+        : buildSendTextModal(target.channel.id, allowMentions);
 
     await interaction.showModal(modal);
 }

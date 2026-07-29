@@ -37,6 +37,43 @@ const MESSAGE_LINK_PATTERN = /(?:https?:\/\/)?(?:canary\.|ptb\.)?discord(?:app)?
 const CHANNEL_MESSAGE_ID_PATTERN = /^(\d{17,20})[-_](\d{17,20})$/;
 const RAW_ID_PATTERN = /^(\d{17,20})$/;
 
+const CHANNEL_LINK_PATTERN = /(?:https?:\/\/)?(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/(\d{17,20}|@me)\/(\d{17,20})/;
+const CHANNEL_MENTION_PATTERN = /^<#(\d{17,20})>$/;
+
+/**
+ * 解析用户输入的频道定位信息
+ *
+ * Discord 的频道选择器不会列出论坛帖 / 子区，所以需要一条文本输入的补充路径。
+ * 支持：频道或帖子链接、消息链接（取其所在频道）、`<#频道ID>` 提及、纯频道ID。
+ *
+ * @param {string} input
+ * @returns {{guildId: string|null, channelId: string}|null}
+ */
+function parseChannelReference(input) {
+    if (!input || typeof input !== 'string') return null;
+    const text = input.trim();
+    if (!text) return null;
+
+    // 消息链接也能用：取它所在的频道/帖子
+    const linkMatch = text.match(CHANNEL_LINK_PATTERN);
+    if (linkMatch) {
+        const [, guildId, channelId] = linkMatch;
+        return { guildId: guildId === '@me' ? null : guildId, channelId };
+    }
+
+    const mentionMatch = text.match(CHANNEL_MENTION_PATTERN);
+    if (mentionMatch) {
+        return { guildId: null, channelId: mentionMatch[1] };
+    }
+
+    const rawMatch = text.match(RAW_ID_PATTERN);
+    if (rawMatch) {
+        return { guildId: null, channelId: rawMatch[1] };
+    }
+
+    return null;
+}
+
 /**
  * 解析用户输入的消息定位信息
  *
@@ -212,6 +249,7 @@ function truncate(text, max = 1000) {
 
 module.exports = {
     parseMessageReference,
+    parseChannelReference,
     fetchTargetMessage,
     describeEditBlock,
     getRichEmbeds,
