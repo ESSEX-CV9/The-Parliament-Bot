@@ -32,6 +32,7 @@ const {
     getLatestHistory,
     getLogChannelId,
 } = require('./botMessageDatabase');
+const { unarchiveIfNeeded, restoreArchiveState } = require('../utils/threadArchive');
 
 // 编辑已发出的消息时一律不触发提及，避免改个错别字把 @everyone 重新推送一遍
 const NO_MENTIONS = { parse: [] };
@@ -50,13 +51,81 @@ function messageLink(message) {
     return `https://discord.com/channels/${message.guildId}/${message.channelId}/${message.id}`;
 }
 
-async function replyError(interaction, content) {
-    const payload = { content, flags: MessageFlags.Ephemeral };
-    if (interaction.deferred || interaction.replied) {
-        await interaction.editReply({ content }).catch(() => {});
-    } else {
-        await interaction.reply(payload).catch(() => {});
+/**
+ * 在可能已归档的子区里安全地响应交互
+ *
+ * Discord 会拒绝一切发往已归档子区的交互响应（连 ephemeral 也不行，报 50083），
+ * 所以要先临时解除归档、回复完再归档回去。
+ */
+async function safeRespond(interaction, payload) {
+    const archiveState = await unarchiveIfNeeded(
+        interaction.channel,
+        `响应机器人消息交互（操作人 ${interaction.user.tag}）`,
+    );
+
+    try {
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply(payload);
+        } else {
+            await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+        }
+    } catch (err) {
+        console.error('[BotMessage] 响应交互失败:', err.message);
+    } finally {
+        await restoreArchiveState(archiveState, '交互响应完成，恢复归档');
     }
+}
+
+async function replyError(interaction, content) {
+    await safeRespond(interaction, { content });
+}
+
+/**
+ * 模态窗口提交的统一开场
+ *
+ * 必须先解除归档再 deferReply —— 否则第一个响应就会被 Discord 403 拒绝，
+ * 用户只会看到弹窗里那句无信息量的「出现错误，请重试。」（该文案由 Discord 客户端写死，无法自定义）。
+ *
+ * @returns {Promise<{ok: boolean, finish: () => Promise<any>}>}
+ */
+async function beginModalResponse(interaction) {
+    const noop = { ok: false, finish: async () => {} };
+
+    const archiveState = await unarchiveIfNeeded(
+        interaction.channel,
+        `响应机器人消息编辑交互（操作人 ${interaction.user.tag}）`,
+    );
+
+    if (archiveState.wasArchived && !archiveState.ok) {
+        console.error(
+            `[BotMessage] 无法在已归档子区 ${interaction.channelId} 响应交互，编辑已中止：${archiveState.error}`,
+        );
+        return noop;
+    }
+
+    try {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    } catch (err) {
+        console.error('[BotMessage] deferReply 失败，编辑已中止:', err.message);
+        await restoreArchiveState(archiveState, '交互响应失败，恢复归档');
+        return noop;
+    }
+
+    return {
+        ok: true,
+        // 供回执文案使用：交互所在子区是否由我们临时解除了归档
+        wasArchived: Boolean(archiveState.wasArchived && archiveState.ok),
+        finish: () => restoreArchiveState(archiveState, '机器人消息编辑完成，恢复归档'),
+    };
+}
+
+/**
+ * 编辑结果里关于「临时解归档」的补充说明
+ */
+function formatArchiveNote(...sources) {
+    const unarchived = sources.some(s => s?.threadUnarchived || s?.wasArchived);
+    if (!unarchived) return '';
+    return '\n\n🗄️ 该消息所在子区处于归档状态，已临时解除归档完成编辑，随后恢复原状。';
 }
 
 /**
@@ -268,7 +337,23 @@ async function handlePickerButton(interaction) {
 async function applyEdit(interaction, message, editPayload, action, note = null) {
     const before = snapshotMessage(message);
 
-    await message.edit({ ...editPayload, allowedMentions: NO_MENTIONS });
+    // 目标消息在已归档子区里时，先临时解除归档，改完立刻归档回去。
+    // 若交互本身就发生在该子区，beginModalResponse 已经解除过，这里会识别为「无需处理」，
+    // 由外层在回复完成后统一恢复，避免过早归档导致后续回复失败。
+    const archiveState = await unarchiveIfNeeded(
+        message.channel,
+        `编辑机器人消息（操作人 ${interaction.user.tag}）`,
+    );
+
+    if (archiveState.wasArchived && !archiveState.ok) {
+        throw new Error(archiveState.error);
+    }
+
+    try {
+        await message.edit({ ...editPayload, allowedMentions: NO_MENTIONS });
+    } finally {
+        await restoreArchiveState(archiveState, '机器人消息编辑完成，恢复归档');
+    }
 
     const after = {
         content: editPayload.content !== undefined ? editPayload.content : before.content,
@@ -304,16 +389,25 @@ async function applyEdit(interaction, message, editPayload, action, note = null)
     });
 
     console.log(`[BotMessage] ${interaction.user.tag} 执行 ${action}：${messageLink(message)}`);
-    return { before, after };
+    return { before, after, threadUnarchived: archiveState.wasArchived };
 }
 
 /**
  * 正文编辑窗口提交
  */
 async function handleContentModalSubmit(interaction) {
-    if (!await ensurePermission(interaction)) return;
+    const session = await beginModalResponse(interaction);
+    if (!session.ok) return;
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+        await runContentModalSubmit(interaction, session);
+    } finally {
+        await session.finish();
+    }
+}
+
+async function runContentModalSubmit(interaction, session) {
+    if (!await ensurePermission(interaction)) return;
 
     const [, channelId, messageId] = interaction.customId.split(':');
     const result = await fetchTargetMessage(interaction, `${channelId}-${messageId}`, { requireEditable: true });
@@ -337,8 +431,9 @@ async function handleContentModalSubmit(interaction) {
         return;
     }
 
+    let editResult;
     try {
-        await applyEdit(interaction, message, { content: newContent }, 'edit_content');
+        editResult = await applyEdit(interaction, message, { content: newContent }, 'edit_content');
     } catch (error) {
         console.error('[BotMessage] 编辑正文失败:', error);
         await interaction.editReply({ content: `❌ 编辑失败：${error.message || error}` });
@@ -350,7 +445,7 @@ async function handleContentModalSubmit(interaction) {
             `✅ 已更新消息正文。[点击查看](${messageLink(message)})`,
             '',
             '如果改错了，可以用 `/机器人消息 撤销` 回退到上一版。',
-        ].join('\n'),
+        ].join('\n') + formatArchiveNote(editResult, session),
     });
 }
 
@@ -358,9 +453,18 @@ async function handleContentModalSubmit(interaction) {
  * 嵌入卡片编辑窗口提交
  */
 async function handleEmbedModalSubmit(interaction) {
-    if (!await ensurePermission(interaction)) return;
+    const session = await beginModalResponse(interaction);
+    if (!session.ok) return;
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+        await runEmbedModalSubmit(interaction, session);
+    } finally {
+        await session.finish();
+    }
+}
+
+async function runEmbedModalSubmit(interaction, session) {
+    if (!await ensurePermission(interaction)) return;
 
     const [, channelId, messageId, rawIndex] = interaction.customId.split(':');
     const result = await fetchTargetMessage(interaction, `${channelId}-${messageId}`, { requireEditable: true });
@@ -426,14 +530,18 @@ async function handleEmbedModalSubmit(interaction) {
         }
 
         embeds.splice(index, 1);
+        let deleteResult;
         try {
-            await applyEdit(interaction, message, { embeds }, 'delete_embed');
+            deleteResult = await applyEdit(interaction, message, { embeds }, 'delete_embed');
         } catch (error) {
             console.error('[BotMessage] 删除嵌入卡片失败:', error);
             await interaction.editReply({ content: `❌ 操作失败：${error.message || error}` });
             return;
         }
-        await interaction.editReply({ content: `🗑️ 已删除嵌入卡片 #${index + 1}。[点击查看](${messageLink(message)})` });
+        await interaction.editReply({
+            content: `🗑️ 已删除嵌入卡片 #${index + 1}。[点击查看](${messageLink(message)})`
+                + formatArchiveNote(deleteResult, session),
+        });
         return;
     }
 
@@ -446,8 +554,9 @@ async function handleEmbedModalSubmit(interaction) {
 
     embeds[index] = builder.toJSON();
 
+    let editResult;
     try {
-        await applyEdit(interaction, message, { embeds }, isNew ? 'add_embed' : 'edit_embed');
+        editResult = await applyEdit(interaction, message, { embeds }, isNew ? 'add_embed' : 'edit_embed');
     } catch (error) {
         console.error('[BotMessage] 编辑嵌入卡片失败:', error);
         await interaction.editReply({ content: `❌ 编辑失败：${error.message || error}` });
@@ -459,7 +568,7 @@ async function handleEmbedModalSubmit(interaction) {
             `✅ 已${isNew ? '新增' : '更新'}嵌入卡片 #${index + 1}。[点击查看](${messageLink(message)})`,
             '',
             '如果改错了，可以用 `/机器人消息 撤销` 回退到上一版。',
-        ].join('\n'),
+        ].join('\n') + formatArchiveNote(editResult, session),
     });
 }
 
@@ -504,8 +613,9 @@ async function replaceFromSource(interaction, targetInput, sourceInput) {
         return;
     }
 
+    let result;
     try {
-        await applyEdit(
+        result = await applyEdit(
             interaction,
             target,
             { content: newContent, embeds: newEmbeds },
@@ -529,7 +639,7 @@ async function replaceFromSource(interaction, targetInput, sourceInput) {
             ...notes,
             '',
             '如果改错了，可以用 `/机器人消息 撤销` 回退到上一版。',
-        ].join('\n'),
+        ].join('\n') + formatArchiveNote(result),
     });
 }
 
@@ -563,8 +673,9 @@ async function undoLastEdit(interaction, targetInput) {
         return;
     }
 
+    let editResult;
     try {
-        await applyEdit(
+        editResult = await applyEdit(
             interaction,
             message,
             { content: beforeContent, embeds: beforeEmbeds },
@@ -583,7 +694,7 @@ async function undoLastEdit(interaction, targetInput) {
             `被撤销的改动：<@${latest.editor_id}> 的「${ACTION_LABELS[latest.action] || latest.action}」`,
             '',
             '💡 再次执行「撤销」会回退本次撤销（相当于重做）。',
-        ].join('\n'),
+        ].join('\n') + formatArchiveNote(editResult),
     });
 }
 
@@ -787,6 +898,7 @@ async function sendFromSource(interaction, channel, sourceInput, allowMentions) 
 module.exports = {
     ACTION_LABELS,
     messageLink,
+    safeRespond,
     ensurePermission,
     buildEditPicker,
     canOpenModalDirectly,

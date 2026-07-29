@@ -2,21 +2,22 @@
 const {
     ContextMenuCommandBuilder,
     ApplicationCommandType,
-    PermissionFlagsBits,
-    MessageFlags,
 } = require('discord.js');
 
 const {
     ensurePermission,
     buildEditPicker,
     canOpenModalDirectly,
+    safeRespond,
 } = require('../services/botMessageService');
 const { buildContentModal, buildEmbedModal } = require('../components/messageModals');
+const { describeEditBlock } = require('../utils/messageResolver');
 
 const data = new ContextMenuCommandBuilder()
     .setName('编辑机器人消息')
     .setType(ApplicationCommandType.Message)
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages);
+    // 同 /机器人消息：默认对所有人隐藏，由服主在「整合 → 权限」里显式放行
+    .setDefaultMemberPermissions(0);
 
 async function execute(interaction) {
     if (!await ensurePermission(interaction)) return;
@@ -25,22 +26,20 @@ async function execute(interaction) {
     const botId = interaction.client.user.id;
 
     if (message.author?.id !== botId) {
-        await interaction.reply({
+        await safeRespond(interaction, {
             content: [
                 `❌ 这条消息不是由本机器人（<@${botId}>）发出的，无法编辑。`,
                 '',
                 'Discord 只允许机器人编辑自己发出的消息。',
             ].join('\n'),
-            flags: MessageFlags.Ephemeral,
         });
         return;
     }
 
-    if (!message.editable) {
-        await interaction.reply({
-            content: '❌ 这条消息当前不可编辑（常见原因：所在子区已归档或被锁定，请先解除归档/锁定后重试）。',
-            flags: MessageFlags.Ephemeral,
-        });
+    // 已归档的子区不算阻塞：编辑时会自动临时解除归档，改完再归档回去
+    const block = describeEditBlock(message);
+    if (block) {
+        await safeRespond(interaction, { content: block });
         return;
     }
 
@@ -57,13 +56,12 @@ async function execute(interaction) {
         if (modalResult.ok) {
             await interaction.showModal(modalResult.modal);
         } else {
-            await interaction.reply({ content: modalResult.error, flags: MessageFlags.Ephemeral });
+            await safeRespond(interaction, { content: modalResult.error });
         }
         return;
     }
 
-    const picker = buildEditPicker(message);
-    await interaction.reply({ ...picker, flags: MessageFlags.Ephemeral });
+    await safeRespond(interaction, buildEditPicker(message));
 }
 
 module.exports = {

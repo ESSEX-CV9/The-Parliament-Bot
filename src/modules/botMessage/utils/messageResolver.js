@@ -1,6 +1,38 @@
 // src/modules/botMessage/utils/messageResolver.js
 const { PermissionFlagsBits } = require('discord.js');
 
+const { isArchivedThread, canUnarchive, describeUnarchiveBlock } = require('./threadArchive');
+
+/**
+ * 判断消息为何不可编辑，可编辑则返回 null
+ *
+ * 与 discord.js 的 message.editable 的差别：子区「已归档」在这里不算阻塞，
+ * 因为我们会在编辑前临时解除归档、编辑完再归档回去。
+ *
+ * @param {import('discord.js').Message} message
+ * @returns {string|null} 面向用户的阻塞原因
+ */
+function describeEditBlock(message) {
+    const channel = message.channel;
+
+    if (channel?.isThread?.()) {
+        if (channel.locked && !channel.manageable) {
+            return '❌ 这条消息所在的子区已被锁定，机器人需要「管理子区」权限才能编辑其中的消息。';
+        }
+        if (isArchivedThread(channel) && !canUnarchive(channel)) {
+            return `❌ 这条消息所在的子区已归档，且无法自动解除。\n\n${describeUnarchiveBlock(channel)}\n\n请手动解除归档后重试。`;
+        }
+        // 已归档但可解除 → 放行，编辑时会临时解除归档
+        return null;
+    }
+
+    if (!message.editable) {
+        return '❌ 这条消息当前不可编辑（机器人可能看不到该频道，或消息是转发消息）。';
+    }
+
+    return null;
+}
+
 const MESSAGE_LINK_PATTERN = /(?:https?:\/\/)?(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/(\d{17,20}|@me)\/(\d{17,20})\/(\d{17,20})/;
 const CHANNEL_MESSAGE_ID_PATTERN = /^(\d{17,20})[-_](\d{17,20})$/;
 const RAW_ID_PATTERN = /^(\d{17,20})$/;
@@ -124,11 +156,9 @@ async function fetchTargetMessage(interaction, input, options = {}) {
             };
         }
 
-        if (!message.editable) {
-            return {
-                ok: false,
-                error: '❌ 这条消息当前不可编辑（常见原因：所在子区已归档或被锁定，请先解除归档/锁定后重试）。',
-            };
+        const block = describeEditBlock(message);
+        if (block) {
+            return { ok: false, error: block };
         }
     }
 
@@ -183,6 +213,7 @@ function truncate(text, max = 1000) {
 module.exports = {
     parseMessageReference,
     fetchTargetMessage,
+    describeEditBlock,
     getRichEmbeds,
     countAutoEmbeds,
     snapshotMessage,

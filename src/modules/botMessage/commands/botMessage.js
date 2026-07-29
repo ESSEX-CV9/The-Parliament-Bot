@@ -1,7 +1,6 @@
 // src/modules/botMessage/commands/botMessage.js
 const {
     SlashCommandBuilder,
-    PermissionFlagsBits,
     ChannelType,
     EmbedBuilder,
     MessageFlags,
@@ -42,8 +41,10 @@ const MESSAGE_OPTION_DESC = '消息链接（右键消息 → 复制消息链接�
 const data = new SlashCommandBuilder()
     .setName('机器人消息')
     .setDescription('管理机器人发出的常驻消息（编辑正文 / 发送 / 替换 / 撤销）')
-    // 默认仅对拥有「管理消息」权限的成员可见；实际可用范围仍以模块白名单为准
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    // 默认对所有人隐藏。
+    // 需由服主在「服务器设置 → 整合 → 本机器人 → 权限」中显式放给指定身份组，
+    // 且仍要通过模块白名单（/机器人消息 配置）的代码级校验。
+    .setDefaultMemberPermissions(0)
     .addSubcommand(sub => sub
         .setName('编辑')
         .setDescription('修改机器人已发出消息的文字内容')
