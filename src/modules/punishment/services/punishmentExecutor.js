@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const {
     insertPunishmentRecord,
     getWarnRoleForGuild,
@@ -182,6 +182,106 @@ async function sendAnnouncement(client, guildId, payload) {
     }
 }
 
+// ========== 现场说明（在执行指令的频道里留一条简单 embed） ==========
+
+const REVOCATION_TYPES = new Set(['unban', 'unmute']);
+
+/**
+ * 组装「处罚内容」一栏的文字
+ */
+function buildActionSummary({ type, durationLabel, warnDurationLabel, warnRoleRemoved }) {
+    switch (type) {
+        case 'ban':
+            return '永久封禁';
+        case 'unban':
+            return '解除封禁';
+        case 'mute': {
+            const lines = [`禁言 ${durationLabel || '未提供时长'}`];
+            if (warnDurationLabel) lines.push(`附加警告身份组 ${warnDurationLabel}`);
+            return lines.join('\n');
+        }
+        case 'warn_role':
+            return `警告身份组 ${durationLabel || '未提供时长'}`;
+        case 'unmute': {
+            const lines = ['解除禁言'];
+            if (warnRoleRemoved) lines.push('同时移除警告身份组');
+            return lines.join('\n');
+        }
+        default:
+            return TYPE_LABELS[type] || type || '未知';
+    }
+}
+
+/**
+ * 构建现场说明 embed：只讲清楚「谁、被怎么处理、为什么」
+ */
+function buildLocalNoticeEmbed(payload) {
+    const { type, targetUserId, executorId, reason, punishmentId } = payload;
+    const isRevocation = REVOCATION_TYPES.has(type);
+
+    return new EmbedBuilder()
+        .setTitle(TITLES[type] || '处罚说明')
+        .setColor(COLORS[type] || 0x5865F2)
+        .addFields(
+            { name: isRevocation ? '操作对象' : '处罚对象', value: `<@${targetUserId}>`, inline: true },
+            { name: isRevocation ? '操作内容' : '处罚内容', value: clampText(buildActionSummary(payload), 1024), inline: true },
+            { name: '执行人', value: `<@${executorId}>`, inline: true },
+            { name: '理由', value: clampText(reason, 1024), inline: false },
+        )
+        .setFooter({ text: `处罚ID: ${punishmentId || '未知'}` })
+        .setTimestamp();
+}
+
+/**
+ * 在执行指令的频道发一条处罚说明
+ *
+ * 说明：embed 里的 <@id> 不会触发提及推送，所以不会额外 @ 到当事人。
+ *
+ * @returns {Promise<{sent: boolean, skipped?: string, error?: string}>}
+ */
+async function sendLocalNotice(client, interaction, payload) {
+    try {
+        let channel = interaction.channel;
+        if (!channel && interaction.channelId) {
+            channel = await client.channels.fetch(interaction.channelId).catch(() => null);
+        }
+
+        if (!channel || !channel.isTextBased()) {
+            return { sent: false, skipped: '当前频道不可发言' };
+        }
+
+        // 该频道本身就是公告频道时，公告已经覆盖，不再重复发一条
+        const announcementChannels = getAnnouncementChannels(interaction.guild.id) || [];
+        if (announcementChannels.includes(channel.id)) {
+            return { sent: false, skipped: '本频道已是处罚公告频道' };
+        }
+
+        const me = interaction.guild.members.me;
+        const perms = channel.permissionsFor(me);
+        if (!perms?.has(PermissionFlagsBits.SendMessages) || !perms?.has(PermissionFlagsBits.EmbedLinks)) {
+            return { sent: false, error: '机器人在本频道缺少「发送消息」或「嵌入链接」权限' };
+        }
+
+        await channel.send({
+            embeds: [buildLocalNoticeEmbed(payload)],
+            allowedMentions: { parse: [] },
+        });
+
+        return { sent: true };
+    } catch (err) {
+        console.error(`[Punishment] 发送现场处罚说明失败 guild=${interaction.guild?.id} channel=${interaction.channelId}:`, err.message);
+        return { sent: false, error: err.message };
+    }
+}
+
+/**
+ * 现场说明失败时，在管理员的私密回执里补一行提示
+ */
+function formatLocalNotice(result) {
+    if (!result || result.sent || !result.error) return '';
+    return `\n\n⚠️ 未能在本频道发布处罚说明：${result.error}`;
+}
+
 function formatSyncResults(results) {
     if (!results || results.length === 0) return '';
     const lines = results.map(r => {
@@ -217,19 +317,26 @@ async function executeBan(client, interaction, { targetUser, reason, sync }) {
         syncResults = await syncBan(client, guild.id, targetUser.id, reason);
     }
 
-    await sendAnnouncement(client, guild.id, {
+    const noticePayload = {
         type: 'ban',
         targetUserId: targetUser.id,
         executorId: interaction.user.id,
         reason,
         punishmentId,
+    };
+
+    await sendAnnouncement(client, guild.id, {
+        ...noticePayload,
         scopeGuildNames: buildScopeGuildNames(guild, syncResults),
     });
+
+    const noticeResult = await sendLocalNotice(client, interaction, noticePayload);
 
     await interaction.editReply(
         `✅ 已封禁用户 <@${targetUser.id}> (\`${targetUser.id}\`)` +
         (reason ? `\n原因: ${reason}` : '') +
-        formatSyncResults(syncResults)
+        formatSyncResults(syncResults) +
+        formatLocalNotice(noticeResult)
     );
 }
 
@@ -266,20 +373,27 @@ async function executeUnban(client, interaction, { userId, reason, sync }) {
         syncResults = await syncUnban(client, guild.id, userId, reason);
     }
 
-    await sendAnnouncement(client, guild.id, {
+    const noticePayload = {
         type: 'unban',
         targetUserId: userId,
         executorId: interaction.user.id,
         reason,
         punishmentId,
+    };
+
+    await sendAnnouncement(client, guild.id, {
+        ...noticePayload,
         originalPunishment,
         scopeGuildNames: buildScopeGuildNames(guild, syncResults),
     });
 
+    const noticeResult = await sendLocalNotice(client, interaction, noticePayload);
+
     await interaction.editReply(
         `✅ 已解封用户 \`${userId}\`` +
         (reason ? `\n原因: ${reason}` : '') +
-        formatSyncResults(syncResults)
+        formatSyncResults(syncResults) +
+        formatLocalNotice(noticeResult)
     );
 }
 
@@ -338,12 +452,24 @@ async function executeMute(client, interaction, { targetMember, durationMs, dura
         scopeGuildNames: buildScopeGuildNames(guild, syncResults),
     });
 
+    const noticeResult = await sendLocalNotice(client, interaction, {
+        type: 'mute',
+        targetUserId: targetMember.id,
+        executorId: interaction.user.id,
+        reason,
+        punishmentId,
+        durationLabel,
+        // 只在警告身份组确实加上时才写进说明，避免与实际结果不符
+        warnDurationLabel: warnRoleAdded ? warnDuration.label : null,
+    });
+
     await interaction.editReply(
         `✅ 已禁言用户 <@${targetMember.id}> (\`${targetMember.id}\`)\n` +
         `时长: ${durationLabel}` +
         (warnRoleAdded ? `\n已同时添加警告身份组 (${warnDuration.label})` : '') +
         (reason ? `\n原因: ${reason}` : '') +
-        formatSyncResults(syncResults)
+        formatSyncResults(syncResults) +
+        formatLocalNotice(noticeResult)
     );
 }
 
@@ -363,21 +489,28 @@ async function executeWarnRole(client, interaction, { targetMember, durationMs, 
         syncResults = await syncWarnRole(client, guild.id, targetMember.id, durationMs, reason);
     }
 
-    await sendAnnouncement(client, guild.id, {
+    const noticePayload = {
         type: 'warn_role',
         targetUserId: targetMember.id,
         executorId: interaction.user.id,
         reason,
         punishmentId: warnResult.punishmentId,
         durationLabel,
+    };
+
+    await sendAnnouncement(client, guild.id, {
+        ...noticePayload,
         scopeGuildNames: buildScopeGuildNames(guild, syncResults),
     });
+
+    const noticeResult = await sendLocalNotice(client, interaction, noticePayload);
 
     await interaction.editReply(
         `✅ 已为用户 <@${targetMember.id}> 添加警告身份组\n` +
         `时长: ${durationLabel}` +
         (reason ? `\n原因: ${reason}` : '') +
-        formatSyncResults(syncResults)
+        formatSyncResults(syncResults) +
+        formatLocalNotice(noticeResult)
     );
 }
 
@@ -459,21 +592,29 @@ async function executeUnmute(client, interaction, { targetMember, reason, sync }
         syncResults = await syncUnmute(client, guild.id, targetMember.id, reason);
     }
 
-    await sendAnnouncement(client, guild.id, {
+    const noticePayload = {
         type: 'unmute',
         targetUserId: targetMember.id,
         executorId: interaction.user.id,
         reason,
         punishmentId,
+        warnRoleRemoved,
+    };
+
+    await sendAnnouncement(client, guild.id, {
+        ...noticePayload,
         originalPunishment,
         scopeGuildNames: buildScopeGuildNames(guild, syncResults),
     });
+
+    const noticeResult = await sendLocalNotice(client, interaction, noticePayload);
 
     await interaction.editReply(
         `✅ 已解除用户 <@${targetMember.id}> 的禁言` +
         (warnRoleRemoved ? '\n已同时移除警告身份组' : '') +
         (reason ? `\n原因: ${reason}` : '') +
-        formatSyncResults(syncResults)
+        formatSyncResults(syncResults) +
+        formatLocalNotice(noticeResult)
     );
 }
 
