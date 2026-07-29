@@ -37,6 +37,10 @@ const { unarchiveIfNeeded, restoreArchiveState } = require('../utils/threadArchi
 // 编辑已发出的消息时一律不触发提及，避免改个错别字把 @everyone 重新推送一遍
 const NO_MENTIONS = { parse: [] };
 
+// 「允许提及」开启时使用：显式放行三类提及。
+// 注意不能用 undefined 表示「走默认」——上层一旦做 `|| NO_MENTIONS` 之类的回退就会被吃掉。
+const ALLOW_MENTIONS = { parse: ['users', 'roles', 'everyone'] };
+
 const ACTION_LABELS = {
     edit_content: '编辑正文',
     edit_embed: '编辑嵌入卡片',
@@ -722,12 +726,39 @@ async function validateSendChannel(interaction, channel) {
 }
 
 /**
+ * 「允许提及」开着、但实际 ping 不出去时给出解释
+ *
+ * 常见两种：正文里写了 @everyone/@here 但机器人没有该权限；
+ * 或者内容只在嵌入卡片里——卡片内的提及永远只渲染不推送，这是 Discord 的规则。
+ */
+function formatMentionNotes(interaction, channel, content, allowMentions, embedOnly = false) {
+    if (!allowMentions) return '';
+
+    const notes = [];
+
+    if (embedOnly) {
+        notes.push('⚠️ 嵌入卡片里的提及只会显示成高亮文字，**永远不会推送通知**，「允许提及」对卡片内容无效。');
+    }
+
+    if (content && /@everyone|@here/.test(content)) {
+        const botPerms = channel.permissionsFor(interaction.guild.members.me);
+        if (!botPerms?.has(PermissionFlagsBits.MentionEveryone)) {
+            notes.push(`⚠️ 正文里有 @everyone/@here，但机器人在 <#${channel.id}> 没有「提及所有人」权限，这部分不会真正推送。`);
+        }
+    }
+
+    return notes.length ? `\n\n${notes.join('\n')}` : '';
+}
+
+/**
  * 真正把消息发出去，并记一条 action=send 的历史
  */
 async function deliverMessage(interaction, channel, payload, note = null) {
+    // 调用方必须显式给出 allowedMentions（ALLOW_MENTIONS 或 NO_MENTIONS）。
+    // 这里只在完全没传时兜底为「不提及」，不再用 || 回退——否则会把显式放行也当成假值吃掉。
     const sent = await channel.send({
         ...payload,
-        allowedMentions: payload.allowedMentions || NO_MENTIONS,
+        allowedMentions: payload.allowedMentions ?? NO_MENTIONS,
     });
 
     try {
@@ -778,12 +809,17 @@ async function handleSendTextModalSubmit(interaction) {
         return;
     }
 
+    const allowMentions = allowMentionsFlag === '1';
+
     try {
         const sent = await deliverMessage(interaction, channel, {
             content,
-            allowedMentions: allowMentionsFlag === '1' ? undefined : NO_MENTIONS,
+            allowedMentions: allowMentions ? ALLOW_MENTIONS : NO_MENTIONS,
         });
-        await interaction.editReply({ content: `✅ 已在 <#${channel.id}> 发送消息。[点击查看](${messageLink(sent)})` });
+        await interaction.editReply({
+            content: `✅ 已在 <#${channel.id}> 发送消息。[点击查看](${messageLink(sent)})`
+                + formatMentionNotes(interaction, channel, content, allowMentions),
+        });
     } catch (error) {
         console.error('[BotMessage] 发送消息失败:', error);
         await interaction.editReply({ content: `❌ 发送失败：${error.message || error}` });
@@ -832,12 +868,17 @@ async function handleSendEmbedModalSubmit(interaction) {
     if (footer) embed.setFooter({ text: footer });
     if (image) embed.setImage(image);
 
+    const allowMentions = allowMentionsFlag === '1';
+
     try {
         const sent = await deliverMessage(interaction, channel, {
             embeds: [embed],
-            allowedMentions: allowMentionsFlag === '1' ? undefined : NO_MENTIONS,
+            allowedMentions: allowMentions ? ALLOW_MENTIONS : NO_MENTIONS,
         });
-        await interaction.editReply({ content: `✅ 已在 <#${channel.id}> 发送嵌入卡片。[点击查看](${messageLink(sent)})` });
+        await interaction.editReply({
+            content: `✅ 已在 <#${channel.id}> 发送嵌入卡片。[点击查看](${messageLink(sent)})`
+                + formatMentionNotes(interaction, channel, null, allowMentions, true),
+        });
     } catch (error) {
         console.error('[BotMessage] 发送嵌入卡片失败:', error);
         await interaction.editReply({ content: `❌ 发送失败：${error.message || error}` });
@@ -876,7 +917,7 @@ async function sendFromSource(interaction, channel, sourceInput, allowMentions) 
             {
                 content: content || undefined,
                 embeds,
-                allowedMentions: allowMentions ? undefined : NO_MENTIONS,
+                allowedMentions: allowMentions ? ALLOW_MENTIONS : NO_MENTIONS,
             },
             `来源消息：${messageLink(source)}`,
         );
@@ -887,7 +928,8 @@ async function sendFromSource(interaction, channel, sourceInput, allowMentions) 
         }
 
         await interaction.editReply({
-            content: [`✅ 已在 <#${channel.id}> 发送消息。[点击查看](${messageLink(sent)})`, ...notes].join('\n'),
+            content: [`✅ 已在 <#${channel.id}> 发送消息。[点击查看](${messageLink(sent)})`, ...notes].join('\n')
+                + formatMentionNotes(interaction, channel, content, allowMentions, !content && embeds.length > 0),
         });
     } catch (error) {
         console.error('[BotMessage] 复制发送失败:', error);

@@ -181,7 +181,8 @@ function buildSendTextModal(channelId, allowMentions) {
     modal.addComponents(row(new TextInputBuilder()
         .setCustomId('content')
         .setLabel('消息正文')
-        .setPlaceholder('支持 Markdown，最多 2000 字')
+        // 弹窗输入框没有 @ 自动补全，直接打「@名字」只是普通文字，不会 ping 到人
+        .setPlaceholder('支持 Markdown。提及要写成 <@用户ID> 或 <@&身份组ID>，最多 2000 字')
         .setStyle(TextInputStyle.Paragraph)
         .setMaxLength(LIMITS.CONTENT)
         .setRequired(true)));
