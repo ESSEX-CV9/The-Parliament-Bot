@@ -392,7 +392,7 @@ function checkDisciplinePermission(member, allowedRoles) {
  * @returns {string} 错误消息
  */
 function getDisciplinePermissionDeniedMessage() {
-    return `❌ **权限不足**\n\n您没有权限使用风纪指令。\n\n请联系管理员将您的身份组加入风纪可用名单（\`/风纪 配置 身份组\`）。`;
+    return `❌ **权限不足**\n\n您没有权限使用风纪指令。\n\n请联系管理员将您的身份组加入风纪可用名单（\`/风纪配置 身份组\`）。`;
 }
 
 /**
