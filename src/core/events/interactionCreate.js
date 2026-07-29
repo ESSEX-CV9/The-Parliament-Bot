@@ -36,23 +36,6 @@ const { createVoteSetupModal, handleVoteSetupSubmit } = require('../../modules/v
 const { handleVoteButton } = require('../../modules/voting/components/voteButtons');
 const { handleNotificationButton } = require('../../modules/voting/components/notificationButtons');
 
-// 选举系统相关处理
-const {
-    handleRegistrationButton,
-    handleFirstChoiceSelection,
-    handleSecondChoiceSelection,
-    handleIntroductionModal,
-    handleEditRegistration,
-    handleWithdrawRegistration
-} = require('../../modules/election/components/registrationComponents');
-
-// 管理员编辑候选人相关处理
-const {
-    handleAdminStatusChange,
-    handleReasonModal,
-    handleAdminEditInfo
-} = require('../../modules/election/components/adminEditComponents');
-
 // 赛事系统相关处理
 const { createContestApplicationModal } = require('../../modules/contest/components/applicationModal');
 const { createSubmissionModal } = require('../../modules/contest/components/submissionModal');
@@ -93,15 +76,6 @@ const {
 } = require('../../modules/channelSummary/services/presetInteractionHandler');
 
 const INTERACTION_DEBUG_LOG = String(process.env.INTERACTION_DEBUG_LOG || '').toLowerCase() === 'true';
-
-const {
-    handleAnonymousVoteStart,
-    handleAnonymousVoteSelect,
-    handleAnonymousVoteConfirm,
-    handleAnonymousVoteCancel,
-    handleVotingPagination,
-    handleVoteComplete
-} = require('../../modules/election/components/anonymousVotingComponents');
 
 const {
     toggleAutoGrant,
@@ -244,44 +218,6 @@ async function interactionCreateHandler(interaction) {
             else if (interaction.customId === 'notification_roles_entry') {
                 // 通知身份组入口按钮
                 await handleNotificationButton(interaction);
-            }
-            // === 选举系统按钮处理 ===
-            else if (interaction.customId.startsWith('election_register_')) {
-                // 选举报名按钮
-                await handleRegistrationButton(interaction);
-            } else if (interaction.customId.startsWith('election_edit_registration_')) {
-                // 编辑报名按钮
-                await handleEditRegistration(interaction);
-            } else if (interaction.customId.startsWith('election_withdraw_registration_')) {
-                // 撤回报名按钮
-                await handleWithdrawRegistration(interaction);
-            } else if (interaction.customId.startsWith('election_start_anonymous_vote_')) {
-                // 开始匿名投票按钮
-                await handleAnonymousVoteStart(interaction);
-            } else if (interaction.customId.startsWith('election_anonymous_vote_select_')) {
-                // 匿名投票选择菜单
-                await handleAnonymousVoteSelect(interaction);
-            } else if (interaction.customId.startsWith('election_anonymous_vote_confirm_')) {
-                // 确认匿名投票按钮
-                await handleAnonymousVoteConfirm(interaction);
-            } else if (interaction.customId.startsWith('election_anonymous_vote_cancel_')) {
-                // 取消匿名投票按钮
-                await handleAnonymousVoteCancel(interaction);
-            } else if (interaction.customId.startsWith('election_vote_prev_') ||
-                       interaction.customId.startsWith('election_vote_next_')) {
-                // 投票分页按钮
-                await handleVotingPagination(interaction);
-            } else if (interaction.customId.startsWith('election_vote_complete_')) {
-                // 完成选择按钮
-                await handleVoteComplete(interaction);
-            } else if (interaction.customId.startsWith('appeal_registration_')) {
-                // 申诉报名按钮
-                const { handleAppealRegistration } = require('../../modules/election/components/appealComponents');
-                await handleAppealRegistration(interaction);
-            } else if (interaction.customId.startsWith('withdraw_registration_')) {
-                // 放弃参选按钮
-                const { handleWithdrawRegistration } = require('../../modules/election/components/appealComponents');
-                await handleWithdrawRegistration(interaction);
             }
             // === 赛事系统按钮处理 ===
             else if (interaction.customId.startsWith('contest_application') && !interaction.customId.startsWith('contest_edit_')) {
@@ -607,21 +543,6 @@ async function interactionCreateHandler(interaction) {
                 // 投票设置模态窗口提交
                 await handleVoteSetupSubmit(interaction);
             }
-            // === 选举系统模态窗口处理 ===
-            else if (interaction.customId.startsWith('election_introduction_modal_')) {
-                // 选举自我介绍模态窗口提交
-                await handleIntroductionModal(interaction);
-            } else if (interaction.customId.startsWith('appeal_modal_')) {
-                // 申诉报名模态窗口提交
-                const { handleAppealModal } = require('../../modules/election/components/appealComponents');
-                await handleAppealModal(interaction);
-            } else if (interaction.customId.startsWith('admin_reason_')) {
-                // 管理员原因输入模态窗口提交
-                await handleReasonModal(interaction);
-            } else if (interaction.customId.startsWith('admin_edit_info_')) {
-                // 管理员编辑候选人信息模态窗口提交
-                await handleAdminEditInfo(interaction);
-            }
             // === 赛事系统模态窗口处理 ===
             else if (interaction.customId.startsWith('contest_application')) {
                 // 赛事申请表单提交（支持旧格式 contest_application 和新格式 contest_application_{trackId}）
@@ -672,18 +593,6 @@ async function interactionCreateHandler(interaction) {
                 await processSubmissionAction(interaction);
             } else if (interaction.customId === 'notification_roles_select') {
                 await handleNotificationButton(interaction);
-            } else if (interaction.customId.startsWith('election_select_first_choice_')) {
-                // 选举第一志愿选择
-                await handleFirstChoiceSelection(interaction);
-            } else if (interaction.customId.startsWith('election_select_second_choice_')) {
-                // 选举第二志愿选择
-                await handleSecondChoiceSelection(interaction);
-            } else if (interaction.customId.startsWith('election_anonymous_vote_select_')) {
-                // 匿名投票候选人选择菜单
-                await handleAnonymousVoteSelect(interaction);
-            } else if (interaction.customId.startsWith('admin_status_change_')) {
-                // 管理员状态变更选择菜单
-                await handleAdminStatusChange(interaction);
             } else if (interaction.customId.startsWith('external_server_select_')) {
                 // 外部服务器投稿选择
                 const applicationId = interaction.customId.replace('external_server_select_', '');

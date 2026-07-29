@@ -30,7 +30,6 @@ const { startCourtChecker } = require('../modules/court/services/courtChecker');
 const { startSelfModerationChecker } = require('../modules/selfModeration/services/moderationChecker');
 const { startAttachmentCleanupScheduler } = require('../modules/selfModeration/services/archiveService');
 const { startVoteChecker } = require('../modules/voting/services/voteChecker');
-const { startElectionScheduler } = require('../modules/election/services/electionScheduler');
 const { printTimeConfig } = require('./config/timeconfig');
 const { startActivityTracker } = require('../modules/selfRole/services/activityTracker');
 const { syncMissedActivity } = require('../modules/selfRole/services/autoSyncService');
@@ -61,13 +60,8 @@ const setSupportPermissionsCommand = require('../modules/proposal/commands/setSu
 const reviewProposalCommand = require('../modules/proposal/commands/reviewProposal');
 const setProposalReviewersCommand = require('../modules/proposal/commands/setProposalReviewers');
 
-// 审核系统命令
-const setupReviewCommand = require('../modules/creatorReview/commands/setupReview');
-const deleteReviewEntryCommand = require('../modules/creatorReview/commands/deleteReviewEntry');
-const addAllowPreviewServerCommand = require('../modules/creatorReview/commands/addAllowPreviewServer');
-const removeAllowPreviewServerCommand = require('../modules/creatorReview/commands/removeAllowPreviewServer');
-const addAllowedForumCommand = require('../modules/creatorReview/commands/addAllowedForum'); 
-const removeAllowedForumCommand = require('../modules/creatorReview/commands/removeAllowedForum');
+// 审核系统命令（已合并为 /创作者审核）
+const creatorReviewCommand = require('../modules/creatorReview/commands/creatorReview');
 
 // 法庭系统命令
 const setAllowCourtRoleCommand = require('../modules/court/commands/setAllowCourtRole');
@@ -77,16 +71,10 @@ const applyToCourtCommand = require('../modules/court/commands/applyToCourt');
 const deleteShitMessageCommand = require('../modules/selfModeration/commands/deleteShitMessage');
 const muteShitUserCommand = require('../modules/selfModeration/commands/muteShitUser');
 const seriousMuteCommand = require('../modules/selfModeration/commands/seriousMute');
-const setSelfModerationRolesCommand = require('../modules/selfModeration/commands/setSelfModerationRoles');
-const setSelfModerationChannelsCommand = require('../modules/selfModeration/commands/setSelfModerationChannels');
-const setSelfModerationCooldownCommand = require('../modules/selfModeration/commands/setSelfModerationCooldown');
-const setMessageTimeLimitCommand = require('../modules/selfModeration/commands/setMessageTimeLimit');
+// 8 个配置指令已合并为 /搬石公投配置
+const selfModerationConfigCommand = require('../modules/selfModeration/commands/selfModerationConfig');
 const checkMyCooldownCommand = require('../modules/selfModeration/commands/checkMyCooldown');
-const setArchiveChannelCommand = require('../modules/selfModeration/commands/setArchiveChannel');
-const setArchiveViewRoleCommand = require('../modules/selfModeration/commands/setArchiveViewRole');
 const getArchiveViewPermissionCommand = require('../modules/selfModeration/commands/getArchiveViewPermission');
-const manageAttachmentCleanupCommand = require('../modules/selfModeration/commands/manageAttachmentCleanup');
-const manageSelfModerationBlacklistCommand = require('../modules/selfModeration/commands/manageSelfModerationBlacklist');
 
 // 赛事系统命令
 const setupContestApplicationCommand = require('../modules/contest/commands/setupContestApplication');
@@ -124,24 +112,6 @@ const summaryPresetCommand = require('../modules/channelSummary/commands/summary
 const createVoteCommand = require('../modules/voting/commands/createVote');
 // 添加新的通知身份组命令
 const notificationRolesCommand = require('../modules/voting/commands/notificationRoles');
-
-// 选举系统命令 - 完整的命令列表
-const setElectionPositionsCommand = require('../modules/election/commands/setElectionPositions');
-const setElectionTimeScheduleCommand = require('../modules/election/commands/setElectionTimeSchedule');
-const setupElectionEntryCommand = require('../modules/election/commands/setupElectionEntry');
-const getElectionStatusCommand = require('../modules/election/commands/getElectionStatus');
-const setRegistrationRolesCommand = require('../modules/election/commands/setRegistrationRoles');
-const setVotingRolesCommand = require('../modules/election/commands/setVotingRoles');
-const setNotificationRolesCommand = require('../modules/election/commands/setNotificationRoles');
-const getTieAnalysisCommand = require('../modules/election/commands/getTieAnalysis');
-const reprocessElectionResultsCommand = require('../modules/election/commands/reprocessElectionResults');
-const viewCandidateInfoCommand = require('../modules/election/commands/viewCandidateInfo');
-const manageCandidateStatusCommand = require('../modules/election/commands/manageCandidateStatus');
-const scanCandidateMessagesCommand = require('../modules/election/commands/scanCandidateMessages');
-const editCandidateInfoCommand = require('../modules/election/commands/editCandidateInfo');
-const clearElectionVoteCommand = require('../modules/election/commands/clearElectionVote');
-const viewVoteRemovalLogsCommand = require('../modules/election/commands/viewVoteRemovalLogs');
-const updateVotingCandidatesCommand = require('../modules/election/commands/updateVotingCandidates');
 
 const { messageCreateHandler } = require('./events/messageCreate');
 
@@ -263,13 +233,8 @@ client.commands.set(setSupportPermissionsCommand.data.name, setSupportPermission
 client.commands.set(reviewProposalCommand.data.name, reviewProposalCommand);
 client.commands.set(setProposalReviewersCommand.data.name, setProposalReviewersCommand);
 
-// 审核系统命令
-client.commands.set(setupReviewCommand.data.name, setupReviewCommand);
-client.commands.set(deleteReviewEntryCommand.data.name, deleteReviewEntryCommand);
-client.commands.set(addAllowPreviewServerCommand.data.name, addAllowPreviewServerCommand);
-client.commands.set(removeAllowPreviewServerCommand.data.name, removeAllowPreviewServerCommand);
-client.commands.set(addAllowedForumCommand.data.name, addAllowedForumCommand);
-client.commands.set(removeAllowedForumCommand.data.name, removeAllowedForumCommand);
+// 审核系统命令（已合并为 /创作者审核）
+client.commands.set(creatorReviewCommand.data.name, creatorReviewCommand);
 
 // 法庭系统命令
 client.commands.set(setAllowCourtRoleCommand.data.name, setAllowCourtRoleCommand);
@@ -279,16 +244,9 @@ client.commands.set(applyToCourtCommand.data.name, applyToCourtCommand);
 client.commands.set(deleteShitMessageCommand.data.name, deleteShitMessageCommand);
 client.commands.set(muteShitUserCommand.data.name, muteShitUserCommand);
 client.commands.set(seriousMuteCommand.data.name, seriousMuteCommand);
-client.commands.set(setSelfModerationRolesCommand.data.name, setSelfModerationRolesCommand);
-client.commands.set(setSelfModerationChannelsCommand.data.name, setSelfModerationChannelsCommand);
-client.commands.set(setSelfModerationCooldownCommand.data.name, setSelfModerationCooldownCommand);
-client.commands.set(setMessageTimeLimitCommand.data.name, setMessageTimeLimitCommand);
+client.commands.set(selfModerationConfigCommand.data.name, selfModerationConfigCommand);
 client.commands.set(checkMyCooldownCommand.data.name, checkMyCooldownCommand);
-client.commands.set(setArchiveChannelCommand.data.name, setArchiveChannelCommand);
-client.commands.set(setArchiveViewRoleCommand.data.name, setArchiveViewRoleCommand);
 client.commands.set(getArchiveViewPermissionCommand.data.name, getArchiveViewPermissionCommand);
-client.commands.set(manageAttachmentCleanupCommand.data.name, manageAttachmentCleanupCommand);
-client.commands.set(manageSelfModerationBlacklistCommand.data.name, manageSelfModerationBlacklistCommand);
 
 // 赛事系统命令
 client.commands.set(setupContestApplicationCommand.data.name, setupContestApplicationCommand);
@@ -326,24 +284,6 @@ client.commands.set(summaryPresetCommand.data.name, summaryPresetCommand);
 client.commands.set(createVoteCommand.data.name, createVoteCommand);
 // 注册新的通知身份组命令
 client.commands.set(notificationRolesCommand.data.name, notificationRolesCommand);
-
-// 选举系统命令 - 完整注册
-client.commands.set(setElectionPositionsCommand.data.name, setElectionPositionsCommand);
-client.commands.set(setElectionTimeScheduleCommand.data.name, setElectionTimeScheduleCommand);
-client.commands.set(setupElectionEntryCommand.data.name, setupElectionEntryCommand);
-client.commands.set(getElectionStatusCommand.data.name, getElectionStatusCommand);
-client.commands.set(setRegistrationRolesCommand.data.name, setRegistrationRolesCommand);
-client.commands.set(setVotingRolesCommand.data.name, setVotingRolesCommand);
-client.commands.set(setNotificationRolesCommand.data.name, setNotificationRolesCommand);
-client.commands.set(getTieAnalysisCommand.data.name, getTieAnalysisCommand);
-client.commands.set(reprocessElectionResultsCommand.data.name, reprocessElectionResultsCommand);
-client.commands.set(viewCandidateInfoCommand.data.name, viewCandidateInfoCommand);
-client.commands.set(manageCandidateStatusCommand.data.name, manageCandidateStatusCommand);
-client.commands.set(scanCandidateMessagesCommand.data.name, scanCandidateMessagesCommand);
-client.commands.set(editCandidateInfoCommand.data.name, editCandidateInfoCommand);
-client.commands.set(clearElectionVoteCommand.data.name, clearElectionVoteCommand);
-client.commands.set(viewVoteRemovalLogsCommand.data.name, viewVoteRemovalLogsCommand);
-client.commands.set(updateVotingCandidatesCommand.data.name, updateVotingCandidatesCommand);
 
 // 自助文件上传系统命令
 client.commands.set(uploadCommand.data.name, uploadCommand);
@@ -412,9 +352,6 @@ client.once(Events.ClientReady, async (readyClient) => {
     startVoteChecker(readyClient);
     console.log('✅ 投票检查器已启动');
     
-    startElectionScheduler(readyClient);
-    console.log('✅ 选举调度器已启动');
-    
     // 初始化自动清理系统
     console.log('✅ 自动清理系统已启动');
 
@@ -447,7 +384,6 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
     console.log('🧹 自动消息清理系统已加载');
-    console.log('🗳️ 选举系统已完全加载 (包含16个命令)');
     console.log('📝 机器人消息管理系统已加载');
 })
 
