@@ -7,6 +7,8 @@ const {
     AttachmentBuilder,
     MessageFlags,
     PermissionFlagsBits,
+    ChannelType,
+    ChannelFlags,
 } = require('discord.js');
 
 const {
@@ -49,6 +51,7 @@ const ACTION_LABELS = {
     replace: '整体替换',
     undo: '撤销上一次改动',
     send: '发送新消息',
+    create_thread: '发布论坛帖子',
 };
 
 function messageLink(message) {
@@ -885,6 +888,396 @@ async function handleSendEmbedModalSubmit(interaction) {
     }
 }
 
+// ==================== 论坛发帖 ====================
+
+const FORUM_TITLE_MAX = 100;
+
+/**
+ * 论坛发帖的暂存态
+ *
+ * 帖子标题可长达 100 字符，塞不进上限 100 的 customId，
+ * 所以指令阶段先把参数存下来，弹窗只带一个短 key。
+ * 交互令牌 15 分钟过期，这里按 20 分钟清理。
+ */
+const pendingForumPosts = new Map();
+const FORUM_STATE_TTL_MS = 20 * 60 * 1000;
+
+function stashForumPost(key, state) {
+    pendingForumPosts.set(key, { ...state, createdAt: Date.now() });
+
+    // 顺手清理过期项，避免长期运行时无限增长
+    for (const [k, v] of pendingForumPosts) {
+        if (Date.now() - v.createdAt > FORUM_STATE_TTL_MS) {
+            pendingForumPosts.delete(k);
+        }
+    }
+}
+
+function takeForumPost(key) {
+    const state = pendingForumPosts.get(key);
+    if (state) pendingForumPosts.delete(key);
+    return state || null;
+}
+
+/**
+ * 校验论坛频道是否可发帖
+ * @returns {string|null} 错误信息，可发帖则返回 null
+ */
+function validateForumChannel(interaction, forum) {
+    if (!forum || (forum.type !== ChannelType.GuildForum && forum.type !== ChannelType.GuildMedia)) {
+        return '❌ 目标必须是论坛频道或媒体频道。';
+    }
+
+    const memberPerms = forum.permissionsFor(interaction.member);
+    if (!memberPerms?.has(PermissionFlagsBits.ViewChannel)) {
+        return `❌ 你没有查看 <#${forum.id}> 的权限。`;
+    }
+
+    const botPerms = forum.permissionsFor(interaction.guild.members.me);
+    if (!botPerms?.has(PermissionFlagsBits.ViewChannel)) {
+        return `❌ 机器人看不到 <#${forum.id}>。`;
+    }
+    if (!botPerms.has(PermissionFlagsBits.CreatePublicThreads)) {
+        return `❌ 机器人在 <#${forum.id}> 缺少「创建公开帖子」权限，无法发帖。`;
+    }
+    if (!botPerms.has(PermissionFlagsBits.SendMessagesInThreads)) {
+        return `❌ 机器人在 <#${forum.id}> 缺少「在帖子中发言」权限，无法写首楼。`;
+    }
+
+    return null;
+}
+
+/**
+ * 解析用户填写的标签（支持标签ID或标签名，逗号分隔）
+ * @returns {{ok: true, tagIds: string[]} | {ok: false, error: string}}
+ */
+function resolveForumTags(forum, input) {
+    const available = forum.availableTags || [];
+    const requireTag = Boolean(forum.flags?.has?.(ChannelFlags.RequireTag));
+
+    const raw = (input || '').split(/[,，]/).map(s => s.trim()).filter(Boolean);
+
+    if (raw.length === 0) {
+        if (requireTag) {
+            const list = available.length
+                ? available.map(t => `\`${t.name}\``).join('、')
+                : '（该论坛没有可用标签，请联系管理员检查论坛设置）';
+            return { ok: false, error: `❌ <#${forum.id}> 要求每个帖子至少有一个标签。\n可用标签：${list}` };
+        }
+        return { ok: true, tagIds: [] };
+    }
+
+    const tagIds = [];
+    const unknown = [];
+
+    for (const token of raw) {
+        const hit = available.find(t => t.id === token || t.name === token
+            || t.name.toLowerCase() === token.toLowerCase());
+        if (hit) {
+            if (!tagIds.includes(hit.id)) tagIds.push(hit.id);
+        } else {
+            unknown.push(token);
+        }
+    }
+
+    if (unknown.length > 0) {
+        const list = available.length
+            ? available.map(t => `\`${t.name}\``).join('、')
+            : '（该论坛没有可用标签）';
+        return { ok: false, error: `❌ 找不到标签：${unknown.map(t => `\`${t}\``).join('、')}\n可用标签：${list}` };
+    }
+
+    // Discord 限制一个帖子最多 5 个标签
+    if (tagIds.length > 5) {
+        return { ok: false, error: '❌ 一个帖子最多只能有 5 个标签。' };
+    }
+
+    return { ok: true, tagIds };
+}
+
+/**
+ * 真正创建论坛帖，并把首楼记进历史
+ *
+ * @param {object} state 暂存的发帖参数
+ * @param {object} messagePayload 首楼内容（content / embeds）
+ */
+async function createForumThread(interaction, forum, state, messagePayload, note = null) {
+    const thread = await forum.threads.create({
+        name: state.title,
+        message: {
+            ...messagePayload,
+            allowedMentions: state.allowMentions ? ALLOW_MENTIONS : NO_MENTIONS,
+        },
+        appliedTags: state.tagIds || [],
+        reason: `机器人消息模块发帖（操作人 ${interaction.user.tag}）`,
+    });
+
+    // 首楼消息就是本模块之后可以编辑的对象
+    const starter = await thread.fetchStarterMessage().catch(() => null);
+
+    if (starter) {
+        try {
+            insertHistory({
+                guildId: starter.guildId,
+                channelId: starter.channelId,
+                messageId: starter.id,
+                editorId: interaction.user.id,
+                action: 'create_thread',
+                beforeContent: null,
+                beforeEmbeds: null,
+                afterContent: starter.content || '',
+                afterEmbeds: getRichEmbeds(starter).map(e => e.toJSON()),
+            });
+        } catch (error) {
+            console.error('[BotMessage] 写发帖记录失败:', error);
+        }
+
+        await writeAuditLog(interaction, {
+            action: 'create_thread',
+            channelId: starter.channelId,
+            messageId: starter.id,
+            link: messageLink(starter),
+            afterText: snapshotToText(snapshotMessage(starter)),
+            note: [`论坛：<#${forum.id}>`, `标题：${state.title}`, note].filter(Boolean).join('\n'),
+        });
+    }
+
+    console.log(`[BotMessage] ${interaction.user.tag} 在论坛 ${forum.id} 发布了帖子 ${thread.id}`);
+    return { thread, starter };
+}
+
+/**
+ * 发帖成功后的回执
+ */
+function buildForumSuccessReply(interaction, forum, thread, starter, state, extraNotes = []) {
+    const lines = [
+        `✅ 已在 <#${forum.id}> 发布帖子 <#${thread.id}>。`,
+        `**标题：** ${state.title}`,
+    ];
+
+    if (state.tagIds?.length) {
+        const names = (forum.availableTags || [])
+            .filter(t => state.tagIds.includes(t.id))
+            .map(t => `\`${t.name}\``);
+        if (names.length) lines.push(`**标签：** ${names.join('、')}`);
+    }
+
+    lines.push(...extraNotes);
+
+    if (starter) {
+        lines.push(
+            '',
+            `首楼由机器人发出，之后可以直接用「右键消息 → 应用 → 编辑机器人消息」或 \`/机器人消息 编辑\` 修改。`,
+            `[跳转到首楼](${messageLink(starter)})`,
+        );
+    } else {
+        lines.push('', 'ℹ️ 帖子已建好，但没取到首楼消息对象（不影响使用，稍后仍可用消息链接编辑）。');
+    }
+
+    return lines.join('\n');
+}
+
+/**
+ * 指令阶段：校验参数 → 存暂存态 → 弹窗 / 直接复制发帖
+ */
+async function startForumPost(interaction, forum, options) {
+    const { title, tagsInput, allowMentions, mode, sourceInput } = options;
+
+    const channelError = validateForumChannel(interaction, forum);
+    if (channelError) return { ok: false, error: channelError };
+
+    const trimmedTitle = (title || '').trim();
+    if (!trimmedTitle) {
+        return { ok: false, error: '❌ 帖子标题不能为空。' };
+    }
+    if (trimmedTitle.length > FORUM_TITLE_MAX) {
+        return { ok: false, error: `❌ 帖子标题最长 ${FORUM_TITLE_MAX} 字，当前 ${trimmedTitle.length} 字。` };
+    }
+
+    const tagResult = resolveForumTags(forum, tagsInput);
+    if (!tagResult.ok) return { ok: false, error: tagResult.error };
+
+    return {
+        ok: true,
+        state: {
+            forumId: forum.id,
+            title: trimmedTitle,
+            tagIds: tagResult.tagIds,
+            allowMentions: Boolean(allowMentions),
+            mode,
+            sourceInput,
+        },
+    };
+}
+
+/**
+ * 复制来源消息内容直接发帖（无需弹窗）
+ */
+async function createForumPostFromSource(interaction, forum, state) {
+    const sourceResult = await fetchTargetMessage(interaction, state.sourceInput);
+    if (!sourceResult.ok) {
+        await interaction.editReply({ content: `来源消息读取失败：\n${sourceResult.error}` });
+        return;
+    }
+
+    const source = sourceResult.message;
+    const content = source.content || '';
+    const embeds = getRichEmbeds(source).map(e => e.toJSON());
+
+    if (!content && embeds.length === 0) {
+        await interaction.editReply({ content: '❌ 来源消息没有任何文字或嵌入卡片内容。' });
+        return;
+    }
+
+    if (content.length > LIMITS.CONTENT) {
+        await interaction.editReply({ content: `❌ 来源消息正文 ${content.length} 字，超过 ${LIMITS.CONTENT} 字上限。` });
+        return;
+    }
+
+    try {
+        const { thread, starter } = await createForumThread(
+            interaction,
+            forum,
+            state,
+            { content: content || undefined, embeds },
+            `来源消息：${messageLink(source)}`,
+        );
+
+        const notes = [];
+        if (source.attachments.size > 0) {
+            notes.push(`⚠️ 来源消息的 ${source.attachments.size} 个附件未被复制。`);
+        }
+        const mentionNote = formatMentionNotes(
+            interaction, forum, content, state.allowMentions, !content && embeds.length > 0,
+        );
+
+        await interaction.editReply({
+            content: buildForumSuccessReply(interaction, forum, thread, starter, state, notes) + mentionNote,
+        });
+    } catch (error) {
+        console.error('[BotMessage] 复制发帖失败:', error);
+        await interaction.editReply({ content: `❌ 发帖失败：${error.message || error}` });
+    }
+}
+
+/**
+ * 论坛帖首楼（纯文本）弹窗提交
+ */
+async function handleForumTextModalSubmit(interaction) {
+    const session = await beginModalResponse(interaction);
+    if (!session.ok) return;
+
+    try {
+        if (!await ensurePermission(interaction)) return;
+
+        const [, key] = interaction.customId.split(':');
+        const state = takeForumPost(key);
+        if (!state) {
+            await interaction.editReply({ content: '❌ 本次发帖会话已过期（超过 20 分钟），请重新执行 `/机器人消息 发帖`。' });
+            return;
+        }
+
+        const forum = await interaction.guild.channels.fetch(state.forumId).catch(() => null);
+        const channelError = validateForumChannel(interaction, forum);
+        if (channelError) {
+            await interaction.editReply({ content: channelError });
+            return;
+        }
+
+        const content = interaction.fields.getTextInputValue('content');
+        if (!content?.trim()) {
+            await interaction.editReply({ content: '❌ 首楼正文不能为空。' });
+            return;
+        }
+
+        const { thread, starter } = await createForumThread(interaction, forum, state, { content });
+        await interaction.editReply({
+            content: buildForumSuccessReply(interaction, forum, thread, starter, state)
+                + formatMentionNotes(interaction, forum, content, state.allowMentions),
+        });
+    } catch (error) {
+        console.error('[BotMessage] 论坛发帖失败:', error);
+        await interaction.editReply({ content: `❌ 发帖失败：${error.message || error}` }).catch(() => {});
+    } finally {
+        await session.finish();
+    }
+}
+
+/**
+ * 论坛帖首楼（嵌入卡片）弹窗提交
+ */
+async function handleForumEmbedModalSubmit(interaction) {
+    const session = await beginModalResponse(interaction);
+    if (!session.ok) return;
+
+    try {
+        if (!await ensurePermission(interaction)) return;
+
+        const [, key] = interaction.customId.split(':');
+        const state = takeForumPost(key);
+        if (!state) {
+            await interaction.editReply({ content: '❌ 本次发帖会话已过期（超过 20 分钟），请重新执行 `/机器人消息 发帖`。' });
+            return;
+        }
+
+        const forum = await interaction.guild.channels.fetch(state.forumId).catch(() => null);
+        const channelError = validateForumChannel(interaction, forum);
+        if (channelError) {
+            await interaction.editReply({ content: channelError });
+            return;
+        }
+
+        const built = buildEmbedFromFields(interaction);
+        if (!built.ok) {
+            await interaction.editReply({ content: built.error });
+            return;
+        }
+
+        const { thread, starter } = await createForumThread(interaction, forum, state, { embeds: [built.embed] });
+        await interaction.editReply({
+            content: buildForumSuccessReply(interaction, forum, thread, starter, state)
+                + formatMentionNotes(interaction, forum, null, state.allowMentions, true),
+        });
+    } catch (error) {
+        console.error('[BotMessage] 论坛发帖（卡片）失败:', error);
+        await interaction.editReply({ content: `❌ 发帖失败：${error.message || error}` }).catch(() => {});
+    } finally {
+        await session.finish();
+    }
+}
+
+/**
+ * 从模态窗口的 5 个字段构建一个新的嵌入卡片
+ * @returns {{ok: true, embed: EmbedBuilder} | {ok: false, error: string}}
+ */
+function buildEmbedFromFields(interaction) {
+    const title = interaction.fields.getTextInputValue('title')?.trim() || '';
+    const description = interaction.fields.getTextInputValue('description') ?? '';
+    const colorRaw = interaction.fields.getTextInputValue('color') ?? '';
+    const footer = interaction.fields.getTextInputValue('footer')?.trim() || '';
+    const image = interaction.fields.getTextInputValue('image')?.trim() || '';
+
+    if (!title && !description && !image) {
+        return { ok: false, error: '❌ 标题、描述、图片至少要填一项，否则卡片是空的。' };
+    }
+
+    const colorResult = parseColor(colorRaw);
+    if (!colorResult.ok) return { ok: false, error: colorResult.error };
+
+    if (image && !/^https?:\/\//i.test(image)) {
+        return { ok: false, error: '❌ 图片链接必须以 `http://` 或 `https://` 开头。' };
+    }
+
+    const embed = new EmbedBuilder();
+    if (title) embed.setTitle(title);
+    if (description) embed.setDescription(description);
+    if (colorResult.color !== null) embed.setColor(colorResult.color);
+    if (footer) embed.setFooter({ text: footer });
+    if (image) embed.setImage(image);
+
+    return { ok: true, embed };
+}
+
 /**
  * 从来源消息复制内容并发送到目标频道
  */
@@ -953,4 +1346,12 @@ module.exports = {
     undoLastEdit,
     sendFromSource,
     snapshotToText,
+
+    // 论坛发帖
+    startForumPost,
+    stashForumPost,
+    createForumPostFromSource,
+    handleForumTextModalSubmit,
+    handleForumEmbedModalSubmit,
+    validateForumChannel,
 };

@@ -14,10 +14,15 @@ const {
     sendFromSource,
     messageLink,
     ACTION_LABELS,
+    startForumPost,
+    stashForumPost,
+    createForumPostFromSource,
 } = require('../services/botMessageService');
 const {
     buildSendTextModal,
     buildSendEmbedModal,
+    buildForumTextModal,
+    buildForumEmbedModal,
 } = require('../components/messageModals');
 const { fetchTargetMessage, truncate } = require('../utils/messageResolver');
 const {
@@ -78,6 +83,41 @@ const data = new SlashCommandBuilder()
             .setDescription('是否允许真正 @ 到人/身份组（默认否，只显示不推送）')
             .setRequired(false)))
     .addSubcommand(sub => sub
+        .setName('发帖')
+        .setDescription('用机器人在论坛频道开一个新帖（首楼归机器人，之后可随时编辑）')
+        .addChannelOption(opt => opt
+            .setName('论坛')
+            .setDescription('要发帖的论坛频道')
+            .addChannelTypes(ChannelType.GuildForum, ChannelType.GuildMedia)
+            .setRequired(true))
+        .addStringOption(opt => opt
+            .setName('标题')
+            .setDescription('帖子标题，最长 100 字')
+            .setMaxLength(100)
+            .setRequired(true))
+        .addStringOption(opt => opt
+            .setName('标签')
+            .setDescription('帖子标签，可多选（逗号分隔）。部分论坛强制要求标签')
+            .setAutocomplete(true)
+            .setRequired(false))
+        .addStringOption(opt => opt
+            .setName('形式')
+            .setDescription('默认：弹窗写纯文本首楼')
+            .setRequired(false)
+            .addChoices(
+                { name: '纯文本（弹窗输入）', value: 'text' },
+                { name: '嵌入卡片（弹窗输入）', value: 'embed' },
+                { name: '复制另一条消息的内容', value: 'copy' },
+            ))
+        .addStringOption(opt => opt
+            .setName('来源消息')
+            .setDescription('形式选择「复制另一条消息」时必填：草稿消息的链接')
+            .setRequired(false))
+        .addBooleanOption(opt => opt
+            .setName('允许提及')
+            .setDescription('首楼是否允许真正 @ 到人/身份组（默认否）')
+            .setRequired(false)))
+    .addSubcommand(sub => sub
         .setName('替换')
         .setDescription('用一条草稿消息的内容，整体覆盖机器人已发出的消息（适合长文/复杂排版）')
         .addStringOption(opt => opt
@@ -135,6 +175,11 @@ async function execute(interaction) {
     try {
         if (sub === '发送') {
             await handleSend(interaction);
+            return;
+        }
+
+        if (sub === '发帖') {
+            await handleForumPost(interaction);
             return;
         }
 
@@ -216,6 +261,93 @@ async function handleSend(interaction) {
         : buildSendTextModal(channelOption.id, allowMentions);
 
     await interaction.showModal(modal);
+}
+
+async function handleForumPost(interaction) {
+    const forumOption = interaction.options.getChannel('论坛');
+    const mode = interaction.options.getString('形式') || 'text';
+
+    const forum = await interaction.guild.channels.fetch(forumOption.id).catch(() => null);
+
+    const prepared = await startForumPost(interaction, forum, {
+        title: interaction.options.getString('标题'),
+        tagsInput: interaction.options.getString('标签'),
+        allowMentions: interaction.options.getBoolean('允许提及') ?? false,
+        mode,
+        sourceInput: interaction.options.getString('来源消息'),
+    });
+
+    if (!prepared.ok) {
+        // 校验失败仍要给出可见反馈：弹窗路径尚未响应过交互，这里直接私密回复
+        await interaction.reply({ content: prepared.error, flags: MessageFlags.Ephemeral });
+        return;
+    }
+
+    if (mode === 'copy') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        if (!prepared.state.sourceInput) {
+            await interaction.editReply({ content: '❌ 形式选择了「复制另一条消息的内容」，请同时填写「来源消息」。' });
+            return;
+        }
+
+        await createForumPostFromSource(interaction, forum, prepared.state);
+        return;
+    }
+
+    // 弹窗路径：标题/标签暂存到服务端，弹窗只带一个短 key
+    const stateKey = interaction.id;
+    stashForumPost(stateKey, prepared.state);
+
+    const modal = mode === 'embed'
+        ? buildForumEmbedModal(stateKey)
+        : buildForumTextModal(stateKey);
+
+    await interaction.showModal(modal);
+}
+
+/**
+ * 「标签」选项的自动补全：列出目标论坛的可用标签
+ */
+async function autocomplete(interaction) {
+    try {
+        if (interaction.options.getSubcommand() !== '发帖') {
+            await interaction.respond([]);
+            return;
+        }
+
+        const forumOption = interaction.options.getChannel('论坛');
+        if (!forumOption) {
+            await interaction.respond([]);
+            return;
+        }
+
+        const forum = await interaction.guild.channels.fetch(forumOption.id).catch(() => null);
+        const tags = forum?.availableTags || [];
+
+        const focused = (interaction.options.getFocused() || '').toLowerCase();
+        // 支持「已填A, 正在填B」：只对最后一段做匹配，选中后拼回前面已填的部分
+        const segments = focused.split(/[,，]/);
+        const current = segments[segments.length - 1].trim();
+        const prefix = segments.slice(0, -1).map(s => s.trim()).filter(Boolean);
+
+        const choices = tags
+            .filter(t => !current || t.name.toLowerCase().includes(current))
+            .filter(t => !prefix.includes(t.name.toLowerCase()))
+            .slice(0, 25)
+            .map(t => {
+                const combined = [...prefix, t.name].join(', ');
+                return {
+                    name: combined.length > 100 ? t.name : combined,
+                    value: combined.length > 100 ? t.name : combined,
+                };
+            });
+
+        await interaction.respond(choices);
+    } catch (error) {
+        console.error('[BotMessage] 标签自动补全失败:', error);
+        await interaction.respond([]).catch(() => {});
+    }
 }
 
 async function handleHistory(interaction) {
@@ -343,4 +475,5 @@ async function handleConfig(interaction) {
 module.exports = {
     data,
     execute,
+    autocomplete,
 };

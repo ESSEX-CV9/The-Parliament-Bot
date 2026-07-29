@@ -7,6 +7,8 @@ const {
     handleEmbedModalSubmit,
     handleSendTextModalSubmit,
     handleSendEmbedModalSubmit,
+    handleForumTextModalSubmit,
+    handleForumEmbedModalSubmit,
 } = require('./services/botMessageService');
 
 // interactionCreate 用这个前缀把交互整体转发给本模块
@@ -52,6 +54,14 @@ async function handleBotMessageInteraction(interaction) {
         }
         if (customId.startsWith(`${IDS.MODAL_SEND_EMBED}:`)) {
             await handleSendEmbedModalSubmit(interaction);
+            return true;
+        }
+        if (customId.startsWith(`${IDS.MODAL_FORUM_TEXT}:`)) {
+            await handleForumTextModalSubmit(interaction);
+            return true;
+        }
+        if (customId.startsWith(`${IDS.MODAL_FORUM_EMBED}:`)) {
+            await handleForumEmbedModalSubmit(interaction);
             return true;
         }
         return false;

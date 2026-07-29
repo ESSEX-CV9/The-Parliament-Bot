@@ -24,6 +24,8 @@ const IDS = {
     MODAL_EDIT_EMBED: 'botmsg_m_embed',
     MODAL_SEND_TEXT: 'botmsg_m_send_text',
     MODAL_SEND_EMBED: 'botmsg_m_send_embed',
+    MODAL_FORUM_TEXT: 'botmsg_m_forum_text',
+    MODAL_FORUM_EMBED: 'botmsg_m_forum_embed',
     BTN_PICK_CONTENT: 'botmsg_b_content',
     BTN_PICK_EMBED: 'botmsg_b_embed',
     BTN_CANCEL: 'botmsg_b_cancel',
@@ -191,14 +193,10 @@ function buildSendTextModal(channelId, allowMentions) {
 }
 
 /**
- * 发送新的嵌入卡片消息的模态窗口
+ * 空白嵌入卡片的 5 个输入框（发送新消息 / 发布论坛帖共用）
  */
-function buildSendEmbedModal(channelId, allowMentions) {
-    const modal = new ModalBuilder()
-        .setCustomId(`${IDS.MODAL_SEND_EMBED}:${channelId}:${allowMentions ? '1' : '0'}`)
-        .setTitle('用机器人发送嵌入卡片');
-
-    modal.addComponents(
+function blankEmbedRows() {
+    return [
         row(new TextInputBuilder()
             .setCustomId('title')
             .setLabel('标题')
@@ -231,9 +229,47 @@ function buildSendEmbedModal(channelId, allowMentions) {
             .setStyle(TextInputStyle.Short)
             .setMaxLength(1024)
             .setRequired(false)),
-    );
+    ];
+}
 
-    return modal;
+/**
+ * 发送新的嵌入卡片消息的模态窗口
+ */
+function buildSendEmbedModal(channelId, allowMentions) {
+    return new ModalBuilder()
+        .setCustomId(`${IDS.MODAL_SEND_EMBED}:${channelId}:${allowMentions ? '1' : '0'}`)
+        .setTitle('用机器人发送嵌入卡片')
+        .addComponents(...blankEmbedRows());
+}
+
+/**
+ * 发布论坛帖 —— 首楼为纯文本
+ *
+ * 帖子标题、标签等已在指令选项里给过，暂存在服务端，这里只用一个短 key 关联，
+ * 避免把长标题塞进 customId（上限 100 字符）。
+ * @param {string} stateKey 暂存态的键
+ */
+function buildForumTextModal(stateKey) {
+    return new ModalBuilder()
+        .setCustomId(`${IDS.MODAL_FORUM_TEXT}:${stateKey}`)
+        .setTitle('发布论坛帖子')
+        .addComponents(row(new TextInputBuilder()
+            .setCustomId('content')
+            .setLabel('首楼正文')
+            .setPlaceholder('支持 Markdown。提及要写成 <@用户ID> 或 <@&身份组ID>，最多 2000 字')
+            .setStyle(TextInputStyle.Paragraph)
+            .setMaxLength(LIMITS.CONTENT)
+            .setRequired(true)));
+}
+
+/**
+ * 发布论坛帖 —— 首楼为嵌入卡片
+ */
+function buildForumEmbedModal(stateKey) {
+    return new ModalBuilder()
+        .setCustomId(`${IDS.MODAL_FORUM_EMBED}:${stateKey}`)
+        .setTitle('发布论坛帖子（卡片）')
+        .addComponents(...blankEmbedRows());
 }
 
 module.exports = {
@@ -245,4 +281,6 @@ module.exports = {
     buildEmbedModal,
     buildSendTextModal,
     buildSendEmbedModal,
+    buildForumTextModal,
+    buildForumEmbedModal,
 };
