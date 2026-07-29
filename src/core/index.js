@@ -176,7 +176,6 @@ const roleSyncConfigCommand = require('../modules/roleSync/commands/roleSyncConf
 const { startPunishmentSystem } = require('../modules/punishment');
 const punishCommand = require('../modules/punishment/commands/punish');
 const disciplineCommand = require('../modules/punishment/commands/discipline');
-const disciplineConfigCommand = require('../modules/punishment/commands/disciplineConfig');
 
 // 机器人消息管理系统（编辑 bot 已发出的常驻消息）
 const { startBotMessageSystem } = require('../modules/botMessage');
@@ -370,7 +369,6 @@ client.commands.set(roleSyncConfigCommand.data.name, roleSyncConfigCommand);
 // 处罚系统命令
 client.commands.set(punishCommand.data.name, punishCommand);
 client.commands.set(disciplineCommand.data.name, disciplineCommand);
-client.commands.set(disciplineConfigCommand.data.name, disciplineConfigCommand);
 
 // 机器人消息管理系统命令
 client.commands.set(botMessageCommand.data.name, botMessageCommand);

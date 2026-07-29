@@ -1,5 +1,8 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { checkAdminPermission } = require('../../../core/utils/permissionManager');
+// src/modules/punishment/commands/disciplineConfig.js
+//
+// 风纪配置原本是独立指令 /风纪配置，现已并入 /风纪 配置 子指令组，
+// 本文件保留指令定义与处理逻辑，由 discipline.js 组装调用。
+const { EmbedBuilder } = require('discord.js');
 const { parseDuration } = require('../utils/timeParser');
 const {
     getDisciplineAllowedRoles,
@@ -10,43 +13,49 @@ const {
 
 const MAX_TIMEOUT_MS = 28 * 24 * 3600 * 1000; // Discord timeout 上限 28 天
 
-const data = new SlashCommandBuilder()
-    .setName('风纪配置')
-    .setDescription('配置风纪指令（可用身份组与时长上限）')
-    .setDefaultMemberPermissions(0)
-    .addSubcommand(sub => sub
-        .setName('身份组')
-        .setDescription('管理可以使用 /风纪 指令的身份组')
-        .addStringOption(opt => opt
-            .setName('操作')
-            .setDescription('添加、移除或查看列表')
-            .setRequired(true)
-            .addChoices(
-                { name: '添加', value: 'add' },
-                { name: '移除', value: 'remove' },
-                { name: '查看列表', value: 'list' },
-            ))
-        .addRoleOption(opt => opt.setName('身份组').setDescription('要添加或移除的身份组').setRequired(false))
-    )
-    .addSubcommand(sub => sub
-        .setName('上限')
-        .setDescription('设置风纪禁言/警告的时长上限（至少填一项）')
-        .addStringOption(opt => opt.setName('禁言上限').setDescription('如 2h 或 3d（禁言不超过 28 天）').setRequired(false))
-        .addStringOption(opt => opt.setName('警告上限').setDescription('如 7d 或 12h').setRequired(false))
-    )
-    .addSubcommand(sub => sub
-        .setName('查看')
-        .setDescription('查看当前风纪配置')
-    );
+/**
+ * 把「配置」子指令组挂到 /风纪 上
+ *
+ * 注意：该组仅限管理员，而 /风纪 的其它子指令风纪委员也能用，
+ * 权限差异由 discipline.js 在分发时区分。
+ * @param {import('discord.js').SlashCommandBuilder} builder
+ */
+function addDisciplineConfigGroup(builder) {
+    return builder.addSubcommandGroup(group => group
+        .setName('配置')
+        .setDescription('配置风纪指令（仅管理员）：可用身份组与时长上限')
+        .addSubcommand(sub => sub
+            .setName('身份组')
+            .setDescription('管理可以使用 /风纪 指令的身份组')
+            .addStringOption(opt => opt
+                .setName('操作')
+                .setDescription('添加、移除或查看列表')
+                .setRequired(true)
+                .addChoices(
+                    { name: '添加', value: 'add' },
+                    { name: '移除', value: 'remove' },
+                    { name: '查看列表', value: 'list' },
+                ))
+            .addRoleOption(opt => opt.setName('身份组').setDescription('要添加或移除的身份组').setRequired(false))
+        )
+        .addSubcommand(sub => sub
+            .setName('上限')
+            .setDescription('设置风纪禁言/警告的时长上限（至少填一项）')
+            .addStringOption(opt => opt.setName('禁言上限').setDescription('如 2h 或 3d（禁言不超过 28 天）').setRequired(false))
+            .addStringOption(opt => opt.setName('警告上限').setDescription('如 7d 或 12h').setRequired(false))
+        )
+        .addSubcommand(sub => sub
+            .setName('查看')
+            .setDescription('查看当前风纪配置')
+        ));
+}
 
-async function execute(interaction) {
-    if (!checkAdminPermission(interaction.member)) {
-        await interaction.reply({ content: '❌ 你没有权限使用此命令', ephemeral: true });
-        return;
-    }
-
-    await interaction.deferReply({ ephemeral: true });
-
+/**
+ * 处理 /风纪 配置 ... 的执行
+ *
+ * 调用方需保证：已完成管理员权限校验，且已 deferReply。
+ */
+async function handleDisciplineConfig(interaction) {
     const sub = interaction.options.getSubcommand();
     const guildId = interaction.guild.id;
 
@@ -163,4 +172,7 @@ async function execute(interaction) {
     }
 }
 
-module.exports = { data, execute };
+module.exports = {
+    addDisciplineConfigGroup,
+    handleDisciplineConfig,
+};

@@ -1,8 +1,10 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const {
+    checkAdminPermission,
     checkDisciplinePermission,
     getDisciplinePermissionDeniedMessage,
 } = require('../../../core/utils/permissionManager');
+const { addDisciplineConfigGroup, handleDisciplineConfig } = require('./disciplineConfig');
 const { parseDuration } = require('../utils/timeParser');
 const { executeMute, executeWarnRole, executeUnmute } = require('../services/punishmentExecutor');
 const { getPunishmentRecords, getDisciplineAllowedRoles, getDisciplineLimits } = require('../services/punishmentDatabase');
@@ -41,7 +43,22 @@ const data = new SlashCommandBuilder()
         .addUserOption(opt => opt.setName('用户').setDescription('要查询的用户').setRequired(true))
     );
 
+// 原 /风纪配置 指令并入这里的「配置」子指令组（仅管理员）
+addDisciplineConfigGroup(data);
+
 async function execute(interaction) {
+    // 「配置」组仅限管理员；其余子指令风纪委员即可使用。
+    // 两者权限边界不同，合并后必须分开判定，不能共用一套检查。
+    if (interaction.options.getSubcommandGroup(false) === '配置') {
+        if (!checkAdminPermission(interaction.member)) {
+            await interaction.reply({ content: '❌ 风纪配置仅限管理员使用', ephemeral: true });
+            return;
+        }
+        await interaction.deferReply({ ephemeral: true });
+        await handleDisciplineConfig(interaction);
+        return;
+    }
+
     const allowedRoles = getDisciplineAllowedRoles(interaction.guild.id);
     if (!checkDisciplinePermission(interaction.member, allowedRoles)) {
         await interaction.reply({ content: getDisciplinePermissionDeniedMessage(), ephemeral: true });
