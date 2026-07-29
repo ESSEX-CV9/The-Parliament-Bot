@@ -709,68 +709,55 @@ async function undoLastEdit(interaction, targetInput) {
 // ==================== 发送新消息 ====================
 
 /**
- * 解析「发送」的目标：频道选择器 / 文本输入 / 默认当前频道
+ * 解析「发送」的目标：频道选项 / 帖子链接 / 默认当前所在处
  *
- * Discord 的频道选择器不会列出论坛帖与子区，所以额外提供文本输入路径。
+ * Discord 的频道选择器列不出论坛帖与子区，所以必须额外支持链接或ID。
+ *
  * @returns {Promise<{ok: true, channel: object} | {ok: false, error: string}>}
  */
-async function resolveSendTarget(interaction, channelOption, targetInput) {
-    // 两个都填时以文本输入为准（它能表达选择器表达不了的目标）
-    if (targetInput) {
-        const ref = parseChannelReference(targetInput);
+async function resolveSendTarget(interaction, channelOption, linkInput) {
+    let channelId = null;
+
+    if (linkInput && String(linkInput).trim()) {
+        const ref = parseChannelReference(linkInput);
         if (!ref) {
             return {
                 ok: false,
                 error: [
-                    '❌ 无法识别「帖子或频道」的内容。',
+                    '❌ 无法识别「帖子或频道」的填写内容。',
                     '',
-                    '**支持的填写方式：**',
-                    '• 帖子/频道链接：`https://discord.com/channels/服务器ID/频道ID`（右键帖子 → 复制链接）',
-                    '• 帖子里任意一条消息的链接',
-                    '• `<#频道ID>` 形式的提及',
-                    '• 纯频道ID / 帖子ID',
+                    '**支持的写法：**',
+                    '• 帖子/频道链接：右键论坛帖或子区 → 复制链接',
+                    '• `<#频道ID>` 形式的频道提及',
+                    '• 纯频道ID / 帖子ID（开发者模式下右键 → 复制ID）',
                 ].join('\n'),
             };
         }
-
         if (ref.guildId && ref.guildId !== interaction.guild.id) {
             return { ok: false, error: '❌ 目标不在本服务器，出于安全考虑不允许跨服务器发送。' };
         }
-
-        const channel = await interaction.guild.channels.fetch(ref.channelId).catch(() => null);
-        if (!channel) {
-            return { ok: false, error: `❌ 找不到频道或帖子 \`${ref.channelId}\`，或机器人没有权限访问它。` };
-        }
-        return { ok: true, channel };
+        channelId = ref.channelId;
+    } else if (channelOption) {
+        channelId = channelOption.id;
+    } else {
+        // 都没填就默认发到执行指令的当前频道/帖子
+        channelId = interaction.channelId;
     }
 
-    if (channelOption) {
-        const channel = await interaction.guild.channels.fetch(channelOption.id).catch(() => null);
-        if (!channel) {
-            return { ok: false, error: '❌ 无法访问所选频道。' };
-        }
-        return { ok: true, channel };
+    const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
+    if (!channel) {
+        return { ok: false, error: `❌ 找不到频道或帖子 \`${channelId}\`，可能已被删除，或机器人没有权限访问它。` };
     }
 
-    // 都没填 → 发到当前所在的频道 / 帖子
-    const current = interaction.channel
-        || await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
-    if (!current) {
-        return { ok: false, error: '❌ 请指定「频道」或「帖子或频道」其中之一。' };
-    }
-    return { ok: true, channel: current };
+    return { ok: true, channel };
 }
 
 /**
  * 校验目标频道是否可发送
  */
 async function validateSendChannel(interaction, channel) {
-    if (channel?.type === ChannelType.GuildForum || channel?.type === ChannelType.GuildMedia) {
-        return `❌ <#${channel.id}> 是论坛频道，不能直接往里发消息。\n请改用 \`/机器人消息 发帖\` 开新帖，或指定论坛里的某个具体帖子。`;
-    }
-
     if (!channel?.isTextBased?.() || channel.isVoiceBased?.()) {
-        return '❌ 目标必须是文字频道 / 子区 / 论坛帖。';
+        return '❌ 目标必须是文字频道 / 子区。';
     }
 
     const memberPerms = channel.permissionsFor(interaction.member);
@@ -792,6 +779,15 @@ async function validateSendChannel(interaction, channel) {
  * 常见两种：正文里写了 @everyone/@here 但机器人没有该权限；
  * 或者内容只在嵌入卡片里——卡片内的提及永远只渲染不推送，这是 Discord 的规则。
  */
+/**
+ * 目标是归档帖时的补充说明（发送场景：解归档后保持活跃，不再归档回去）
+ */
+function formatSendArchiveNote(sent) {
+    if (!sent?._botMessageUnarchived) return '';
+    return '\n\n🗄️ 目标帖子原本处于归档状态，已解除归档以便发言；'
+        + '为了让新消息可见，**未再归档回去**，如需归档请手动操作。';
+}
+
 function formatMentionNotes(interaction, channel, content, allowMentions, embedOnly = false) {
     if (!allowMentions) return '';
 
@@ -815,7 +811,9 @@ function formatMentionNotes(interaction, channel, content, allowMentions, embedO
  * 真正把消息发出去，并记一条 action=send 的历史
  */
 async function deliverMessage(interaction, channel, payload, note = null) {
-    // 目标是已归档的帖子时，先临时解除归档，发完再归回去
+    // 目标是已归档的帖子/子区时先解除归档，否则 Discord 拒收。
+    // 这里不再归档回去 —— 正常成员往归档帖发言时 Discord 本来就会让它保持活跃，
+    // 若立刻归档，刚发的消息反而会被折叠起来看不见。
     const archiveState = await unarchiveIfNeeded(
         channel,
         `机器人消息模块发送消息（操作人 ${interaction.user.tag}）`,
@@ -826,15 +824,12 @@ async function deliverMessage(interaction, channel, payload, note = null) {
 
     // 调用方必须显式给出 allowedMentions（ALLOW_MENTIONS 或 NO_MENTIONS）。
     // 这里只在完全没传时兜底为「不提及」，不再用 || 回退——否则会把显式放行也当成假值吃掉。
-    let sent;
-    try {
-        sent = await channel.send({
-            ...payload,
-            allowedMentions: payload.allowedMentions ?? NO_MENTIONS,
-        });
-    } finally {
-        await restoreArchiveState(archiveState, '发送完成，恢复归档');
-    }
+    const sent = await channel.send({
+        ...payload,
+        allowedMentions: payload.allowedMentions ?? NO_MENTIONS,
+    });
+
+    sent._botMessageUnarchived = archiveState.wasArchived;
 
     try {
         insertHistory({
@@ -862,24 +857,13 @@ async function deliverMessage(interaction, channel, payload, note = null) {
     });
 
     console.log(`[BotMessage] ${interaction.user.tag} 发送了新消息：${messageLink(sent)}`);
-    sent.__threadUnarchived = archiveState.wasArchived;
     return sent;
 }
 
 async function handleSendTextModalSubmit(interaction) {
-    // 指令可能是在归档帖里敲的，必须先解归档才能响应交互
-    const session = await beginModalResponse(interaction);
-    if (!session.ok) return;
-
-    try {
-        await runSendTextModalSubmit(interaction);
-    } finally {
-        await session.finish();
-    }
-}
-
-async function runSendTextModalSubmit(interaction) {
     if (!await ensurePermission(interaction)) return;
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const [, channelId, allowMentionsFlag] = interaction.customId.split(':');
     const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
@@ -904,7 +888,8 @@ async function runSendTextModalSubmit(interaction) {
         });
         await interaction.editReply({
             content: `✅ 已在 <#${channel.id}> 发送消息。[点击查看](${messageLink(sent)})`
-                + formatMentionNotes(interaction, channel, content, allowMentions),
+                + formatMentionNotes(interaction, channel, content, allowMentions)
+                + formatSendArchiveNote(sent),
         });
     } catch (error) {
         console.error('[BotMessage] 发送消息失败:', error);
@@ -913,18 +898,9 @@ async function runSendTextModalSubmit(interaction) {
 }
 
 async function handleSendEmbedModalSubmit(interaction) {
-    const session = await beginModalResponse(interaction);
-    if (!session.ok) return;
-
-    try {
-        await runSendEmbedModalSubmit(interaction);
-    } finally {
-        await session.finish();
-    }
-}
-
-async function runSendEmbedModalSubmit(interaction) {
     if (!await ensurePermission(interaction)) return;
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const [, channelId, allowMentionsFlag] = interaction.customId.split(':');
     const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
@@ -972,7 +948,8 @@ async function runSendEmbedModalSubmit(interaction) {
         });
         await interaction.editReply({
             content: `✅ 已在 <#${channel.id}> 发送嵌入卡片。[点击查看](${messageLink(sent)})`
-                + formatMentionNotes(interaction, channel, null, allowMentions, true),
+                + formatMentionNotes(interaction, channel, null, allowMentions, true)
+                + formatSendArchiveNote(sent),
         });
     } catch (error) {
         console.error('[BotMessage] 发送嵌入卡片失败:', error);
@@ -1414,7 +1391,8 @@ async function sendFromSource(interaction, channel, sourceInput, allowMentions) 
 
         await interaction.editReply({
             content: [`✅ 已在 <#${channel.id}> 发送消息。[点击查看](${messageLink(sent)})`, ...notes].join('\n')
-                + formatMentionNotes(interaction, channel, content, allowMentions, !content && embeds.length > 0),
+                + formatMentionNotes(interaction, channel, content, allowMentions, !content && embeds.length > 0)
+                + formatSendArchiveNote(sent),
         });
     } catch (error) {
         console.error('[BotMessage] 复制发送失败:', error);
@@ -1438,7 +1416,6 @@ module.exports = {
     undoLastEdit,
     sendFromSource,
     resolveSendTarget,
-    validateSendChannel,
     snapshotToText,
 
     // 论坛发帖

@@ -18,7 +18,6 @@ const {
     stashForumPost,
     createForumPostFromSource,
     resolveSendTarget,
-    validateSendChannel,
 } = require('../services/botMessageService');
 const {
     buildSendTextModal,
@@ -61,15 +60,15 @@ const data = new SlashCommandBuilder()
             .setRequired(true)))
     .addSubcommand(sub => sub
         .setName('发送')
-        .setDescription('用机器人在指定频道或帖子里发一条新消息')
+        .setDescription('用机器人在指定频道或论坛帖/子区发一条新消息')
         .addChannelOption(opt => opt
             .setName('频道')
-            .setDescription('要发送到的频道（选择器列不出论坛帖/子区，那种请用下面的「帖子或频道」）')
+            .setDescription('要发送到的频道（论坛帖/子区请改用下面的「帖子或频道」）')
             .addChannelTypes(...TEXT_CHANNEL_TYPES)
             .setRequired(false))
         .addStringOption(opt => opt
             .setName('帖子或频道')
-            .setDescription('帖子/频道的链接或ID，也可填帖子里任意一条消息的链接。留空则发到当前所在位置')
+            .setDescription('论坛帖/子区的链接或ID。Discord 的频道选择器列不出帖子，所以用这个')
             .setRequired(false))
         .addStringOption(opt => opt
             .setName('形式')
@@ -241,35 +240,32 @@ async function handleEdit(interaction) {
 async function handleSend(interaction) {
     const mode = interaction.options.getString('形式') || 'text';
     const allowMentions = interaction.options.getBoolean('允许提及') ?? false;
+    const channelOption = interaction.options.getChannel('频道');
+    const linkInput = interaction.options.getString('帖子或频道');
 
-    const target = await resolveSendTarget(
-        interaction,
-        interaction.options.getChannel('频道'),
-        interaction.options.getString('帖子或频道'),
-    );
-
-    if (!target.ok) {
-        await interaction.reply({ content: target.error, flags: MessageFlags.Ephemeral });
-        return;
-    }
-
-    // 目标不可发送时也要在弹窗弹出前拦下，否则用户白填一遍内容
-    const channelError = await validateSendChannel(interaction, target.channel);
-    if (channelError) {
-        await interaction.reply({ content: channelError, flags: MessageFlags.Ephemeral });
-        return;
-    }
+    // 频道选项与帖子链接二选一；都不填就默认发到执行指令的当前位置
+    const target = await resolveSendTarget(interaction, channelOption, linkInput);
 
     if (mode === 'copy') {
         const sourceInput = interaction.options.getString('来源消息');
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+        if (!target.ok) {
+            await interaction.editReply({ content: target.error });
+            return;
+        }
         if (!sourceInput) {
             await interaction.editReply({ content: '❌ 形式选择了「复制另一条消息的内容」，请同时填写「来源消息」。' });
             return;
         }
 
         await sendFromSource(interaction, target.channel, sourceInput, allowMentions);
+        return;
+    }
+
+    // 弹窗路径尚未响应过交互，目标有问题就直接私密回复
+    if (!target.ok) {
+        await interaction.reply({ content: target.error, flags: MessageFlags.Ephemeral });
         return;
     }
 
