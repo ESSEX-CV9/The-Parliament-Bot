@@ -160,6 +160,11 @@ const controlledInviteParamsCommand = require('../modules/controlledInvite/comma
 const controlledInviteToggleCommand = require('../modules/controlledInvite/commands/controlledInviteToggle');
 const viewMyControlledInviteStatusCommand = require('../modules/controlledInvite/commands/viewMyControlledInviteStatus');
 
+// Discord 安全措施（邀请暂停托管）
+const { startSafetySetupSystem } = require('../modules/safetySetup');
+const closeDoorCommand = require('../modules/safetySetup/commands/closeDoor');
+const openDoorCommand = require('../modules/safetySetup/commands/openDoor');
+
 const DISCORD_REST_TIMEOUT_MS = (() => {
     const n = Number(process.env.DISCORD_REST_TIMEOUT_MS);
     return Number.isFinite(n) && n > 0 ? n : 15000;
@@ -322,6 +327,10 @@ client.commands.set(controlledInviteParamsCommand.data.name, controlledInvitePar
 client.commands.set(controlledInviteToggleCommand.data.name, controlledInviteToggleCommand);
 client.commands.set(viewMyControlledInviteStatusCommand.data.name, viewMyControlledInviteStatusCommand);
 
+// Discord 安全措施
+client.commands.set(closeDoorCommand.data.name, closeDoorCommand);
+client.commands.set(openDoorCommand.data.name, openDoorCommand);
+
 client.once(Events.ClientReady, async (readyClient) => {
     try {
         // 启动时强制同步命令（clientReadyHandler 内部会执行 rest.put 刷新命令）
@@ -380,6 +389,9 @@ client.once(Events.ClientReady, async (readyClient) => {
 
     // 启动分服受控邀请系统
     await startControlledInviteSystem(readyClient);
+
+    // 启动 Discord 安全措施邀请暂停托管
+    await startSafetySetupSystem(readyClient);
 
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
