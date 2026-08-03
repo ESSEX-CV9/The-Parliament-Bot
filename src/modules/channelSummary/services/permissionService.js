@@ -1,24 +1,17 @@
 // src/modules/channelSummary/services/permissionService.js
 
 const presetService = require("./presetService");
+const {
+  checkAdminPermission,
+} = require("../../../core/utils/permissionManager");
 
 const PERM_DENIED = "❌ 权限不足：仅授权用户使用此功能。";
 
-function parseEnvList(raw) {
-  if (!raw || typeof raw !== "string") return [];
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 /**
- * 判断用户是否拥有管理员身份组（from .env SUMMARY_ADMIN_ROLE_IDS）
+ * 使用全局统一规则判断用户是否拥有管理员权限
  */
 function isAdmin(member) {
-  const adminRoleIds = parseEnvList(process.env.SUMMARY_ADMIN_ROLE_IDS);
-  if (adminRoleIds.length === 0) return false;
-  return adminRoleIds.some((rid) => member.roles.cache.has(rid));
+  return checkAdminPermission(member);
 }
 
 /**
@@ -41,7 +34,6 @@ function getPermissionLevel(member, guildId) {
 
 module.exports = {
   PERM_DENIED,
-  parseEnvList,
   isAdmin,
   isAuthorized,
   getPermissionLevel,
