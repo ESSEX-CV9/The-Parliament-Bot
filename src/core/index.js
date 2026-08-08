@@ -165,6 +165,9 @@ const { startSafetySetupSystem } = require('../modules/safetySetup');
 const closeDoorCommand = require('../modules/safetySetup/commands/closeDoor');
 const openDoorCommand = require('../modules/safetySetup/commands/openDoor');
 
+// 神秘指令娱乐系统
+const mysteryCommand = require('../modules/mystery/commands/mysteryCommand');
+
 const DISCORD_REST_TIMEOUT_MS = (() => {
     const n = Number(process.env.DISCORD_REST_TIMEOUT_MS);
     return Number.isFinite(n) && n > 0 ? n : 15000;
@@ -330,6 +333,9 @@ client.commands.set(viewMyControlledInviteStatusCommand.data.name, viewMyControl
 // Discord 安全措施
 client.commands.set(closeDoorCommand.data.name, closeDoorCommand);
 client.commands.set(openDoorCommand.data.name, openDoorCommand);
+
+// 神秘指令娱乐系统
+client.commands.set(mysteryCommand.data.name, mysteryCommand);
 
 client.once(Events.ClientReady, async (readyClient) => {
     try {
