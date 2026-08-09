@@ -2,7 +2,12 @@ const { randomUUID } = require('node:crypto');
 const { MessageFlags } = require('discord.js');
 const gameManager = require('./mysteryGameManager');
 const panels = require('./pressureRoulettePanels');
-const { applyCowardPenalty, settleCowardPenalties } = require('./cowardPenalty');
+const {
+    applyCowardPenalty,
+    settleCowardPenalties,
+    cowardPenaltyMinutes,
+    cowardPenaltyRemainingMs,
+} = require('./cowardPenalty');
 
 const GAME_TYPE = 'pressure';
 const CUSTOM_ID_PREFIX = 'mystery_pressure_';
@@ -38,6 +43,16 @@ const TURN_ACTIONS = Object.freeze({
 const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
 const CHANNEL_BUSY_MESSAGE = '🔫 **这个频道已经有一场加压俄罗斯轮盘了。**\n等那把枪打空了再开新的。';
 const TIMEOUT_BLOCKED_MESSAGE = '🔫 **左轮拒绝了你。**\n你当前还在禁言，暂时无法参加。';
+
+// 名字上还挂着 🤡 的时候不能上桌：跑一次就得把这轮的耻辱挂满。
+function cowardBlockedMessage(remainingMs) {
+    const minutes = Math.max(1, Math.ceil(remainingMs / 60000));
+    return [
+        '🤡 **你现在还是个胆小鬼。**',
+        `名字上的 🤡 还有大约 **${minutes} 分钟**才摘得掉。`,
+        '在那之前，这把枪不接待你。',
+    ].join('\n');
+}
 const INVALID_MEMBER_MESSAGE = '⚠️ **你现在无法参加这场加压俄罗斯轮盘。**';
 const EXPIRED_MESSAGE = '⌛ **这场加压俄罗斯轮盘已经结束或失效了。**';
 const FULL_MESSAGE = '🔫 **这局已经满员了。**';
@@ -77,10 +92,12 @@ function nameFor(game, userId) {
 }
 
 // 机器人偏激进：不加压就不会有人被淘汰，测试时局面推不动。
+// 攒了蓄力就更倾向于兑现，否则测试局里几乎看不到一次塞好几发的情况。
 function pickVirtualAction(game) {
     const roll = randomFor(game);
-    if (game.bullets < CHAMBER_COUNT && roll < 0.35) return 'load';
-    if (roll < 0.55) return 'again';
+    const charge = chargeFor(game, game.alive[game.turnIndex]);
+    if (game.bullets < CHAMBER_COUNT && roll < 0.35 + (charge * 0.2)) return 'load';
+    if (roll < 0.7) return 'again';
     return 'pass';
 }
 
@@ -110,8 +127,29 @@ function unknownChamberCount(game) {
     return game.revealed.reduce((total, revealed) => (revealed ? total : total + 1), 0);
 }
 
+// 赌注按「一共往枪里塞了几发」算，而不是按加压次数：
+// 蓄力兑现时一次塞 3 发，赌注就要涨 3 分钟。
 function currentStakeMinutes(game) {
-    return BASE_TIMEOUT_MINUTES + (game.pressure * MINUTES_PER_PRESSURE);
+    return BASE_TIMEOUT_MINUTES + ((game.pressureBullets || 0) * MINUTES_PER_PRESSURE);
+}
+
+// 连开蓄力：连续对自己开枪，每撑过一枪攒 1 层，加压时兑现成额外子弹。
+// 蓄力连着持有人一起记，这样有人中途退出导致轮次错位时，
+// 攒下的层数也不会被别人捡走，枪一离手自然失效。
+function chargeFor(game, userId) {
+    if (!userId || game.chargeOwnerId !== userId) return 0;
+    return game.charge || 0;
+}
+
+function setCharge(game, userId, value) {
+    const next = Math.max(0, value);
+    game.charge = next;
+    game.chargeOwnerId = next > 0 ? userId : null;
+}
+
+// 这次加压实际能塞进去几发：基础 1 发 + 蓄力层数，塞不下就按弹巢剩余空位截断。
+function loadBulletsFor(game, userId) {
+    return Math.min(1 + chargeFor(game, userId), CHAMBER_COUNT - game.bullets);
 }
 
 function chamberView(game) {
@@ -131,6 +169,8 @@ function buildView(game) {
         chamberCount: CHAMBER_COUNT,
         bullets: game.bullets,
         pressure: game.pressure,
+        pressureBullets: game.pressureBullets || 0,
+        charge: chargeFor(game, game.alive[game.turnIndex]),
         unknownCount,
         hitChance: unknownCount > 0 ? game.bullets / unknownCount : 0,
         stakeMinutes: currentStakeMinutes(game),
@@ -149,11 +189,13 @@ function buildView(game) {
 
 function buildChoiceView(game) {
     const view = buildView(game);
+    const loadBullets = loadBulletsFor(game, game.alive[game.turnIndex]);
     view.passUnknownCount = view.unknownCount;
     view.passChance = view.unknownCount > 0 ? game.bullets / view.unknownCount : 0;
     view.canLoad = game.bullets < CHAMBER_COUNT;
-    view.loadChance = (game.bullets + 1) / CHAMBER_COUNT;
-    view.loadStakeMinutes = currentStakeMinutes(game) + MINUTES_PER_PRESSURE;
+    view.loadBullets = loadBullets;
+    view.loadChance = (game.bullets + loadBullets) / CHAMBER_COUNT;
+    view.loadStakeMinutes = currentStakeMinutes(game) + (loadBullets * MINUTES_PER_PRESSURE);
     view.shotNumber = game.shotNumber;
     return view;
 }
@@ -359,7 +401,7 @@ async function settleGame(game, outcome) {
     await renderPanel(game, payload);
     // 游戏正式结束，清掉过程消息，频道里只留这条结算。
     await pruneToFinalPanel(game);
-    settleCowardPenalties(game.guildId, game.cowards.map(entry => entry.userId));
+    settleCowardPenalties(game.guildId, game.cowards);
     await cleanupPressureGame(game);
 }
 
@@ -475,6 +517,8 @@ async function performShot(game, expectedToken) {
             game.chambers[index] = false;
             game.hitChambers[index] = true;
             game.bullets = Math.max(0, game.bullets - 1);
+            // 人没了，攒下的蓄力跟着一起没。
+            setCharge(game, shooterId, 0);
         }
         game.pointer = (index + 1) % CHAMBER_COUNT;
         game.shotNumber += 1;
@@ -504,6 +548,8 @@ async function handleChoice(game, action, expectedToken) {
     let accepted = false;
     let actorId = null;
     let resolvedAction = action;
+    let loadedBullets = 0;
+    let clearedCharge = 0;
     await gameManager.runExclusive(game, () => {
         if (game.ended || game.state !== 'playing') return;
         if (game.phase !== 'choice' || game.turnToken !== expectedToken) return;
@@ -516,11 +562,24 @@ async function handleChoice(game, action, expectedToken) {
         }
         resolvedAction = effectiveAction;
 
+        const charge = chargeFor(game, actorId);
         if (effectiveAction === 'load') {
-            game.bullets += 1;
+            // 走到这里 bullets 一定小于 CHAMBER_COUNT，至少能塞进 1 发。
+            loadedBullets = loadBulletsFor(game, actorId);
+            game.bullets += loadedBullets;
             game.pressure += 1;
+            game.pressureBullets = (game.pressureBullets || 0) + loadedBullets;
             spinCylinder(game);
         }
+
+        // 蓄力只在连开时累积，枪一离手（传枪 / 加压）立刻作废。
+        if (effectiveAction === 'again') {
+            setCharge(game, actorId, charge + 1);
+        } else {
+            clearedCharge = charge;
+            setCharge(game, actorId, 0);
+        }
+
         if (effectiveAction !== 'again') {
             game.turnIndex = (game.turnIndex + 1) % game.alive.length;
         }
@@ -540,6 +599,8 @@ async function handleChoice(game, action, expectedToken) {
         action: resolvedAction,
         actorName: nameFor(game, actorId),
         nextShooterName: view.shooterName,
+        loadedBullets,
+        clearedCharge,
     }));
 
     await startTurn(game);
@@ -547,6 +608,7 @@ async function handleChoice(game, action, expectedToken) {
 
 async function handleQuit(game, userId, expectedToken) {
     let accepted = false;
+    let penaltyMinutes = 0;
     await gameManager.runExclusive(game, () => {
         if (game.ended || game.state !== 'playing') return;
         if (game.phase !== 'fire' || game.turnToken !== expectedToken) return;
@@ -556,7 +618,10 @@ async function handleQuit(game, userId, expectedToken) {
         if (index !== -1) game.alive.splice(index, 1);
         if (game.turnIndex >= game.alive.length) game.turnIndex = 0;
         gameManager.removePlayer(game, userId);
-        game.cowards.push({ userId });
+        // 赌注按他退出这一刻算：后面别人再怎么加压都不连坐。
+        const stakeMinutes = currentStakeMinutes(game);
+        penaltyMinutes = cowardPenaltyMinutes(stakeMinutes);
+        game.cowards.push({ userId, stakeMinutes, penaltyMinutes });
         game.turnToken += 1;
         accepted = true;
     });
@@ -578,6 +643,7 @@ async function handleQuit(game, userId, expectedToken) {
         ...buildView(game),
         taunt: penalty.taunt,
         nicknameApplied: penalty.applied === true,
+        penaltyMinutes,
     }));
 
     await continueOrSettle(game);
@@ -710,7 +776,9 @@ async function beginGame(game) {
         game.turnIndex = 0;
         game.bullets = 1;
         game.pressure = 0;
+        game.pressureBullets = 0;
         game.shotNumber = 0;
+        setCharge(game, null, 0);
         spinCylinder(game);
 
         // 测试模式可以把第一发子弹钉在指定弹巢，方便复现"第 N 枪必中"
@@ -780,6 +848,11 @@ async function handleJoin(game, interaction) {
     }
     if (isActivelyTimedOut(member)) {
         await replyEphemeral(interaction, TIMEOUT_BLOCKED_MESSAGE);
+        return;
+    }
+    const cowardRemainingMs = cowardPenaltyRemainingMs(game.guildId, userId);
+    if (cowardRemainingMs > 0) {
+        await replyEphemeral(interaction, cowardBlockedMessage(cowardRemainingMs));
         return;
     }
 
@@ -949,6 +1022,9 @@ async function startPressureRoulette(interaction, options = {}) {
         pointer: 0,
         bullets: 0,
         pressure: 0,
+        pressureBullets: 0,
+        charge: 0,
+        chargeOwnerId: null,
         shotNumber: 0,
         alive: [],
         eliminated: [],
@@ -973,6 +1049,11 @@ async function startPressureRoulette(interaction, options = {}) {
     }
     if (isActivelyTimedOut(member)) {
         await replyEphemeral(interaction, TIMEOUT_BLOCKED_MESSAGE);
+        return false;
+    }
+    const cowardRemainingMs = cowardPenaltyRemainingMs(guildId, userId);
+    if (cowardRemainingMs > 0) {
+        await replyEphemeral(interaction, cowardBlockedMessage(cowardRemainingMs));
         return false;
     }
 

@@ -146,7 +146,8 @@ function eliminatedBlock(view) {
         lines.push(`- ${nameOf(view, entry.userId)}　💥 中弹 · 💀  ${entry.minutes} 分钟${suffix}`);
     }
     for (const entry of view.cowards || []) {
-        lines.push(`- ${nameOf(view, entry.userId)}　🤡 胆小鬼，中途退出`);
+        const suffix = entry.penaltyMinutes ? ` · 🤡 ${entry.penaltyMinutes} 分钟` : '';
+        lines.push(`- ${nameOf(view, entry.userId)}　🤡 胆小鬼，中途退出${suffix}`);
     }
     if (lines.length === 0) return null;
     return ['**已出局**', ...lines].join('\n');
@@ -154,6 +155,12 @@ function eliminatedBlock(view) {
 
 function gunLine(view) {
     return `弹巢 ${formatChambers(view.chambers)}　│　枪内 **${view.bullets} 发**　│　赌注 **💤 ${view.stakeMinutes} 分钟**`;
+}
+
+// 蓄力是这局最容易被忽略的信息，攒着的时候每张面板都提一句。
+function chargeLine(view) {
+    if (!view.charge) return null;
+    return `🔁 **连开蓄力 ×${view.charge}**　│　下次加压能塞 **${view.charge + 1} 发**`;
 }
 
 function rosterLines(view) {
@@ -219,10 +226,16 @@ function recruitmentPanel(view) {
         '- 轮到你，自己点按钮扣扳机。中弹就出局，然后闭嘴',
         '- 活下来后三选一：',
         '　🔫 **传枪** — 弹巢前进一格，交给下一个人',
-        '　🔁 **再开一枪** — 继续对自己开',
-        `　💥 **加压** — 加一发子弹并滚动弹巢，赌注 +${view.minutesPerPressure} 分钟`,
+        '　🔁 **再开一枪** — 继续对自己开，每撑过一次攒 **1 层连开蓄力**',
+        '　💥 **加压** — 装 **1 + 蓄力层数** 发子弹并滚动弹巢，'
+            + `每发让赌注 +${view.minutesPerPressure} 分钟`,
+        '- **连开蓄力**只在连着对自己开枪时累积',
+        '　一旦传枪 / 加压 / 中弹就清零，攒了就得当场兑现',
+        '　连开三次再加压 = 一口气塞 4 发，但你得先自己撑过那三枪',
         '- 轮到你的时候可以按 **🤡 胆小鬼** 退出',
-        '　不禁言，但名字会被挂上 **🤡胆小鬼**，直到游戏结束后 5 分钟',
+        '　不禁言，但名字会被挂上 **🤡胆小鬼**，游戏结束后至少还要再挂 **5 分钟**',
+        '　你退出那一刻的赌注比 5 分钟长的话，就按赌注算',
+        '　挂着 🤡 的这段时间里，**不能参加下一局**',
         '　你改回去，我就改回来。**我不累。**',
         '- **枪里子弹打光 = 游戏立刻结束**',
         '　只剩 1 人 → 他是**冠军**，零禁言',
@@ -255,6 +268,7 @@ function firePanel(view) {
         `**轮到 ${view.shooterName} 了。**`,
         '',
         gunLine(view),
+        ...(chargeLine(view) ? [chargeLine(view)] : []),
         '',
         `**中弹概率　${formatOdds(view.bullets, view.unknownCount)}　≈ ${formatPercent(view.hitChance)}**`,
         '',
@@ -274,8 +288,18 @@ function firePanel(view) {
 
 function choicePanel(view) {
     const sameOdds = `${formatOdds(view.bullets, view.passUnknownCount)} ≈ ${formatPercent(view.passChance)}`;
+    const charge = view.charge || 0;
+
+    const passLine = charge > 0
+        ? `🔫 **传枪** — 下一个人面对 ${sameOdds}。**攒的 ${charge} 层蓄力作废。**`
+        : `🔫 **传枪** — 下一个人面对 ${sameOdds}`;
+    const againLine = `🔁 **再开一枪** — 同样是 ${sameOdds}，但枪口对着**自己**。`
+        + `撑过去，蓄力涨到 **${charge + 1} 层**`;
     const loadLine = view.canLoad
-        ? `💥 **加压** — 加一发弹并滚动弹巢，下一个人面对 ${formatOdds(view.bullets + 1, view.chamberCount)} ≈ ${formatPercent(view.loadChance)}，赌注升到 **💤 ${view.loadStakeMinutes} 分钟**`
+        ? `💥 **加压** — 一口气装 **${view.loadBullets} 发**`
+            + (charge > 0 ? `（基础 1 + 蓄力 ${charge}）` : '')
+            + `并滚动弹巢，下一个人面对 ${formatOdds(view.bullets + view.loadBullets, view.chamberCount)}`
+            + ` ≈ ${formatPercent(view.loadChance)}，赌注升到 **💤 ${view.loadStakeMinutes} 分钟**`
         : `💥 **加压** — 枪里已经塞满 ${view.chamberCount} 发，再塞就该炸膛了`;
     const tail = view.autoPlay
         ? '🤖 **它正在思考人生……**'
@@ -285,9 +309,10 @@ function choicePanel(view) {
         `**${view.shooterName} 要怎么处理这把枪？**`,
         '',
         gunLine(view),
+        ...(chargeLine(view) ? [chargeLine(view)] : []),
         '',
-        `🔫 **传枪** — 下一个人面对 ${sameOdds}`,
-        `🔁 **再开一枪** — 同样是 ${sameOdds}，但枪口对着**自己**。`,
+        passLine,
+        againLine,
         loadLine,
         '',
         tail,
@@ -334,22 +359,45 @@ const ACTION_STYLES = Object.freeze({
         title: '🔫 传枪',
         lines: PASS_LINES,
         color: COLORS.pass,
-        detail: view => `弹巢前进一格。下一个是 ${view.nextShooterName}，他面对 ${odds(view)}。`,
+        detail: view => {
+            const lines = [`弹巢前进一格。下一个是 ${view.nextShooterName}，他面对 ${odds(view)}。`];
+            if (view.clearedCharge > 0) {
+                lines.push(`攒了半天的 **${view.clearedCharge} 层蓄力**就这么没了。那几枪白挨了。`);
+            }
+            return lines.join('\n');
+        },
     },
     again: {
         title: '🔁 再开一枪',
         lines: AGAIN_LINES,
         color: COLORS.again,
-        detail: view => `枪还在他自己手里，这一枪 ${odds(view)}。`,
+        detail: view => {
+            const lines = [`枪还在他自己手里，这一枪 ${odds(view)}。`];
+            if (view.charge > 0) {
+                lines.push(
+                    `🔁 **连开蓄力 ×${view.charge}** — 他要是撑到加压，一次能塞 **${view.charge + 1} 发**。`
+                );
+            }
+            return lines.join('\n');
+        },
     },
     load: {
         title: '💥 加压',
         lines: LOAD_LINES,
         color: COLORS.load,
-        detail: view => [
-            `枪里现在有 **${view.bullets} 发**子弹，弹巢重新滚动，之前记住的空巢全部作废。`,
-            `赌注涨到 **💤 ${view.stakeMinutes} 分钟**。下一个是 ${view.nextShooterName}，他面对 ${odds(view)}。`,
-        ].join('\n'),
+        detail: view => {
+            const lines = [];
+            if (view.loadedBullets > 1) {
+                lines.push(
+                    `蓄力兑现，一口气塞进去 **${view.loadedBullets} 发**（基础 1 + 连开 ${view.loadedBullets - 1}）。`
+                );
+            }
+            lines.push(`枪里现在有 **${view.bullets} 发**子弹，弹巢重新滚动，之前记住的空巢全部作废。`);
+            lines.push(
+                `赌注涨到 **💤 ${view.stakeMinutes} 分钟**。下一个是 ${view.nextShooterName}，他面对 ${odds(view)}。`
+            );
+            return lines.join('\n');
+        },
     },
 });
 
@@ -367,7 +415,11 @@ function actionAnnouncement(view) {
 function cowardAnnouncement(view) {
     const lines = [view.taunt];
     if (view.nicknameApplied) {
-        lines.push('', '他的名字已经被挂上 **🤡胆小鬼**，直到游戏结束后 5 分钟。');
+        lines.push(
+            '',
+            `他的名字已经被挂上 **🤡胆小鬼**，游戏结束后还要再挂 **${view.penaltyMinutes} 分钟**。`,
+            '这段时间里他也进不了下一局。'
+        );
     }
     lines.push('', gunLine(view), ...rosterLines(view));
 
@@ -412,7 +464,8 @@ function championPanel(view) {
     const lines = [
         `${nameOf(view, view.winnerId)} 是最后一个还站着的。`,
         '',
-        `本局加压 **${view.pressure} 次**，赌注最高到过 **💤 ${view.stakeMinutes} 分钟**。`,
+        `本局加压 **${view.pressure} 次**，一共往枪里塞了 **${view.pressureBullets} 发**，`
+            + `赌注最高到过 **💤 ${view.stakeMinutes} 分钟**。`,
         '',
         '**奖品：你还能说话。**',
         '*……其实你本来也能。*',

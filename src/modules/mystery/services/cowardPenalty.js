@@ -4,7 +4,9 @@ const panels = require('./pressureRoulettePanels');
 
 const COWARD_PREFIX = '🤡胆小鬼 ';
 const NICKNAME_MAX_LENGTH = 32;
-const AFTER_GAME_MS = 5 * 60 * 1000;
+// 游戏结束后 🤡 至少还要再挂这么久；退出那一刻的赌注更长时按赌注算。
+const MIN_AFTER_GAME_MINUTES = 5;
+const AFTER_GAME_MS = MIN_AFTER_GAME_MINUTES * 60 * 1000;
 const HARD_CAP_MS = 60 * 60 * 1000;
 const TAUNT_COOLDOWN_MS = 20 * 1000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
@@ -190,16 +192,39 @@ async function applyCowardPenalty({ member, channel, channelId }) {
     };
 }
 
-function settleCowardPenalties(guildId, userIds, delayMs = AFTER_GAME_MS) {
-    if (!guildId || !Array.isArray(userIds)) return;
-    const expiresAt = Date.now() + Math.max(0, delayMs);
-    for (const userId of userIds) {
+// 每个胆小鬼的 🤡 时长按他退出那一刻的赌注算，下限 5 分钟。
+// 唯一的下限落点在这里，调用方传什么都兜得住。
+function cowardPenaltyMinutes(stakeMinutes) {
+    if (!Number.isFinite(stakeMinutes)) return MIN_AFTER_GAME_MINUTES;
+    return Math.max(MIN_AFTER_GAME_MINUTES, Math.ceil(stakeMinutes));
+}
+
+// cowards：[{ userId, stakeMinutes }]，逐个结算，各算各的时长。
+function settleCowardPenalties(guildId, cowards) {
+    if (!guildId || !Array.isArray(cowards)) return;
+    const now = Date.now();
+    for (const entry of cowards) {
+        const userId = entry?.userId;
+        if (!userId) continue;
         const record = store.get(guildId, userId);
-        if (!record || record.expiresAt <= expiresAt) continue;
-        record.expiresAt = expiresAt;
+        if (!record) continue;
+        // 挂上时给的是 HARD_CAP_MS 兜底，结算只会把它改短，绝不延长。
+        record.expiresAt = Math.min(
+            record.expiresAt,
+            now + (cowardPenaltyMinutes(entry.stakeMinutes) * 60 * 1000)
+        );
+        // 标记这条已经按最终时长算过了，重启恢复时不要再砍。
+        record.settled = true;
         store.save(record);
         scheduleRelease(record);
     }
+}
+
+function cowardPenaltyRemainingMs(guildId, userId, now = Date.now()) {
+    if (!guildId || !userId || !store.isLoaded()) return 0;
+    const record = store.get(guildId, userId);
+    if (!record) return 0;
+    return Math.max(0, record.expiresAt - now);
 }
 
 async function releaseCowardPenalty(guildId, userId) {
@@ -257,8 +282,11 @@ async function handleGuildMemberUpdate(oldMember, newMember) {
 }
 
 async function restoreRecord(record) {
-    // 机器人重启意味着那局游戏已经结束，最多再留 5 分钟。
-    const cappedExpiresAt = Math.min(record.expiresAt, Date.now() + AFTER_GAME_MS);
+    // 已结算的记录，expiresAt 就是按赌注算出来的最终时间，照搬。
+    // 没结算的说明重启时那局还没打完，游戏已经随进程没了，最多再留 5 分钟。
+    const cappedExpiresAt = record.settled === true
+        ? record.expiresAt
+        : Math.min(record.expiresAt, Date.now() + AFTER_GAME_MS);
     if (cappedExpiresAt <= Date.now()) {
         await releaseCowardPenalty(record.guildId, record.userId);
         return;
@@ -309,9 +337,12 @@ function resetForTests() {
 module.exports = {
     COWARD_PREFIX,
     AFTER_GAME_MS,
+    MIN_AFTER_GAME_MINUTES,
     QUIT_TAUNTS,
     RENAME_TAUNTS,
     buildCowardNickname,
+    cowardPenaltyMinutes,
+    cowardPenaltyRemainingMs,
     applyCowardPenalty,
     settleCowardPenalties,
     releaseCowardPenalty,
