@@ -67,6 +67,13 @@ function serverSummaryPanel(summary) {
     };
 }
 
+// 数据面板一律私密：查战绩、翻榜单是随手就会点的操作，
+// 公开发出来会把正在进行的游戏面板顶走，也免得有人被迫在频道里公开自己的糗数据。
+// 标记加在回复处而不是面板里，面板本身保持可复用。
+function privately(payload) {
+    return { ...payload, flags: MessageFlags.Ephemeral };
+}
+
 function createGameStatsCommand({
     listStats = listPressureStats,
     getSummary = getPressureGuildSummary,
@@ -91,32 +98,32 @@ function createGameStatsCommand({
                     return;
                 }
                 const rows = listStats(guildId);
-                await interaction.reply(profilePanel({
+                await interaction.reply(privately(profilePanel({
                     row: rows.find(row => row.user_id === target.id) || null,
                     rows,
                     userId: target.id,
                     totalPlayers: rows.length,
-                }));
+                })));
                 return;
             }
 
             if (subcommand === SUBCOMMAND_LEADERBOARD) {
                 const metric = getMetric(interaction.options.getString('榜单') || DEFAULT_METRIC_KEY);
-                await interaction.reply(leaderboardPanel({
+                await interaction.reply(privately(leaderboardPanel({
                     metric,
                     rows: listStats(guildId),
                     viewerId,
-                }));
+                })));
                 return;
             }
 
             if (subcommand === SUBCOMMAND_TITLES) {
-                await interaction.reply(titleWallPanel({ rows: listStats(guildId), viewerId }));
+                await interaction.reply(privately(titleWallPanel({ rows: listStats(guildId), viewerId })));
                 return;
             }
 
             if (subcommand === SUBCOMMAND_SERVER) {
-                await interaction.reply(serverSummaryPanel(getSummary(guildId)));
+                await interaction.reply(privately(serverSummaryPanel(getSummary(guildId))));
                 return;
             }
 
