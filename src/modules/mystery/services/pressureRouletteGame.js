@@ -8,6 +8,15 @@ const {
     cowardPenaltyMinutes,
     cowardPenaltyRemainingMs,
 } = require('./cowardPenalty');
+const {
+    createPressureStats,
+    recordShot,
+    recordChoice,
+    recordElimination,
+    recordQuit,
+    finalizePressureStats,
+} = require('./pressureStatsRecorder');
+const { recordPressureGame } = require('../utils/mysteryStatsDatabase');
 
 const GAME_TYPE = 'pressure';
 const CUSTOM_ID_PREFIX = 'mystery_pressure_';
@@ -382,12 +391,32 @@ async function cleanupPressureGame(game) {
     await gameManager.cleanupGame(game);
 }
 
+// 整局的统计数据一直攒在 game.stats 里，到结算才一次性落库。
+// 统计永远不该影响游戏本身：这里任何失败都只记一行日志，不往上抛。
+function flushPressureStats(game, outcome, finalAliveIds) {
+    const stats = game.stats;
+    if (!stats) return;
+    // 先摘掉引用，保证任何重入路径都不会把同一局写两次。
+    game.stats = null;
+
+    try {
+        const rows = finalizePressureStats(stats, { outcome, aliveIds: finalAliveIds });
+        recordPressureGame(game.guildId, rows);
+    } catch (error) {
+        logDiscordFailure(game, 'record-stats', error);
+    }
+}
+
 async function settleGame(game, outcome) {
     let claimed = false;
+    // 存活名单必须在临界区里就地快照：下面还有 await，
+    // 期间成员退服会触发 handleMemberInvalidated 继续 splice game.alive。
+    let finalAliveIds = [];
     await gameManager.runExclusive(game, () => {
         if (game.settled || game.state === 'ended') return;
         game.settled = true;
         game.state = 'ended';
+        finalAliveIds = [...game.alive];
         claimed = true;
     });
     if (!claimed) return;
@@ -411,6 +440,7 @@ async function settleGame(game, outcome) {
     // 游戏正式结束，清掉过程消息，频道里只留这条结算。
     await pruneToFinalPanel(game);
     settleCowardPenalties(game.guildId, game.cowards);
+    flushPressureStats(game, outcome, finalAliveIds);
     await cleanupPressureGame(game);
 }
 
@@ -480,6 +510,7 @@ async function resolveHit(game, victimId) {
         if (game.turnIndex >= game.alive.length) game.turnIndex = 0;
         gameManager.removePlayer(game, victimId);
         game.eliminated.push({ userId: victimId, minutes, timeoutFailed: false, virtual });
+        recordElimination(game.stats, victimId, minutes);
     });
 
     let timeoutFailed = !virtual;
@@ -521,6 +552,9 @@ async function performShot(game, expectedToken) {
 
         const index = game.pointer;
         const hit = game.chambers[index] === true;
+        // 统计要的是「扣扳机那一刻」的局面，所以必须在验巢、扣子弹之前取。
+        const bulletsBefore = game.bullets;
+        const unknownBefore = unknownChamberCount(game);
         game.revealed[index] = true;
         if (hit) {
             game.chambers[index] = false;
@@ -533,6 +567,7 @@ async function performShot(game, expectedToken) {
         game.shotNumber += 1;
         game.turnToken += 1;
         game.phase = hit ? 'resolving' : 'choice';
+        recordShot(game.stats, shooterId, { hit, bulletsBefore, unknownBefore });
         result = { shooterId, hit };
     });
 
@@ -589,6 +624,13 @@ async function handleChoice(game, action, expectedToken) {
             setCharge(game, actorId, 0);
         }
 
+        recordChoice(game.stats, actorId, {
+            action: effectiveAction,
+            loadedBullets,
+            // 记的是这次选择之后达到的层数，「连开狂魔」看的就是这个峰值。
+            chargeAfter: effectiveAction === 'again' ? charge + 1 : charge,
+        });
+
         if (effectiveAction !== 'again') {
             game.turnIndex = (game.turnIndex + 1) % game.alive.length;
         }
@@ -631,6 +673,7 @@ async function handleQuit(game, userId, expectedToken) {
         const stakeMinutes = currentStakeMinutes(game);
         penaltyMinutes = cowardPenaltyMinutes(stakeMinutes);
         game.cowards.push({ userId, stakeMinutes, penaltyMinutes });
+        recordQuit(game.stats, userId, penaltyMinutes);
         game.turnToken += 1;
         accepted = true;
     });
@@ -782,6 +825,9 @@ async function beginGame(game) {
         }
         game.state = 'playing';
         game.alive = shuffleInPlace([...validIds], game);
+        // 数据只从这里开始记：招募人数不足被取消的局压根不该进榜单。
+        // 测试局（含虚拟机器人，且真人可以混进来一起玩）整局跳过，避免污染正式数据。
+        game.stats = game.testConfig ? null : createPressureStats(validIds);
         game.turnIndex = 0;
         game.bullets = 1;
         game.pressure = 0;
@@ -1038,6 +1084,8 @@ async function startPressureRoulette(interaction, options = {}) {
         alive: [],
         eliminated: [],
         cowards: [],
+        // 真正开局（beginGame）时才创建，在那之前没有任何数据可记。
+        stats: null,
         turnIndex: 0,
         turnToken: 0,
         phase: 'idle',
