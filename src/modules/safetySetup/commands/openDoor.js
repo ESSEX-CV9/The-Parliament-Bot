@@ -16,7 +16,7 @@ const data = new SlashCommandBuilder()
     .setName('开门')
     .setDescription('停止邀请暂停托管并恢复服务器邀请');
 
-async function execute(interaction) {
+async function executeOpenDoor(interaction) {
     if (!interaction.inGuild()) {
         return interaction.reply({
             content: '❌ 此命令只能在服务器中使用。',
@@ -44,7 +44,7 @@ async function execute(interaction) {
                 content: `⚠️ Bot 缺少“管理服务器（Manage Guild）”权限，无法立即恢复邀请。${state}`,
             });
         } catch (error) {
-            console.error(`[SafetySetup] /开门 停止托管失败 (guild=${guildId}):`, error);
+            console.error(`[SafetySetup] /管理 开门 停止托管失败 (guild=${guildId}):`, error);
             return interaction.editReply({
                 content: `❌ Bot 缺少“管理服务器（Manage Guild）”权限，且无法确认自动托管是否已停止：${error.message}`,
             });
@@ -67,7 +67,7 @@ async function execute(interaction) {
             content: '🔓 **已开门：自动托管已停止，服务器邀请已恢复。**',
         });
     } catch (error) {
-        console.error(`[SafetySetup] /开门 执行失败 (guild=${guildId}):`, error);
+        console.error(`[SafetySetup] /管理 开门 执行失败 (guild=${guildId}):`, error);
         return interaction.editReply({
             content: [
                 '⚠️ 自动托管已停止，但 Discord 恢复邀请失败。',
@@ -78,4 +78,8 @@ async function execute(interaction) {
     }
 }
 
-module.exports = { data, execute };
+module.exports = {
+    data,
+    execute: executeOpenDoor,
+    executeOpenDoor,
+};

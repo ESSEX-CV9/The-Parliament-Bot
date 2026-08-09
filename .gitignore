@@ -21,3 +21,9 @@ backupdata/
 backupdata/
 .limcode/
 .claude/
+data/mystery/bombCooldowns.json
+data/mystery/bombCooldowns.corrupt-*.json
+data/mystery/bombCooldowns.*.tmp
+data/mystery/namePool.json
+data/mystery/namePool.json.tmp
+data/mystery/namePool.corrupt-*.json
