@@ -4,7 +4,7 @@ const {
     getPermissionDeniedMessage,
 } = require('../../../core/utils/permissionManager');
 const gameManager = require('../services/mysteryGameManager');
-const { startPressureRoulette, CHANNEL_LOCK_GROUP } = require('../services/pressureRouletteGame');
+const { startPressureRoulette } = require('../services/pressureRouletteGame');
 
 const DEFAULT_BOT_COUNT = 3;
 const MIN_BOT_COUNT = 1;
@@ -73,14 +73,15 @@ function createPressureTestCommand({
                 return;
             }
 
-            // 测试指令不走 30 分钟冷却，但仍然尊重玩家锁和加压轮盘自己的频道锁，
-            // 避免把正在进行的那局踩掉。其他类型的游戏不受影响。
+            // 测试指令不走 30 分钟冷却，但仍然尊重玩家锁和频道锁，
+            // 避免把正在进行的那局踩掉。频道锁是四个游戏共用的，
+            // 所以频道里有任意一场神秘游戏时测试局都开不了。
             const guildId = interaction.guild.id;
             const userId = interaction.user.id;
-            const channelBusy = manager.getChannelGame(interaction.channelId, CHANNEL_LOCK_GROUP);
+            const channelBusy = manager.getChannelGame(interaction.channelId);
             if (manager.getPlayerGame(guildId, userId) || channelBusy) {
                 await interaction.reply({
-                    content: '🔫 **这个频道已经有一场加压轮盘了，或者你本人正在别的游戏里。**\n等它结束，或换个频道再开测试局。',
+                    content: '🎮 **这个频道已经有一场神秘游戏在进行了，或者你本人正在别的游戏里。**\n等它结束，或换个频道再开测试局。',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;

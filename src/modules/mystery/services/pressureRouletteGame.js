@@ -33,9 +33,6 @@ const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 // 游戏进行中保留的消息数（含当前这条）。超出窗口的旧消息才删。
 const PANEL_HISTORY_LIMIT = 3;
-// 独立的频道锁分组：同一频道只能有一场加压轮盘，
-// 但可以和运气轮盘 / 传炸弹 / 死斗同时进行。
-const CHANNEL_LOCK_GROUP = 'pressure';
 // 测试用虚拟玩家。真实 Discord ID 全是数字，不会撞。
 const VIRTUAL_PREFIX = 'testbot-';
 const VIRTUAL_THINK_MS = 2500;
@@ -50,7 +47,7 @@ const TURN_ACTIONS = Object.freeze({
 });
 
 const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
-const CHANNEL_BUSY_MESSAGE = '🔫 **这个频道已经有一场加压俄罗斯轮盘了。**\n等那把枪打空了再开新的。';
+const CHANNEL_BUSY_MESSAGE = '🎮 **这里已经有一场游戏在进行了。**\n等当前游戏结束后再开新的吧。';
 const TIMEOUT_BLOCKED_MESSAGE = '🔫 **左轮拒绝了你。**\n你当前还在禁言，暂时无法参加。';
 
 // 名字上还挂着 🤡 的时候不能上桌：跑一次就得把这轮的耻辱挂满。
@@ -1091,7 +1088,6 @@ async function startPressureRoulette(interaction, options = {}) {
         phase: 'idle',
         panels: [],
         recruitmentEntry: null,
-        channelLockGroup: CHANNEL_LOCK_GROUP,
         panelQueue: Promise.resolve(),
         recruitmentEndsAt: Date.now() + RECRUITMENT_DURATION_MS,
         random: Math.random,
@@ -1168,7 +1164,6 @@ async function startPressureRoulette(interaction, options = {}) {
 module.exports = {
     CUSTOM_ID_PREFIX,
     GAME_TYPE,
-    CHANNEL_LOCK_GROUP,
     PANEL_HISTORY_LIMIT,
     CHAMBER_COUNT,
     MIN_PARTICIPANTS,

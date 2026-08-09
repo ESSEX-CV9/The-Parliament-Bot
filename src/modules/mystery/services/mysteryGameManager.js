@@ -2,17 +2,14 @@ const gamesById = new Map();
 const playerLocks = new Map();
 const channelLocks = new Map();
 
-// 频道锁分组：同一分组内一个频道只能有一场游戏，不同分组互不干扰。
-// 运气轮盘 / 传炸弹 / 死斗 共用默认分组，维持原来的互斥行为；
-// 想和它们并行的游戏（如加压轮盘）自己声明一个分组即可。
-const DEFAULT_CHANNEL_LOCK_GROUP = 'default';
-
+// 频道锁：运气轮盘 / 传炸弹 / 死斗 / 加压轮盘 共用同一把锁，
+// 同一个频道里同时只能有其中一场游戏。
 function buildPlayerKey(guildId, userId) {
     return `${guildId}:${userId}`;
 }
 
-function buildChannelKey(channelId, lockGroup = DEFAULT_CHANNEL_LOCK_GROUP) {
-    return `${lockGroup}:${channelId}`;
+function buildChannelKey(channelId) {
+    return channelId;
 }
 
 function getGame(gameId) {
@@ -23,8 +20,8 @@ function getPlayerGame(guildId, userId) {
     return getGame(playerLocks.get(buildPlayerKey(guildId, userId)));
 }
 
-function getChannelGame(channelId, lockGroup = DEFAULT_CHANNEL_LOCK_GROUP) {
-    return getGame(channelLocks.get(buildChannelKey(channelId, lockGroup)));
+function getChannelGame(channelId) {
+    return getGame(channelLocks.get(buildChannelKey(channelId)));
 }
 
 function createGame(input) {
@@ -34,7 +31,7 @@ function createGame(input) {
         return { ok: false, reason: 'player' };
     }
 
-    const channelKey = buildChannelKey(input.channelId, input.channelLockGroup);
+    const channelKey = buildChannelKey(input.channelId);
     if (channelLocks.has(channelKey)) {
         return { ok: false, reason: 'channel' };
     }
@@ -136,7 +133,7 @@ async function cleanupGame(game) {
                 playerLocks.delete(playerKey);
             }
         });
-        const channelKey = buildChannelKey(game.channelId, game.channelLockGroup);
+        const channelKey = buildChannelKey(game.channelId);
         if (channelLocks.get(channelKey) === game.id) {
             channelLocks.delete(channelKey);
         }
@@ -204,7 +201,6 @@ function resetForTests() {
 }
 
 module.exports = {
-    DEFAULT_CHANNEL_LOCK_GROUP,
     buildChannelKey,
     createGame,
     getGame,
