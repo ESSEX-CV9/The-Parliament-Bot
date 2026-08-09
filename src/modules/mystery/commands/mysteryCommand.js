@@ -10,23 +10,38 @@ const {
     acquireInFlight,
     releaseInFlight,
 } = require('../utils/cooldown');
+const gameManager = require('../services/mysteryGameManager');
+const { startRoulette } = require('../services/rouletteGame');
+const { startBomb } = require('../services/bombGame');
+const { startDuel } = require('../services/duelGame');
+const { getNames } = require('../services/namePoolStore');
 
 const SUBCOMMAND_SELF_TIMEOUT = '自刎归天';
 const SUBCOMMAND_RANDOM_NICKNAME = '取名字好麻烦';
+const SUBCOMMAND_ROULETTE = '运气轮盘';
+const SUBCOMMAND_BOMB = '传炸弹';
+const SUBCOMMAND_DUEL = '死斗';
+const VALID_SUBCOMMANDS = [
+    SUBCOMMAND_SELF_TIMEOUT,
+    SUBCOMMAND_RANDOM_NICKNAME,
+    SUBCOMMAND_ROULETTE,
+    SUBCOMMAND_BOMB,
+    SUBCOMMAND_DUEL,
+];
+const IN_MEMORY_COOLDOWN_SUBCOMMANDS = new Set([
+    SUBCOMMAND_SELF_TIMEOUT,
+    SUBCOMMAND_RANDOM_NICKNAME,
+    SUBCOMMAND_ROULETTE,
+    SUBCOMMAND_DUEL,
+]);
 const SELF_TIMEOUT_DURATION_MS = 5 * 60 * 1000;
 const SELF_TIMEOUT_REASON = '神秘指令：自刎归天';
 const COOLDOWN_MESSAGE = '⏳ **这个神秘指令还在冷却中**， **30分钟后才能再次使用**。';
 const TIMEOUT_FAILURE_MESSAGE = '❌ 神秘力量失效了，我无法对你施加禁言。\n可能是机器人权限或身份组层级不足。';
 const NICKNAME_FAILURE_MESSAGE = '❌ 名字取好了，但我改不了你的昵称。\n可能是机器人权限或身份组层级不足。';
 const GENERIC_FAILURE_MESSAGE = '❌ 处理神秘指令时出现错误，请稍后重试。';
-
-const NAME_POOL = [
-    '我是奶人', '奶奶的龙', '铁血旅程派', '铁血类脑派', '权蛆', 'D喵梦男', 'D喵梦女',
-    '大狗叫！', '猪猪之王', '类脑自研文爱AI', '赛博街溜子', '名字被狗吃了',
-    '管理组重点观察对象', '用户名涉嫌违规', '类脑最纯洁之人', '类脑最淫乱之人', '基米',
-    '我不是gay', '我是好女孩吗', '类脑第一深情', '名字已被夺舍', '疑似真人',
-    '别问我为什么叫这个', '嘉豪本豪', '我现在后悔还来得及吗', '嘉豪',
-];
+const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
+const initiationQueues = new Map();
 
 const data = new SlashCommandBuilder()
     .setName('神秘指令')
@@ -36,7 +51,20 @@ const data = new SlashCommandBuilder()
         .setDescription('让自己暂时归天五分钟'))
     .addSubcommand(subcommand => subcommand
         .setName(SUBCOMMAND_RANDOM_NICKNAME)
-        .setDescription('随机决定自己的服务器昵称'));
+        .setDescription('随机决定自己的服务器昵称'))
+    .addSubcommand(subcommand => subcommand
+        .setName(SUBCOMMAND_ROULETTE)
+        .setDescription('参加一场紧张刺激的运气轮盘'))
+    .addSubcommand(subcommand => subcommand
+        .setName(SUBCOMMAND_BOMB)
+        .setDescription('参加一场紧张刺激的传炸弹游戏'))
+    .addSubcommand(subcommand => subcommand
+        .setName(SUBCOMMAND_DUEL)
+        .setDescription('向一名成员发起死斗，或等待其他人应战')
+        .addUserOption(option => option
+            .setName('对手')
+            .setDescription('指定要挑战的对手（留空则公开招募）')
+            .setRequired(false)));
 
 function botHasPermission(interaction, permission) {
     return interaction.guild.members.me?.permissions?.has(permission) === true;
@@ -72,6 +100,8 @@ async function replyWithUnexpectedError(interaction) {
     try {
         if (interaction.deferred) {
             await replacePublicDeferWithPrivateFailure(interaction, GENERIC_FAILURE_MESSAGE);
+        } else if (interaction.replied) {
+            await interaction.followUp({ content: GENERIC_FAILURE_MESSAGE, flags: MessageFlags.Ephemeral });
         } else {
             await interaction.reply({ content: GENERIC_FAILURE_MESSAGE, flags: MessageFlags.Ephemeral });
         }
@@ -95,17 +125,18 @@ async function executeSelfTimeout(interaction) {
     };
 }
 
-function selectRandomNickname(currentDisplayName) {
-    let selectedName = NAME_POOL[Math.floor(Math.random() * NAME_POOL.length)];
-    if (selectedName === currentDisplayName) {
-        selectedName = NAME_POOL[Math.floor(Math.random() * NAME_POOL.length)];
-    }
-    return selectedName;
+function selectRandomNickname(names, currentDisplayName) {
+    const candidates = names.length > 1
+        ? names.filter(name => name !== currentDisplayName)
+        : names;
+    const effectiveCandidates = candidates.length > 0 ? candidates : names;
+    return effectiveCandidates[Math.floor(Math.random() * effectiveCandidates.length)];
 }
 
 async function executeRandomNickname(interaction) {
     const member = interaction.member;
-    const selectedName = selectRandomNickname(member.displayName);
+    const names = await getNames();
+    const selectedName = selectRandomNickname(names, member.displayName);
     try {
         await member.setNickname(selectedName);
     } catch (error) {
@@ -143,36 +174,83 @@ async function sendSuccessPanels(interaction, result) {
     }
 }
 
+async function startMultiplayerGame(interaction, subcommand) {
+    if (subcommand === SUBCOMMAND_ROULETTE) {
+        return startRoulette(interaction);
+    }
+    if (subcommand === SUBCOMMAND_BOMB) {
+        return startBomb(interaction);
+    }
+    return startDuel(interaction, interaction.options.getUser('对手'));
+}
+
+async function acquireInitiationLock(guildId, userId) {
+    const key = `${guildId}:${userId}`;
+    const previous = initiationQueues.get(key) || Promise.resolve();
+    let releaseGate;
+    const gate = new Promise(resolve => {
+        releaseGate = resolve;
+    });
+    initiationQueues.set(key, gate);
+    await previous;
+
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        releaseGate();
+        if (initiationQueues.get(key) === gate) {
+            initiationQueues.delete(key);
+        }
+    };
+}
+
 async function execute(interaction) {
     let guildId = null;
     let userId = interaction.user?.id || 'unknown';
     let subcommand = null;
     let lockAcquired = false;
+    let releaseInitiationLock = null;
     try {
         if (!interaction.inGuild()) {
             await interaction.reply({ content: '❌ 此指令只能在服务器中使用。', flags: MessageFlags.Ephemeral });
             return;
         }
         subcommand = interaction.options.getSubcommand(false);
-        const validSubcommands = [SUBCOMMAND_SELF_TIMEOUT, SUBCOMMAND_RANDOM_NICKNAME];
-        if (!validSubcommands.includes(subcommand)) {
+        if (!VALID_SUBCOMMANDS.includes(subcommand)) {
             await interaction.reply({ content: '❌ 未知的神秘指令。', flags: MessageFlags.Ephemeral });
             return;
         }
         guildId = interaction.guild.id;
         userId = interaction.user.id;
-        if (isOnCooldown(guildId, userId, subcommand)) {
-            await interaction.reply({ content: COOLDOWN_MESSAGE, flags: MessageFlags.Ephemeral });
-            return;
-        }
         lockAcquired = acquireInFlight(guildId, userId, subcommand);
         if (!lockAcquired) {
             await interaction.reply({ content: COOLDOWN_MESSAGE, flags: MessageFlags.Ephemeral });
             return;
         }
+        releaseInitiationLock = await acquireInitiationLock(guildId, userId);
+        if (gameManager.getPlayerGame(guildId, userId)) {
+            await interaction.reply({ content: PLAYER_BUSY_MESSAGE, flags: MessageFlags.Ephemeral });
+            return;
+        }
+        const usesInMemoryCooldown = IN_MEMORY_COOLDOWN_SUBCOMMANDS.has(subcommand);
+        if (usesInMemoryCooldown && isOnCooldown(guildId, userId, subcommand)) {
+            await interaction.reply({ content: COOLDOWN_MESSAGE, flags: MessageFlags.Ephemeral });
+            return;
+        }
+        const isMultiplayer = subcommand === SUBCOMMAND_ROULETTE
+            || subcommand === SUBCOMMAND_BOMB
+            || subcommand === SUBCOMMAND_DUEL;
+        if (isMultiplayer) {
+            const started = await startMultiplayerGame(interaction, subcommand);
+            if (started && usesInMemoryCooldown) {
+                startCooldown(guildId, userId, subcommand);
+            }
+            return;
+        }
         const preflightFailure = getPreflightFailure(interaction, subcommand);
         if (preflightFailure) {
-            await interaction.reply({ content: preflightFailure, flags: MessageFlags.Ephemeral });
+            await interaction.reply({ content: preflightFailure });
             return;
         }
         await interaction.deferReply();
@@ -183,7 +261,7 @@ async function execute(interaction) {
             const failureMessage = subcommand === SUBCOMMAND_SELF_TIMEOUT
                 ? TIMEOUT_FAILURE_MESSAGE
                 : NICKNAME_FAILURE_MESSAGE;
-            await replacePublicDeferWithPrivateFailure(interaction, failureMessage);
+            await interaction.editReply({ content: failureMessage });
             return;
         }
         startCooldown(guildId, userId, subcommand);
@@ -195,6 +273,7 @@ async function execute(interaction) {
         );
         await replyWithUnexpectedError(interaction);
     } finally {
+        releaseInitiationLock?.();
         if (lockAcquired) releaseInFlight(guildId, userId, subcommand);
     }
 }

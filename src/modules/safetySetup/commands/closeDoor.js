@@ -18,10 +18,10 @@ const data = new SlashCommandBuilder()
     .setDescription('暂停服务器邀请并交由 Bot 自动续期托管')
     .addStringOption((option) => option
         .setName('恢复时间')
-        .setDescription('可选，北京时间 YYYY-MM-DD HH:mm；不填则仅 /开门 才恢复')
+        .setDescription('可选，北京时间 YYYY-MM-DD HH:mm；不填则仅 /管理 开门 才恢复')
         .setRequired(false));
 
-async function execute(interaction) {
+async function executeCloseDoor(interaction) {
     if (!interaction.inGuild()) {
         return interaction.reply({
             content: '❌ 此命令只能在服务器中使用。',
@@ -73,7 +73,7 @@ async function execute(interaction) {
         const discordUntilTimestamp = Math.floor(invitesDisabledUntil.getTime() / 1000);
         const modeText = resumeAt
             ? `预约在 **${formatBeijingDateTime(resumeAt)}（北京时间）** 自动恢复邀请。`
-            : '已启用无限期托管，直到执行 `/开门` 才恢复邀请。';
+            : '已启用无限期托管，直到执行 `/管理 开门` 才恢复邀请。';
 
         return interaction.editReply({
             content: [
@@ -85,11 +85,15 @@ async function execute(interaction) {
             ].join('\n'),
         });
     } catch (error) {
-        console.error(`[SafetySetup] /关门 执行失败 (guild=${interaction.guild.id}):`, error);
+        console.error(`[SafetySetup] /管理 关门 执行失败 (guild=${interaction.guild.id}):`, error);
         return interaction.editReply({
             content: `❌ 暂停邀请失败，未启用自动托管：${error.message}`,
         });
     }
 }
 
-module.exports = { data, execute };
+module.exports = {
+    data,
+    execute: executeCloseDoor,
+    executeCloseDoor,
+};

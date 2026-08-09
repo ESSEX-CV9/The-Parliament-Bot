@@ -162,11 +162,12 @@ const viewMyControlledInviteStatusCommand = require('../modules/controlledInvite
 
 // Discord 安全措施（邀请暂停托管）
 const { startSafetySetupSystem } = require('../modules/safetySetup');
-const closeDoorCommand = require('../modules/safetySetup/commands/closeDoor');
-const openDoorCommand = require('../modules/safetySetup/commands/openDoor');
 
 // 神秘指令娱乐系统
 const mysteryCommand = require('../modules/mystery/commands/mysteryCommand');
+const manageCommand = require('../modules/mystery/commands/manageCommand');
+const { mysteryGuildMemberRemoveHandler } = require('../modules/mystery/events/guildMemberRemove');
+const { mysteryGuildMemberUpdateHandler } = require('../modules/mystery/events/guildMemberUpdate');
 
 const DISCORD_REST_TIMEOUT_MS = (() => {
     const n = Number(process.env.DISCORD_REST_TIMEOUT_MS);
@@ -330,9 +331,8 @@ client.commands.set(controlledInviteParamsCommand.data.name, controlledInvitePar
 client.commands.set(controlledInviteToggleCommand.data.name, controlledInviteToggleCommand);
 client.commands.set(viewMyControlledInviteStatusCommand.data.name, viewMyControlledInviteStatusCommand);
 
-// Discord 安全措施
-client.commands.set(closeDoorCommand.data.name, closeDoorCommand);
-client.commands.set(openDoorCommand.data.name, openDoorCommand);
+// Discord 安全措施与神秘管理工具（统一为唯一 /管理）
+client.commands.set(manageCommand.data.name, manageCommand);
 
 // 神秘指令娱乐系统
 client.commands.set(mysteryCommand.data.name, mysteryCommand);
@@ -414,6 +414,8 @@ client.on(Events.GuildMemberAdd, controlledInviteGuildMemberAddHandler);
 client.on(Events.GuildMemberRemove, roleSyncGuildMemberRemoveHandler);
 client.on(Events.GuildMemberUpdate, roleSyncGuildMemberUpdateHandler);
 client.on(Events.GuildRoleDelete, roleSyncGuildRoleDeleteHandler);
+client.on(Events.GuildMemberRemove, mysteryGuildMemberRemoveHandler);
+client.on(Events.GuildMemberUpdate, mysteryGuildMemberUpdateHandler);
 
 function normalizeDiscordToken(raw) {
     if (!raw) return '';

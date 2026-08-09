@@ -64,6 +64,14 @@ const {
     handleBotMessageInteraction,
     BOT_MESSAGE_CUSTOM_ID_PREFIX,
 } = require('../../modules/botMessage');
+const {
+    handleMysteryInteraction,
+    MYSTERY_CUSTOM_ID_PREFIX,
+} = require('../../modules/mystery/services/interactionHandler');
+const {
+    handleNamePoolInteraction,
+    NAME_POOL_CUSTOM_ID_PREFIX,
+} = require('../../modules/mystery/services/namePoolManager');
 
 const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
 const { getFormPermissionSettings } = require('../../core/utils/database');
@@ -156,6 +164,16 @@ async function interactionCreateHandler(interaction) {
             // === 机器人消息管理（优先短路，避免与其它模块前缀冲突） ===
             if (interaction.customId.startsWith(BOT_MESSAGE_CUSTOM_ID_PREFIX)) {
                 await handleBotMessageInteraction(interaction);
+                return;
+            }
+
+            if (interaction.customId.startsWith(NAME_POOL_CUSTOM_ID_PREFIX)) {
+                await handleNamePoolInteraction(interaction);
+                return;
+            }
+
+            if (interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)) {
+                await handleMysteryInteraction(interaction);
                 return;
             }
 
@@ -528,6 +546,11 @@ async function interactionCreateHandler(interaction) {
                 return;
             }
 
+            if (interaction.customId.startsWith(NAME_POOL_CUSTOM_ID_PREFIX)) {
+                await handleNamePoolInteraction(interaction);
+                return;
+            }
+
             if (interaction.customId === 'form_submission') {
                 // 表单提交处理
                 await processFormSubmission(interaction);
@@ -588,6 +611,22 @@ async function interactionCreateHandler(interaction) {
         
         // 处理选择菜单（包含 String/Role/Channel 等所有 SelectMenu）
         if (interaction.isAnySelectMenu()) {
+            if (
+                interaction.isStringSelectMenu()
+                && interaction.customId.startsWith(NAME_POOL_CUSTOM_ID_PREFIX)
+            ) {
+                await handleNamePoolInteraction(interaction);
+                return;
+            }
+
+            if (
+                interaction.isStringSelectMenu()
+                && interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)
+            ) {
+                await handleMysteryInteraction(interaction);
+                return;
+            }
+
             if (interaction.customId.startsWith('submission_action_')) {
                 // 稿件管理操作选择
                 await processSubmissionAction(interaction);
