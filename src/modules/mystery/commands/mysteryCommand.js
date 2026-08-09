@@ -14,6 +14,7 @@ const gameManager = require('../services/mysteryGameManager');
 const { startRoulette } = require('../services/rouletteGame');
 const { startBomb } = require('../services/bombGame');
 const { startDuel } = require('../services/duelGame');
+const { startPressureRoulette } = require('../services/pressureRouletteGame');
 const { getNames } = require('../services/namePoolStore');
 
 const SUBCOMMAND_SELF_TIMEOUT = '自刎归天';
@@ -21,18 +22,21 @@ const SUBCOMMAND_RANDOM_NICKNAME = '取名字好麻烦';
 const SUBCOMMAND_ROULETTE = '运气轮盘';
 const SUBCOMMAND_BOMB = '传炸弹';
 const SUBCOMMAND_DUEL = '死斗';
+const SUBCOMMAND_PRESSURE = '加压轮盘';
 const VALID_SUBCOMMANDS = [
     SUBCOMMAND_SELF_TIMEOUT,
     SUBCOMMAND_RANDOM_NICKNAME,
     SUBCOMMAND_ROULETTE,
     SUBCOMMAND_BOMB,
     SUBCOMMAND_DUEL,
+    SUBCOMMAND_PRESSURE,
 ];
 const IN_MEMORY_COOLDOWN_SUBCOMMANDS = new Set([
     SUBCOMMAND_SELF_TIMEOUT,
     SUBCOMMAND_RANDOM_NICKNAME,
     SUBCOMMAND_ROULETTE,
     SUBCOMMAND_DUEL,
+    SUBCOMMAND_PRESSURE,
 ]);
 const SELF_TIMEOUT_DURATION_MS = 5 * 60 * 1000;
 const SELF_TIMEOUT_REASON = '神秘指令：自刎归天';
@@ -64,7 +68,10 @@ const data = new SlashCommandBuilder()
         .addUserOption(option => option
             .setName('对手')
             .setDescription('指定要挑战的对手（留空则公开招募）')
-            .setRequired(false)));
+            .setRequired(false)))
+    .addSubcommand(subcommand => subcommand
+        .setName(SUBCOMMAND_PRESSURE)
+        .setDescription('参加一场加压俄罗斯轮盘，自己往枪里加子弹'));
 
 function botHasPermission(interaction, permission) {
     return interaction.guild.members.me?.permissions?.has(permission) === true;
@@ -174,12 +181,15 @@ async function sendSuccessPanels(interaction, result) {
     }
 }
 
-async function startMultiplayerGame(interaction, subcommand) {
+async function startMultiplayerGame(interaction, subcommand, onGameStarted) {
     if (subcommand === SUBCOMMAND_ROULETTE) {
         return startRoulette(interaction);
     }
     if (subcommand === SUBCOMMAND_BOMB) {
         return startBomb(interaction);
+    }
+    if (subcommand === SUBCOMMAND_PRESSURE) {
+        return startPressureRoulette(interaction, { onGameStarted });
     }
     return startDuel(interaction, interaction.options.getUser('对手'));
 }
@@ -240,10 +250,20 @@ async function execute(interaction) {
         }
         const isMultiplayer = subcommand === SUBCOMMAND_ROULETTE
             || subcommand === SUBCOMMAND_BOMB
-            || subcommand === SUBCOMMAND_DUEL;
+            || subcommand === SUBCOMMAND_DUEL
+            || subcommand === SUBCOMMAND_PRESSURE;
         if (isMultiplayer) {
-            const started = await startMultiplayerGame(interaction, subcommand);
-            if (started && usesInMemoryCooldown) {
+            // 加压轮盘的冷却推迟到真正开局时才扣：招募人数不足被取消的话不消耗冷却。
+            const deferCooldown = subcommand === SUBCOMMAND_PRESSURE;
+            const beginCooldown = () => {
+                if (usesInMemoryCooldown) startCooldown(guildId, userId, subcommand);
+            };
+            const started = await startMultiplayerGame(
+                interaction,
+                subcommand,
+                deferCooldown ? beginCooldown : undefined
+            );
+            if (started && usesInMemoryCooldown && !deferCooldown) {
                 startCooldown(guildId, userId, subcommand);
             }
             return;

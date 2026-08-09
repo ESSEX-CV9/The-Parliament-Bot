@@ -3,6 +3,10 @@ const gameManager = require('./mysteryGameManager');
 const { handleRouletteInteraction } = require('./rouletteGame');
 const { handleBombInteraction } = require('./bombGame');
 const { handleDuelInteraction } = require('./duelGame');
+const {
+    CUSTOM_ID_PREFIX: PRESSURE_CUSTOM_ID_PREFIX,
+    handlePressureInteraction,
+} = require('./pressureRouletteGame');
 
 const MYSTERY_CUSTOM_ID_PREFIX = 'mystery_';
 const EXPIRED_INTERACTION_MESSAGE = '⌛ **这次游戏交互已经过期或失效了。**';
@@ -102,6 +106,11 @@ async function handleMysteryInteraction(interaction) {
     const kind = componentKind(interaction);
     if (!kind || typeof interaction?.customId !== 'string') return false;
     if (!interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)) return false;
+
+    // 加压俄罗斯轮盘自带解析与校验，直接短路，不走下面的路由表。
+    if (interaction.customId.startsWith(PRESSURE_CUSTOM_ID_PREFIX)) {
+        return handlePressureInteraction(interaction);
+    }
 
     let parsed;
     try {

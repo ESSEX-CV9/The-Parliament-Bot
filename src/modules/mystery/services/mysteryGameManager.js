@@ -2,8 +2,17 @@ const gamesById = new Map();
 const playerLocks = new Map();
 const channelLocks = new Map();
 
+// 频道锁分组：同一分组内一个频道只能有一场游戏，不同分组互不干扰。
+// 运气轮盘 / 传炸弹 / 死斗 共用默认分组，维持原来的互斥行为；
+// 想和它们并行的游戏（如加压轮盘）自己声明一个分组即可。
+const DEFAULT_CHANNEL_LOCK_GROUP = 'default';
+
 function buildPlayerKey(guildId, userId) {
     return `${guildId}:${userId}`;
+}
+
+function buildChannelKey(channelId, lockGroup = DEFAULT_CHANNEL_LOCK_GROUP) {
+    return `${lockGroup}:${channelId}`;
 }
 
 function getGame(gameId) {
@@ -14,8 +23,8 @@ function getPlayerGame(guildId, userId) {
     return getGame(playerLocks.get(buildPlayerKey(guildId, userId)));
 }
 
-function getChannelGame(channelId) {
-    return getGame(channelLocks.get(channelId));
+function getChannelGame(channelId, lockGroup = DEFAULT_CHANNEL_LOCK_GROUP) {
+    return getGame(channelLocks.get(buildChannelKey(channelId, lockGroup)));
 }
 
 function createGame(input) {
@@ -25,7 +34,8 @@ function createGame(input) {
         return { ok: false, reason: 'player' };
     }
 
-    if (channelLocks.has(input.channelId)) {
+    const channelKey = buildChannelKey(input.channelId, input.channelLockGroup);
+    if (channelLocks.has(channelKey)) {
         return { ok: false, reason: 'channel' };
     }
 
@@ -36,7 +46,7 @@ function createGame(input) {
         timers: input.timers || new Set(),
     };
     gamesById.set(game.id, game);
-    channelLocks.set(game.channelId, game.id);
+    channelLocks.set(channelKey, game.id);
     participantIds.forEach(userId => {
         playerLocks.set(buildPlayerKey(game.guildId, userId), game.id);
     });
@@ -126,8 +136,9 @@ async function cleanupGame(game) {
                 playerLocks.delete(playerKey);
             }
         });
-        if (channelLocks.get(game.channelId) === game.id) {
-            channelLocks.delete(game.channelId);
+        const channelKey = buildChannelKey(game.channelId, game.channelLockGroup);
+        if (channelLocks.get(channelKey) === game.id) {
+            channelLocks.delete(channelKey);
         }
         if (gamesById.get(game.id) === game) {
             gamesById.delete(game.id);
@@ -193,6 +204,8 @@ function resetForTests() {
 }
 
 module.exports = {
+    DEFAULT_CHANNEL_LOCK_GROUP,
+    buildChannelKey,
     createGame,
     getGame,
     getPlayerGame,
