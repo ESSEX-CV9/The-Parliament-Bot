@@ -123,6 +123,15 @@ function spinCylinder(game) {
     game.pointer = 0;
 }
 
+// 存活名单按接下来的行动顺序排：当前持枪的人排第一，后面依次是排在他之后的人。
+// 中弹 / 退出时 turnIndex 已经被挪到了下一个人身上，所以这里直接从它起转一圈就对。
+function turnOrderIds(game) {
+    const alive = game.alive || [];
+    if (alive.length <= 1) return [...alive];
+    const start = ((game.turnIndex % alive.length) + alive.length) % alive.length;
+    return [...alive.slice(start), ...alive.slice(0, start)];
+}
+
 function unknownChamberCount(game) {
     return game.revealed.reduce((total, revealed) => (revealed ? total : total + 1), 0);
 }
@@ -174,7 +183,7 @@ function buildView(game) {
         unknownCount,
         hitChance: unknownCount > 0 ? game.bullets / unknownCount : 0,
         stakeMinutes: currentStakeMinutes(game),
-        aliveIds: [...game.alive],
+        aliveIds: turnOrderIds(game),
         eliminated: game.eliminated.map(entry => ({ ...entry })),
         cowards: game.cowards.map(entry => ({ ...entry })),
         shooterId: game.alive[game.turnIndex],

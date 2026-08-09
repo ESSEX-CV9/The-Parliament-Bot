@@ -164,7 +164,8 @@ function chargeLine(view) {
 }
 
 function rosterLines(view) {
-    const lines = ['', `**存活**　${mentionList(view, view.aliveIds)}`];
+    // 名单已经按行动顺序排好，标题里点明一句，免得看的人以为是随机排的。
+    const lines = ['', `**存活（按行动顺序）**　${mentionList(view, view.aliveIds)}`];
     const block = eliminatedBlock(view);
     if (block) lines.push('', block);
     return lines;
