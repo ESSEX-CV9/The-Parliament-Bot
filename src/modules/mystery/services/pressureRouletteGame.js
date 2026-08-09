@@ -723,6 +723,27 @@ async function beginGame(game) {
             game.pointer = 0;
         }
 
+        // 隐藏规则：全局第一枪（第一轮第一枪）必须是空枪，
+        // 避免开局第一个人一扣扳机就被命中、游戏瞬间结束。
+        // 若枪口正对的弹巢恰好有子弹，把它挪到另一个空巢即可，
+        // 玩家看到的弹巢视图不变。测试工具显式把子弹钉在枪口
+        // （bulletChamber=1）时跳过，否则"第 N 枪必中"无法复现。
+        // 没有 testConfig 时 forcedChamber 是 undefined，比较结果自然为 false。
+        const bulletPinnedToPointer = forcedChamber === game.pointer + 1;
+        if (!bulletPinnedToPointer && game.chambers[game.pointer] === true) {
+            const emptyChambers = [];
+            for (let index = 0; index < CHAMBER_COUNT; index += 1) {
+                if (index !== game.pointer && game.chambers[index] === false) {
+                    emptyChambers.push(index);
+                }
+            }
+            if (emptyChambers.length > 0) {
+                const target = emptyChambers[Math.floor(randomFor(game) * emptyChambers.length)];
+                game.chambers[game.pointer] = false;
+                game.chambers[target] = true;
+            }
+        }
+
         game.phase = 'fire';
         game.turnToken += 1;
         ready = true;

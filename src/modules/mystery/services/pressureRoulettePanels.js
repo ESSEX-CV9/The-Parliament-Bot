@@ -97,6 +97,9 @@ function signature(view) {
 }
 
 // 所有游戏消息统一走这里：顶端一行加粗游戏名，标题走大字，左侧色条标阶段。
+// 注意：Discord 只在 description / field.value 里解析 mention 和 markdown，
+// title、author.name、footer.text 一律按纯文本渲染。所以 <@id>、**加粗**
+// 只能放进 description，标题里放会原样露出来。
 function baseEmbed(view, { title, description, color }) {
     const embed = new EmbedBuilder().setAuthor({ name: signature(view) });
     if (title) embed.setTitle(title);
@@ -105,22 +108,8 @@ function baseEmbed(view, { title, description, color }) {
     return embed;
 }
 
-function message(embed, components = [], options = {}) {
-    const payload = { embeds: [embed], components, allowedMentions: NO_MENTIONS };
-    if (options.content) payload.content = options.content;
-    if (options.allowedMentions) payload.allowedMentions = options.allowedMentions;
-    return payload;
-}
-
-// 「轮到你了」专用：正文放一条真实 @ 提及（embed 里的提及不通知人，正文里的才会真正震到玩家），
-// 同时把该玩家放进 allowedMentions 白名单，让标题里的 <@id> 也渲染成 @用户。
-// 虚拟测试玩家没有真实账号，直接返回空配置，保持原来的纯文本样式。
-function turnMention(view, content) {
-    if (view.autoPlay || !view.shooterId) return {};
-    return {
-        content,
-        allowedMentions: { parse: [], users: [view.shooterId] },
-    };
+function message(embed, components = []) {
+    return { embeds: [embed], components, allowedMentions: NO_MENTIONS };
 }
 
 function formatChambers(chamberView) {
@@ -263,6 +252,8 @@ function firePanel(view) {
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒内不动手，枪会自己响。`;
 
     const description = [
+        `**轮到 ${view.shooterName} 了。**`,
+        '',
         gunLine(view),
         '',
         `**中弹概率　${formatOdds(view.bullets, view.unknownCount)}　≈ ${formatPercent(view.hitChance)}**`,
@@ -273,12 +264,11 @@ function firePanel(view) {
 
     return message(
         baseEmbed(view, {
-            title: `🔫 第 ${view.shotNumber} 枪 · 轮到 ${view.shooterName} 了`,
+            title: `🔫 第 ${view.shotNumber} 枪`,
             description,
             color: COLORS.turn,
         }),
-        view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken)],
-        // turnMention(view, `🔫 轮到 ${view.shooterName} 开枪`)
+        view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken)]
     );
 }
 
@@ -292,6 +282,8 @@ function choicePanel(view) {
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒不选，默认传枪。`;
 
     const description = [
+        `**${view.shooterName} 要怎么处理这把枪？**`,
+        '',
         gunLine(view),
         '',
         `🔫 **传枪** — 下一个人面对 ${sameOdds}`,
@@ -303,12 +295,11 @@ function choicePanel(view) {
 
     return message(
         baseEmbed(view, {
-            title: `🎯 ${view.shooterName} 要怎么处理这把枪？`,
+            title: '🎯 活下来了，接下来呢？',
             description,
             color: COLORS.turn,
         }),
-        view.autoPlay ? [] : [choiceRow(view.gameId, view.turnToken, view.canLoad)],
-        turnMention(view, `🎯 ${view.shooterName}，该你拿主意了`)
+        view.autoPlay ? [] : [choiceRow(view.gameId, view.turnToken, view.canLoad)]
     );
 }
 
