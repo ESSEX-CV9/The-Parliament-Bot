@@ -28,6 +28,10 @@ const TURN_DURATION_MS = 60 * 1000;
 const HIT_PAUSE_MS = 3 * 1000;
 const BASE_TIMEOUT_MINUTES = 3;
 const MINUTES_PER_PRESSURE = 1;
+// 全局第一枪单独掷判定，不走弹巢的 1/6。压得比 1/6 低是为了让开局别太容易
+// 一枪结束，但保留「真的可能中」的悬念。改这个值会直接影响运气值的期望计算，
+// performShot 里那次 recordShot 用的就是它。
+const FIRST_SHOT_HIT_CHANCE = 0.15;
 const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -136,6 +140,30 @@ function turnOrderIds(game) {
     if (alive.length <= 1) return [...alive];
     const start = ((game.turnIndex % alive.length) + alive.length) % alive.length;
     return [...alive.slice(start), ...alive.slice(0, start)];
+}
+
+// 把弹巢摆成「枪口那一格是否有子弹」的指定结果，用于第一枪的独立判定。
+// 只是搬动子弹的位置，总弹数不变，玩家看到的弹巢视图（全部未验）也不变。
+//
+// 概率上是干净的：转轮本身让子弹均匀落在 6 格里，判定为空枪时若它恰好在枪口，
+// 就均匀地挪到其余 5 格中的一格 —— 条件分布仍然是那 5 格均匀，
+// 所以第二枪之后照常用 剩余子弹/未验巢数 算期望不会有偏差。
+function placeFirstShotBullet(game, shouldHit) {
+    const pointer = game.pointer;
+    if (game.chambers[pointer] === shouldHit) return;
+
+    const candidates = [];
+    for (let index = 0; index < CHAMBER_COUNT; index += 1) {
+        if (index !== pointer && game.chambers[index] === shouldHit) {
+            candidates.push(index);
+        }
+    }
+    // 满弹巢想要空枪、或空弹巢想要中弹时无处可搬。开局固定 1 发，走不到这里。
+    if (candidates.length === 0) return;
+
+    const target = candidates[Math.floor(randomFor(game) * candidates.length)];
+    game.chambers[pointer] = shouldHit;
+    game.chambers[target] = !shouldHit;
 }
 
 function unknownChamberCount(game) {
@@ -552,6 +580,9 @@ async function performShot(game, expectedToken) {
         // 统计要的是「扣扳机那一刻」的局面，所以必须在验巢、扣子弹之前取。
         const bulletsBefore = game.bullets;
         const unknownBefore = unknownChamberCount(game);
+        // 全局第一枪的中弹率是 beginGame 单独掷的，不是弹巢算出来的，
+        // 运气值必须按那个概率记，否则第一个开枪的人会被系统性算错。
+        const firstShot = game.shotNumber === 0;
         game.revealed[index] = true;
         if (hit) {
             game.chambers[index] = false;
@@ -564,7 +595,12 @@ async function performShot(game, expectedToken) {
         game.shotNumber += 1;
         game.turnToken += 1;
         game.phase = hit ? 'resolving' : 'choice';
-        recordShot(game.stats, shooterId, { hit, bulletsBefore, unknownBefore });
+        recordShot(game.stats, shooterId, {
+            hit,
+            bulletsBefore,
+            unknownBefore,
+            hitChance: firstShot ? FIRST_SHOT_HIT_CHANCE : undefined,
+        });
         result = { shooterId, hit };
     });
 
@@ -843,25 +879,16 @@ async function beginGame(game) {
             game.pointer = 0;
         }
 
-        // 隐藏规则：全局第一枪（第一轮第一枪）必须是空枪，
-        // 避免开局第一个人一扣扳机就被命中、游戏瞬间结束。
-        // 若枪口正对的弹巢恰好有子弹，把它挪到另一个空巢即可，
-        // 玩家看到的弹巢视图不变。测试工具显式把子弹钉在枪口
-        // （bulletChamber=1）时跳过，否则"第 N 枪必中"无法复现。
+        // 隐藏规则：全局第一枪（第一轮第一枪）单独掷一次 FIRST_SHOT_HIT_CHANCE 的判定，
+        // 跟弹巢里那 1 发的 1/6 无关。掷完之后把子弹摆到和结果一致的位置，
+        // 从第二枪起一切照常走弹巢概率。
+        // 这条规则原本是「第一枪必定空枪」，但那样开局第一个开枪的人稳赚一枪，
+        // 运气值会被系统性拉高；改成低概率真的可能中，既保留开局悬念也不失公平。
+        // 测试工具把子弹钉死在某个弹巢时整段跳过，否则「第 N 枪必中」无法复现。
         // 没有 testConfig 时 forcedChamber 是 undefined，比较结果自然为 false。
-        const bulletPinnedToPointer = forcedChamber === game.pointer + 1;
-        if (!bulletPinnedToPointer && game.chambers[game.pointer] === true) {
-            const emptyChambers = [];
-            for (let index = 0; index < CHAMBER_COUNT; index += 1) {
-                if (index !== game.pointer && game.chambers[index] === false) {
-                    emptyChambers.push(index);
-                }
-            }
-            if (emptyChambers.length > 0) {
-                const target = emptyChambers[Math.floor(randomFor(game) * emptyChambers.length)];
-                game.chambers[game.pointer] = false;
-                game.chambers[target] = true;
-            }
+        const bulletPinned = forcedChamber >= 1 && forcedChamber <= CHAMBER_COUNT;
+        if (!bulletPinned) {
+            placeFirstShotBullet(game, randomFor(game) < FIRST_SHOT_HIT_CHANCE);
         }
 
         game.phase = 'fire';
@@ -1170,6 +1197,7 @@ module.exports = {
     MAX_PARTICIPANTS,
     BASE_TIMEOUT_MINUTES,
     MINUTES_PER_PRESSURE,
+    FIRST_SHOT_HIT_CHANCE,
     startPressureRoulette,
     handlePressureInteraction,
     parsePressureCustomId,

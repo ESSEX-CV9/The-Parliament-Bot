@@ -6,8 +6,21 @@
 // 「欧皇 / 非酋」需要足够的样本量，否则第一次上桌打了两枪没中的人会直接霸榜。
 const MIN_LUCK_SHOTS = 10;
 
+// 运气值是浮点累加出来的，展示时四舍五入到 2 位。资格判定必须用同一精度，
+// 否则会出现「榜上显示 +0.00，却既不是欧皇也不是非酋」这种自相矛盾的画面。
+// 0.005 正好是显示精度的半格：显示成 ±0.00 的人一律当作运气值为零。
+const LUCK_EPSILON = 0.005;
+
 function luckOf(row) {
     return (Number(row.expected_hits) || 0) - (Number(row.hits_taken) || 0);
+}
+
+function isLucky(row) {
+    return luckOf(row) >= LUCK_EPSILON;
+}
+
+function isCursed(row) {
+    return luckOf(row) <= -LUCK_EPSILON;
 }
 
 function formatMinutes(minutes) {
@@ -19,17 +32,24 @@ function formatMinutes(minutes) {
 }
 
 function formatLuck(value) {
-    const rounded = Number(value) || 0;
+    const raw = Number(value) || 0;
+    // 把 -0.003 这种噪声压成 0，否则 toFixed(2) 会输出扎眼的 "-0.00"。
+    const rounded = Math.abs(raw) < LUCK_EPSILON ? 0 : raw;
     return rounded >= 0 ? `+${rounded.toFixed(2)}` : rounded.toFixed(2);
 }
 
 // 排行榜可选口径。key 会直接进 Discord 的选项值，保持稳定别乱改。
+//
+// 每个榜的 eligible 都和对应王座的门槛保持一致。没有门槛的话，全服都是 0 次逃跑时
+// 逃跑榜照样会给某个人挂上 🥇，而「逃跑艺术家」却虚位以待 —— 榜首和王座对不上，
+// 看起来就像称号没被抢走。数据少的服务器尤其明显，所以宁可让榜空着。
 const METRICS = Object.freeze([
     {
         key: 'wins',
         label: '👑 冠军次数',
         value: row => row.wins,
         format: value => `${value} 胜`,
+        eligible: row => row.wins >= 1,
     },
     {
         key: 'luck',
@@ -44,56 +64,65 @@ const METRICS = Object.freeze([
         label: '🎮 参与场次',
         value: row => row.games_played,
         format: value => `${value} 场`,
+        eligible: row => row.games_played >= 1,
     },
     {
         key: 'shots',
         label: '🔫 开枪次数',
         value: row => row.shots_fired,
         format: value => `${value} 枪`,
+        eligible: row => row.shots_fired >= 1,
     },
     {
         key: 'bullets_loaded',
         label: '💣 加压塞入子弹数',
         value: row => row.bullets_loaded,
         format: value => `${value} 发`,
+        eligible: row => row.bullets_loaded >= 1,
     },
     {
         key: 'max_again',
         label: '🔥 单局最多连开',
-        hint: '一局里最多连续选了几次「再来一枪」，中途传枪或加压就断。',
+        hint: '一局里最多连续选了几次「再来一枪」，中途传枪或加压就断。需至少连开 2 次才上榜。',
         value: row => row.max_charge,
         format: value => `${value} 连`,
+        eligible: row => row.max_charge >= 2,
     },
     {
         key: 'again_total',
         label: '🔁 累计连开次数',
         value: row => row.again_count,
         format: value => `${value} 次`,
+        eligible: row => row.again_count >= 1,
     },
     {
         key: 'brave',
         label: '😤 最高直面子弹数',
-        hint: '敢在枪里已经有几发子弹的情况下扣扳机。',
+        hint: '敢在枪里已经有几发子弹的情况下扣扳机。枪里只有 1 发是所有人的起手局面，需至少直面 2 发才上榜。',
         value: row => row.max_bullets_faced,
         format: value => `${value} 发`,
+        eligible: row => row.max_bullets_faced >= 2,
     },
     {
         key: 'hits',
         label: '🎯 中弹次数',
         value: row => row.hits_taken,
         format: value => `${value} 次`,
+        eligible: row => row.hits_taken >= 1,
     },
     {
         key: 'quits',
         label: '🤡 逃跑次数',
         value: row => row.quits,
         format: value => `${value} 次`,
+        eligible: row => row.quits >= 1,
     },
     {
         key: 'timeout',
         label: '⛓️ 累计禁言时长',
         value: row => row.timeout_minutes,
         format: formatMinutes,
+        eligible: row => row.timeout_minutes >= 1,
     },
     {
         key: 'survived',
@@ -101,6 +130,7 @@ const METRICS = Object.freeze([
         hint: '包含冠军与平局。',
         value: row => row.survived,
         format: value => `${value} 场`,
+        eligible: row => row.survived >= 1,
     },
 ]);
 
@@ -124,7 +154,7 @@ const THRONES = Object.freeze([
         format: formatLuck,
         // 必须真的走运（运气值为正）才配当欧皇。只卡「最高」不卡正负的话，
         // 全服都倒霉的时候会把一个运气值 -3 的人捧成欧皇。
-        eligible: row => row.shots_fired >= MIN_LUCK_SHOTS && luckOf(row) > 0,
+        eligible: row => row.shots_fired >= MIN_LUCK_SHOTS && isLucky(row),
         higherIsBetter: true,
     },
     {
@@ -137,7 +167,7 @@ const THRONES = Object.freeze([
         format: formatLuck,
         // 同理：全服都走运的时候，「运气值最低」的那个人可能一枪没中过，
         // 把他叫非酋纯属冤枉。必须真的中得比该中的多才算。
-        eligible: row => row.shots_fired >= MIN_LUCK_SHOTS && luckOf(row) < 0,
+        eligible: row => row.shots_fired >= MIN_LUCK_SHOTS && isCursed(row),
         higherIsBetter: false,
     },
     {
@@ -364,6 +394,7 @@ function titlesForUser(rows, userId) {
 
 module.exports = {
     MIN_LUCK_SHOTS,
+    LUCK_EPSILON,
     METRICS,
     DEFAULT_METRIC_KEY,
     THRONES,

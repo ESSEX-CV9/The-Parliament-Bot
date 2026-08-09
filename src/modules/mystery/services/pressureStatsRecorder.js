@@ -57,8 +57,10 @@ function rowFor(stats, userId) {
  * @param {boolean} shot.hit 是否中弹
  * @param {number} shot.bulletsBefore 开枪前枪里有几发
  * @param {number} shot.unknownBefore 开枪前还有几个弹巢没验过
+ * @param {number} [shot.hitChance] 这一枪的真实中弹概率。只有不走弹巢概率的枪
+ *   （目前是全局第一枪）才需要传，传了就用它算期望，不再用弹巢推。
  */
-function recordShot(stats, userId, { hit, bulletsBefore, unknownBefore }) {
+function recordShot(stats, userId, { hit, bulletsBefore, unknownBefore, hitChance }) {
     const row = rowFor(stats, userId);
     if (!row) return;
 
@@ -75,6 +77,13 @@ function recordShot(stats, userId, { hit, bulletsBefore, unknownBefore }) {
     // 开枪那一刻的真实中弹概率累加起来，就是这个人「理论上该中几枪」。
     // expected_hits - hits_taken 即运气值：正数是欧皇，负数是非酋。
     // 这比单纯数空枪次数靠谱得多——后者只会选出玩得最多的人。
+    //
+    // 调用方显式给了概率就用它（全局第一枪不走弹巢概率），否则按
+    // 剩余子弹 / 未验弹巢 推算。
+    if (Number.isFinite(hitChance)) {
+        row.expected_hits += hitChance;
+        return;
+    }
     const unknown = Number(unknownBefore) || 0;
     if (unknown > 0) {
         row.expected_hits += (Number(bulletsBefore) || 0) / unknown;
