@@ -7,10 +7,12 @@ const {
 
 const GAME_NAME = '🔫 加压俄罗斯轮盘';
 
+// 弹巢显示：空 = 已开过且是空枪；砰 = 已开过且中弹；? = 未知；[?] = 当前对准的弹巢。
 const CHAMBER_SYMBOLS = Object.freeze({
-    spent: '⚪',
-    unknown: '⚫',
-    next: '🔴',
+    spent: '空',
+    hit: '砰',
+    unknown: '?',
+    next: '[?]',
 });
 
 // 每个阶段一个颜色，扫一眼就知道现在打到哪一步。
@@ -162,7 +164,7 @@ function eliminatedBlock(view) {
 }
 
 function gunLine(view) {
-    return `弹巢　${formatChambers(view.chambers)}　│　枪内 **${view.bullets} 发**　│　赌注 **💤 ${view.stakeMinutes} 分钟**`;
+    return `弹巢 ${formatChambers(view.chambers)}　│　枪内 **${view.bullets} 发**　│　赌注 **💤 ${view.stakeMinutes} 分钟**`;
 }
 
 function rosterLines(view) {

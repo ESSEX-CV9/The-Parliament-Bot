@@ -41,6 +41,10 @@ function buildData() {
         .addBooleanOption(option => option
             .setName('等待招募')
             .setDescription('true = 照常等 3 分钟招募真人；默认 false，立即开打')
+            .setRequired(false))
+        .addBooleanOption(option => option
+            .setName('保留消息')
+            .setDescription('true = 不删除旧面板，保留整局所有消息（调试用）；默认 false，按 3 条滚动窗口清理')
             .setRequired(false));
 }
 
@@ -86,12 +90,14 @@ function createPressureTestCommand({
             const turnSeconds = interaction.options.getInteger('回合时限');
             const bulletChamber = interaction.options.getInteger('子弹巢位') ?? 0;
             const waitForRecruitment = interaction.options.getBoolean('等待招募') === true;
+            const keepMessages = interaction.options.getBoolean('保留消息') === true;
 
             await startGame(interaction, {
                 test: {
                     botCount,
                     bulletChamber,
                     immediate: !waitForRecruitment,
+                    keepMessages,
                 },
                 turnDurationMs: turnSeconds ? turnSeconds * 1000 : undefined,
             });

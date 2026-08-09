@@ -18,7 +18,7 @@ const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 // 游戏进行中保留的消息数（含当前这条）。超出窗口的旧消息才删。
-const PANEL_HISTORY_LIMIT = 5;
+const PANEL_HISTORY_LIMIT = 3;
 // 独立的频道锁分组：同一频道只能有一场加压轮盘，
 // 但可以和运气轮盘 / 传炸弹 / 死斗同时进行。
 const CHANNEL_LOCK_GROUP = 'pressure';
@@ -102,6 +102,7 @@ function spinCylinder(game) {
         game.chambers[positions[index]] = true;
     }
     game.revealed = new Array(CHAMBER_COUNT).fill(false);
+    game.hitChambers = new Array(CHAMBER_COUNT).fill(false);
     game.pointer = 0;
 }
 
@@ -116,7 +117,8 @@ function currentStakeMinutes(game) {
 function chamberView(game) {
     return game.revealed.map((revealed, index) => {
         if (game.state === 'playing' && index === game.pointer && !revealed) return 'next';
-        return revealed ? 'spent' : 'unknown';
+        if (revealed) return game.hitChambers?.[index] ? 'hit' : 'spent';
+        return 'unknown';
     });
 }
 
@@ -213,8 +215,11 @@ function renderPanel(game, payload) {
             }
         }
 
-        while (game.panels.length > PANEL_HISTORY_LIMIT) {
-            await deletePanelEntry(game.panels.shift());
+        // 测试调试模式（保留消息）不删旧面板，方便看整局回放。
+        if (!game.keepMessages) {
+            while (game.panels.length > PANEL_HISTORY_LIMIT) {
+                await deletePanelEntry(game.panels.shift());
+            }
         }
         return next;
     });
@@ -223,6 +228,8 @@ function renderPanel(game, payload) {
 // 结算后清场：只留最后一条结果消息。
 function pruneToFinalPanel(game) {
     return queuePanel(game, async () => {
+        // 测试调试模式保留整局消息，跳过清场。
+        if (game.keepMessages) return;
         const keep = game.panels.at(-1);
         const doomed = game.panels.slice(0, -1);
         game.panels = keep ? [keep] : [];
@@ -466,6 +473,7 @@ async function performShot(game, expectedToken) {
         game.revealed[index] = true;
         if (hit) {
             game.chambers[index] = false;
+            game.hitChambers[index] = true;
             game.bullets = Math.max(0, game.bullets - 1);
         }
         game.pointer = (index + 1) % CHAMBER_COUNT;
@@ -622,8 +630,57 @@ function recruitmentView(game) {
     };
 }
 
+// 常驻招募消息：第一次发一条，之后有人报名时原地 edit 更新人数，
+// 不再像游戏面板那样每次都另发一条新的。
 async function renderRecruitment(game) {
-    await renderPanel(game, panels.recruitmentPanel(recruitmentView(game)));
+    return queuePanel(game, async () => {
+        if (!game.channel || typeof game.channel.send !== 'function') return null;
+
+        const payload = panels.recruitmentPanel(recruitmentView(game));
+        const existing = game.recruitmentEntry;
+
+        if (existing && typeof existing.message?.edit === 'function') {
+            try {
+                await existing.message.edit(payload);
+                return existing.message;
+            } catch (error) {
+                // 原消息可能被手动删了或已失效，回收这条记录，落到下面重发一条。
+                logDiscordFailure(game, 'edit-recruitment', error);
+                const index = game.panels.indexOf(existing);
+                if (index !== -1) game.panels.splice(index, 1);
+            }
+        }
+
+        let next = null;
+        try {
+            next = await game.channel.send(payload);
+        } catch (error) {
+            logDiscordFailure(game, 'send-recruitment', error);
+            return null;
+        }
+
+        const entry = {
+            message: next,
+            interactive: (payload.components || []).length > 0,
+        };
+        game.panels.push(entry);
+        game.recruitmentEntry = entry;
+        return next;
+    });
+}
+
+// 真正开局时，招募卡片已经没用，从频道里删掉，别让它混在游戏面板中间。
+function deleteRecruitmentPanel(game) {
+    return queuePanel(game, async () => {
+        // 测试调试模式保留招募消息，一并保留。
+        if (game.keepMessages) return;
+        const entry = game.recruitmentEntry;
+        if (!entry) return;
+        game.recruitmentEntry = null;
+        const index = game.panels.indexOf(entry);
+        if (index !== -1) game.panels.splice(index, 1);
+        await deletePanelEntry(entry);
+    });
 }
 
 async function beginGame(game) {
@@ -662,6 +719,7 @@ async function beginGame(game) {
             game.chambers = new Array(CHAMBER_COUNT).fill(false);
             game.chambers[forcedChamber - 1] = true;
             game.revealed = new Array(CHAMBER_COUNT).fill(false);
+            game.hitChambers = new Array(CHAMBER_COUNT).fill(false);
             game.pointer = 0;
         }
 
@@ -676,6 +734,9 @@ async function beginGame(game) {
         return;
     }
     if (!ready) return;
+
+    // 招募结束，常驻招募消息下岗，频道从这一秒起只出现游戏进行中的面板。
+    await deleteRecruitmentPanel(game);
 
     // 只有真正开局才通知调用方扣冷却：招募人数不足被取消时，
     // 发起人不该白白损失一次使用机会。
@@ -827,6 +888,7 @@ function buildTestSetup(options) {
             botCount,
             immediate: test.immediate !== false,
             bulletChamber: Number(test.bulletChamber) || 0,
+            keepMessages: test.keepMessages === true,
         },
         virtualIds,
         labels,
@@ -855,12 +917,14 @@ async function startPressureRoulette(interaction, options = {}) {
         initiatorId: userId,
         participantIds: [userId, ...virtualIds],
         testConfig,
+        keepMessages: testConfig?.keepMessages === true,
         labels,
         turnDurationMs: Number(options.turnDurationMs) || TURN_DURATION_MS,
         state: 'recruiting',
         settled: false,
         chambers: new Array(CHAMBER_COUNT).fill(false),
         revealed: new Array(CHAMBER_COUNT).fill(false),
+        hitChambers: new Array(CHAMBER_COUNT).fill(false),
         pointer: 0,
         bullets: 0,
         pressure: 0,
@@ -872,6 +936,7 @@ async function startPressureRoulette(interaction, options = {}) {
         turnToken: 0,
         phase: 'idle',
         panels: [],
+        recruitmentEntry: null,
         channelLockGroup: CHANNEL_LOCK_GROUP,
         panelQueue: Promise.resolve(),
         recruitmentEndsAt: Date.now() + RECRUITMENT_DURATION_MS,
