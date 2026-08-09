@@ -31,6 +31,10 @@ const ADDITIVE_COLUMNS = Object.freeze([
     'timeout_minutes',
     'coward_minutes',
     'expected_hits',
+    'unloads',
+    'ripostes',
+    'riposte_kills',
+    'riposted_count',
 ]);
 
 const MAX_COLUMNS = Object.freeze([
@@ -65,6 +69,10 @@ function initializeMysteryStatsDatabase() {
             timeout_minutes   INTEGER NOT NULL DEFAULT 0,
             coward_minutes    INTEGER NOT NULL DEFAULT 0,
             expected_hits     REAL NOT NULL DEFAULT 0,
+            unloads           INTEGER NOT NULL DEFAULT 0,
+            ripostes          INTEGER NOT NULL DEFAULT 0,
+            riposte_kills     INTEGER NOT NULL DEFAULT 0,
+            riposted_count    INTEGER NOT NULL DEFAULT 0,
             first_played_at   INTEGER NOT NULL,
             last_played_at    INTEGER NOT NULL,
             PRIMARY KEY (guild_id, user_id)
@@ -74,12 +82,29 @@ function initializeMysteryStatsDatabase() {
             ON pressure_player_stats (guild_id);
     `);
 
+    // 老库迁移：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列。
+    // 幂等地补上新列，保证升级前就建好的 sqlite 文件也能用新统计。
+    const existingColumns = new Set(
+        statsDb.prepare('PRAGMA table_info(pressure_player_stats)').all().map(column => column.name)
+    );
+    const newColumns = {
+        unloads: 'INTEGER',
+        ripostes: 'INTEGER',
+        riposte_kills: 'INTEGER',
+        riposted_count: 'INTEGER',
+    };
+    for (const [column, type] of Object.entries(newColumns)) {
+        if (existingColumns.has(column)) continue;
+        statsDb.exec(
+            `ALTER TABLE pressure_player_stats ADD COLUMN ${column} ${type} NOT NULL DEFAULT 0`
+        );
+    }
+
     initialized = true;
     console.log('[MysteryStats] ✅ 神秘指令游戏数据库初始化完成。');
 }
 
 initializeMysteryStatsDatabase();
-
 const upsertStatement = statsDb.prepare(`
     INSERT INTO pressure_player_stats (
         guild_id, user_id,

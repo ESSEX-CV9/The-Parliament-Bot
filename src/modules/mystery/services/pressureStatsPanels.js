@@ -80,6 +80,7 @@ function profilePanel({ row, rows, userId, totalPlayers }) {
         `🔫 开枪 **${row.shots_fired}** 次　│　💨 空枪 **${row.blanks}** 次　│　🎯 中弹 **${row.hits_taken}** 次（${percent(row.hits_taken, row.shots_fired)}）`,
         `💣 加压 **${row.loads}** 次 / 塞入 **${row.bullets_loaded}** 发　│　🤝 传枪 **${row.pass_count}** 次　│　🤡 逃跑 **${row.quits}** 次`,
         `🔁 累计连开 **${row.again_count}** 次　│　🔥 单局最多连开 **${row.max_charge}** 连　│　😤 最高直面 **${row.max_bullets_faced}** 发`,
+        `🔧 抽弹 **${row.unloads}** 次　│　🔙 反手 **${row.ripostes}** 次 / 送走 **${row.riposte_kills}** 人`,
         `⛓️ 中弹禁言累计 **${formatMinutes(row.timeout_minutes)}**${row.coward_minutes > 0 ? `　│　🤡 逃跑惩罚累计 **${formatMinutes(row.coward_minutes)}**` : ''}`,
         '',
         row.shots_fired >= MIN_LUCK_SHOTS

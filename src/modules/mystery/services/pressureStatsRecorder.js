@@ -27,6 +27,10 @@ function createPlayerRow(userId) {
         timeout_minutes: 0,
         coward_minutes: 0,
         expected_hits: 0,
+     unloads: 0,
+        ripostes: 0,
+        riposte_kills: 0,
+        riposted_count: 0,
     };
 }
 
@@ -130,6 +134,32 @@ function recordQuit(stats, userId, penaltyMinutes = 0) {
     row.coward_minutes += Number(penaltyMinutes) || 0;
 }
 
+/** 记一次抽弹开枪（fire 阶段卸弹自救）。 */
+function recordUnload(stats, userId) {
+    const row = rowFor(stats, userId);
+    if (!row) return;
+    row.unloads += 1;
+}
+
+/**
+ * 记一次反手还击。
+ * @param {string} initiatorId 发起反手的人
+ * @param {string} targetId 被反手（最后一次加压）的人
+ */
+function recordRiposte(stats, initiatorId, targetId) {
+    const initiator = rowFor(stats, initiatorId);
+    if (initiator) initiator.ripostes += 1;
+    const target = rowFor(stats, targetId);
+    if (target) target.riposted_count += 1;
+}
+
+/** 记一次反手成功送走加压者（加压者在被迫开枪时中弹）。 */
+function recordRiposteKill(stats, userId) {
+    const row = rowFor(stats, userId);
+    if (!row) return;
+    row.riposte_kills += 1;
+}
+
 /**
  * 结算，产出待写库的行。
  * @param {object} stats
@@ -159,5 +189,8 @@ module.exports = {
     recordChoice,
     recordElimination,
     recordQuit,
+    recordUnload,
+    recordRiposte,
+    recordRiposteKill,
     finalizePressureStats,
 };

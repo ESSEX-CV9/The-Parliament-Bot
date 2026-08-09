@@ -24,6 +24,8 @@ const COLORS = Object.freeze({
     pass: 0x7F8C8D,       // 灰 — 传枪
     again: 0x9B59B6,      // 紫 — 再开一枪
     load: 0xD35400,       // 红橙 — 加压
+    unload: 0x1ABC9C,     // 青绿 — 抽弹
+    riposte: 0xC0392B,    // 深红 — 反手
     coward: 0xF39C12,     // 黄 — 胆小鬼
     champion: 0xF1C40F,   // 金 — 冠军
     draw: 0x95A5A6,       // 灰蓝 — 平局
@@ -189,13 +191,22 @@ function joinRow(gameId, disabled = false) {
 
 // canQuit 为 false 时整个逃生按钮不渲染，而不是置灰：戴罪上桌的人
 // 不该看到一个自己永远点不了的出口。
-function fireRow(gameId, turnToken, canQuit = true) {
+// canUnload 为 true 时中间插一个「🔧 抽弹开枪」。
+function fireRow(gameId, turnToken, { canQuit = true, canUnload = false } = {}) {
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`mystery_pressure_fire:${gameId}:${turnToken}`)
             .setLabel('🔫 开枪')
             .setStyle(ButtonStyle.Danger)
     );
+    if (canUnload) {
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mystery_pressure_unload:${gameId}:${turnToken}`)
+                .setLabel('🔧 抽弹开枪')
+                .setStyle(ButtonStyle.Success)
+        );
+    }
     if (canQuit) {
         row.addComponents(
             new ButtonBuilder()
@@ -207,12 +218,23 @@ function fireRow(gameId, turnToken, canQuit = true) {
     return row;
 }
 
-function choiceRow(gameId, turnToken, canLoad) {
-    return new ActionRowBuilder().addComponents(
+function choiceRow(gameId, turnToken, canLoad, canRiposte = false) {
+    const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`mystery_pressure_pass:${gameId}:${turnToken}`)
             .setLabel('🔫 传枪')
-            .setStyle(ButtonStyle.Secondary),
+            .setStyle(ButtonStyle.Secondary)
+    );
+    // 反手是「传枪」的替代品：不往下传，往回扔。只在持有反手权时出现。
+    if (canRiposte) {
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mystery_pressure_riposte:${gameId}:${turnToken}`)
+                .setLabel('🔙 反手还击')
+                .setStyle(ButtonStyle.Danger)
+        );
+    }
+    row.addComponents(
         new ButtonBuilder()
             .setCustomId(`mystery_pressure_again:${gameId}:${turnToken}`)
             .setLabel('🔁 再开一枪')
@@ -223,6 +245,7 @@ function choiceRow(gameId, turnToken, canLoad) {
             .setStyle(ButtonStyle.Danger)
             .setDisabled(!canLoad)
     );
+    return row;
 }
 
 // ---------- 需要操作的面板 ----------
@@ -246,6 +269,12 @@ function recruitmentPanel(view) {
         '- **连开蓄力**只在连着对自己开枪时累积',
         '　一旦传枪 / 加压 / 中弹就清零，攒了就得当场兑现',
         '　连开三次再加压 = 一口气塞 4 发，但你得先自己撑过那三枪',
+        '- 🔧 **抽弹开枪**（枪里 **≥3 发**时才出现，每人每局 **1 次**）：',
+        '　卸掉 1 发、重转弹巢、立刻扣扳机。中弹率按卸完后的弹巢算',
+        '　但**赌注一分不降**；活下来直接传枪，这轮不能再开 / 加压 / 反手',
+        '- 🔙 **反手还击**：有人加压后，接到高压枪的人拿到「反手权」',
+        '　活过自己那一枪就能把枪**扔回给加压者**，逼他开一枪',
+        '　然后枪回到你手上再补一枪。加压者压得越狠，越容易被拉下水',
         '- 轮到你的时候可以按 **🤡 胆小鬼** 退出',
         '　不禁言，但名字会被挂上 **🤡胆小鬼**，游戏结束后至少还要再挂 **5 分钟**',
         '　你退出那一刻的赌注比 5 分钟长的话，就按赌注算',
@@ -281,19 +310,30 @@ function firePanel(view) {
         ? '🤖 **它正在思考人生……**'
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒内不动手，枪会自己响。`;
 
-    // 戴罪上桌的人没有逃生按钮，得当众说清楚，不然全场只会觉得面板少了个按钮。
-    const noEscapeLine = view.canQuit === false
-        ? '🤡 **他是戴罪上桌的，这局没有退路。**逃生的机会他上一局已经用掉了。'
+    // 反手序列中的强制开枪：不能逃、不能加压、不能抽弹。要把原因说清楚。
+    let forcedLine = null;
+    if (view.riposte) {
+        forcedLine = view.riposte.stage === 'return'
+            ? '🔙 **这一枪是反手换回来的补枪。**不能逃、不能加压、不能抽弹。'
+            : `🔙 **${view.riposte.targetName} 被反手逼到了枪口上。**这一枪不能逃、不能加压、不能抽弹。`;
+    } else if (view.canQuit === false) {
+        // 戴罪上桌的人没有逃生按钮，得当众说清楚，不然全场只会觉得面板少了个按钮。
+        forcedLine = '🤡 **他是戴罪上桌的，这局没有退路。**逃生的机会他上一局已经用掉了。';
+    }
+
+    const unloadLine = view.canUnload
+        ? `🔧 **抽弹开枪** — 卸掉 1 发并重转弹巢，然后立刻扣扳机。中弹率降到 **${formatPercent(view.unloadChance)}**，但**赌注一分不降**；活下来直接传枪，这一轮不能再开 / 加压 / 反手。`
         : null;
 
     const description = [
         `**轮到 ${view.shooterName} 了。**`,
-        ...(noEscapeLine ? ['', noEscapeLine] : []),
+        ...(forcedLine ? ['', forcedLine] : []),
         '',
         gunLine(view),
         ...(chargeLine(view) ? [chargeLine(view)] : []),
         '',
         `**中弹概率　${formatOdds(view.bullets, view.unknownCount)}　≈ ${formatPercent(view.hitChance)}**`,
+        ...(unloadLine ? ['', unloadLine] : []),
         '',
         tail,
         ...rosterLines(view),
@@ -305,7 +345,10 @@ function firePanel(view) {
             description,
             color: COLORS.turn,
         }),
-        view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken, view.canQuit !== false)]
+        view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken, {
+            canQuit: view.canQuit !== false,
+            canUnload: view.canUnload === true,
+        })]
     );
 }
 
@@ -328,6 +371,10 @@ function choicePanel(view) {
         ? '🤖 **它正在思考人生……**'
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒不选，默认传枪。`;
 
+    const riposteLine = view.canRiposte
+        ? `🔙 **反手还击** — 把枪扔回给 ${view.riposteTargetName}。他必须开一枪（**${formatOdds(view.bullets, view.unknownCount)} ≈ ${formatPercent(view.riposteTargetChance)}**），无论他中没中，枪都会回到你手上，你再补一枪。`
+        : null;
+
     const description = [
         `**${view.shooterName} 要怎么处理这把枪？**`,
         '',
@@ -335,6 +382,7 @@ function choicePanel(view) {
         ...(chargeLine(view) ? [chargeLine(view)] : []),
         '',
         passLine,
+        ...(riposteLine ? [riposteLine] : []),
         againLine,
         loadLine,
         '',
@@ -347,7 +395,7 @@ function choicePanel(view) {
             description,
             color: COLORS.turn,
         }),
-        view.autoPlay ? [] : [choiceRow(view.gameId, view.turnToken, view.canLoad)]
+        view.autoPlay ? [] : [choiceRow(view.gameId, view.turnToken, view.canLoad, view.canRiposte === true)]
     );
 }
 
@@ -383,6 +431,42 @@ function hitAnnouncement(view) {
         title: '💥 砰！',
         description: lines.join('\n'),
         color: COLORS.hit,
+    }));
+}
+
+function unloadAnnouncement(view) {
+    const lines = [
+        `${view.actorName} 从弹巢里卸掉了 **${view.unloadedBullets} 发**子弹，然后转了一下弹巢。`,
+        '',
+        '子弹少了一发，但**赌注一分不降** —— 他只买命，不省钱。',
+        '这一枪要是活下来，枪会直接传走，不能再开、不能加压、也没法反手。',
+        '',
+        gunLine(view),
+        ...rosterLines(view),
+    ];
+
+    return message(baseEmbed(view, {
+        title: '🔧 抽弹',
+        description: lines.join('\n'),
+        color: COLORS.unload,
+    }));
+}
+
+function riposteAnnouncement(view) {
+    const lines = [
+        `${view.actorName} 没有把枪传下去，而是朝着 ${view.targetName} 扔了回去。`,
+        '',
+        `**${view.targetName} 必须开这一枪** —— 不能逃、不能加压、不能抽弹。`,
+        '无论他中没中，枪都会回到发起人手上补第二枪。',
+        '',
+        gunLine(view),
+        ...rosterLines(view),
+    ];
+
+    return message(baseEmbed(view, {
+        title: '🔙 反手还击',
+        description: lines.join('\n'),
+        color: COLORS.riposte,
     }));
 }
 
@@ -564,6 +648,8 @@ module.exports = {
     choicePanel,
     missAnnouncement,
     hitAnnouncement,
+    unloadAnnouncement,
+    riposteAnnouncement,
     actionAnnouncement,
     cowardAnnouncement,
     cowardRenameMessage,

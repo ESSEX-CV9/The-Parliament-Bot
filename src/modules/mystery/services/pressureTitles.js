@@ -328,6 +328,20 @@ const ACHIEVEMENTS = Object.freeze([
         rule: '因中弹累计被禁言满 60 分钟',
         test: row => row.timeout_minutes >= 60,
     },
+    {
+        id: 'bomb_squad',
+        emoji: '🔧',
+        name: '拆弹专家',
+        rule: '累计抽弹 10 次',
+        test: row => row.unloads >= 10,
+    },
+    {
+        id: 'mutual_destruction',
+        emoji: '💥',
+        name: '玉石俱焚',
+        rule: '累计用反手送走 5 个加压者',
+        test: row => row.riposte_kills >= 5,
+    },
 ]);
 
 // 同分时按参与场次多的优先，再按 user_id 兜底，保证榜单顺序稳定不跳。

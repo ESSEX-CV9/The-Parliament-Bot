@@ -15,6 +15,9 @@ const {
     recordChoice,
     recordElimination,
     recordQuit,
+    recordUnload,
+    recordRiposte,
+    recordRiposteKill,
     finalizePressureStats,
 } = require('./pressureStatsRecorder');
 const { recordPressureGame } = require('../utils/mysteryStatsDatabase');
@@ -29,6 +32,8 @@ const TURN_DURATION_MS = 60 * 1000;
 const HIT_PAUSE_MS = 3 * 1000;
 const BASE_TIMEOUT_MINUTES = 3;
 const MINUTES_PER_PRESSURE = 1;
+// 🔧 抽弹开枪的最低门槛：枪里至少 3 发才拆得有意义（拆完还保得住 2 发的悬念）。
+const UNLOAD_MIN_BULLETS = 3;
 // 全局第一枪单独掷判定，不走弹巢的 1/6。压得比 1/6 低是为了让开局别太容易
 // 一枪结束，但保留「真的可能中」的悬念。改这个值会直接影响运气值的期望计算，
 // performShot 里那次 recordShot 用的就是它。
@@ -46,9 +51,11 @@ const MAX_TEST_BOTS = 5;
 const TURN_ACTIONS = Object.freeze({
     fire: 'fire',
     quit: 'fire',
+    unload: 'fire',
     pass: 'choice',
     again: 'choice',
     load: 'choice',
+    riposte: 'choice',
 });
 
 const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
@@ -100,9 +107,12 @@ function nameFor(game, userId) {
 
 // 机器人偏激进：不加压就不会有人被淘汰，测试时局面推不动。
 // 攒了蓄力就更倾向于兑现，否则测试局里几乎看不到一次塞好几发的情况。
-function pickVirtualAction(game) {
+// 决策需要看到 choice 面板的按钮状态（有没有反手权），否则测试局覆盖不到反手分支。
+function pickVirtualAction(game, view) {
     const roll = randomFor(game);
     const charge = chargeFor(game, game.alive[game.turnIndex]);
+    // 有反手权就有一半以上的概率把加压者拉下水——派对游戏，同归于尽很有吸引力。
+    if (view?.canRiposte && roll < 0.7) return 'riposte';
     if (game.bullets < CHAMBER_COUNT && roll < 0.35 + (charge * 0.2)) return 'load';
     if (roll < 0.7) return 'again';
     return 'pass';
@@ -132,9 +142,21 @@ function spinCylinder(game) {
 
 // 存活名单按接下来的行动顺序排：当前持枪的人排第一，后面依次是排在他之后的人。
 // 中弹 / 退出时 turnIndex 已经被挪到了下一个人身上，所以这里直接从它起转一圈就对。
+// 反手序列的「target 阶段」当前持枪的是被反手的加压者，但下一枪是发起人的补枪，
+// 所以名单要把发起人拎出来放在加压者后面，之后才回到正常轮转。
 function turnOrderIds(game) {
     const alive = game.alive || [];
     if (alive.length <= 1) return [...alive];
+    const rip = game.riposte;
+    if (rip?.stage === 'target') {
+        const targetIndex = alive.indexOf(rip.targetId);
+        const initiatorIndex = alive.indexOf(rip.initiatorId);
+        if (targetIndex !== -1 && initiatorIndex !== -1) {
+            const rest = alive.filter((_, index) => index !== targetIndex);
+            const restInitPos = rest.indexOf(rip.initiatorId);
+            return [rip.targetId, ...rest.slice(restInitPos), ...rest.slice(0, restInitPos)];
+        }
+    }
     const start = ((game.turnIndex % alive.length) + alive.length) % alive.length;
     return [...alive.slice(start), ...alive.slice(0, start)];
 }
@@ -243,7 +265,26 @@ function buildView(game) {
         // 名单里给戴罪的人挂上 🤡，否则「他这局跑不掉」这件事全场看不见。
         redeemerIds: [...(game.redeemers || [])],
         // 戴罪上桌的人没有逃生按钮：逃生机会他已经用掉一次了。
-        canQuit: !isRedeemer(game, shooterId),
+        // 反手序列中的强制开枪同样不能逃，由 performShot 按阶段驱动。
+        canQuit: !game.riposte && !isRedeemer(game, shooterId),
+        // 🔧 抽弹开枪：fire 阶段、枪里 ≥3 发、本局没用过、且不在反手序列里。
+        canUnload: !game.riposte
+            && game.phase === 'fire'
+            && game.bullets >= UNLOAD_MIN_BULLETS
+            && !(game.unloadUsed || []).includes(shooterId),
+        unloadUsed: [...(game.unloadUsed || [])],
+        // 抽弹后立刻重转弹巢再开枪，中弹率按「卸掉 1 发后的满巢」算。
+        unloadChance: game.bullets >= UNLOAD_MIN_BULLETS
+            ? (game.bullets - 1) / CHAMBER_COUNT
+            : 0,
+        // 反手序列上下文：fire 面板要用它标注「这是被反手逼出来的一枪」。
+        riposte: game.riposte
+            ? {
+                ...game.riposte,
+                initiatorName: panels.nameOf({ labels: game.labels || {} }, game.riposte.initiatorId),
+                targetName: panels.nameOf({ labels: game.labels || {} }, game.riposte.targetId),
+            }
+            : null,
         shotNumber: game.shotNumber + 1,
         turnTimeoutMs: turnDurationFor(game),
         labels: game.labels || {},
@@ -254,7 +295,8 @@ function buildView(game) {
 
 function buildChoiceView(game) {
     const view = buildView(game);
-    const loadBullets = loadBulletsFor(game, game.alive[game.turnIndex]);
+    const shooterId = game.alive[game.turnIndex];
+    const loadBullets = loadBulletsFor(game, shooterId);
     view.passUnknownCount = view.unknownCount;
     view.passChance = view.unknownCount > 0 ? game.bullets / view.unknownCount : 0;
     view.canLoad = game.bullets < CHAMBER_COUNT;
@@ -262,6 +304,17 @@ function buildChoiceView(game) {
     view.loadChance = (game.bullets + loadBullets) / CHAMBER_COUNT;
     view.loadStakeMinutes = currentStakeMinutes(game) + (loadBullets * MINUTES_PER_PRESSURE);
     view.shotNumber = game.shotNumber;
+    // 🔙 反手还击：当前持枪者持有反手权，且加压者还活着、没有进行中的反手序列。
+    view.canRiposte = !game.riposte
+        && game.riposteHolderId === shooterId
+        && Boolean(game.riposteTargetId)
+        && game.alive.includes(game.riposteTargetId);
+    view.riposteTargetId = game.riposteTargetId || null;
+    view.riposteTargetName = game.riposteTargetId
+        ? panels.nameOf({ labels: game.labels || {} }, game.riposteTargetId)
+        : null;
+    // 反手不开新枪也不重转：加压者面对的正是当前这个弹巢。
+    view.riposteTargetChance = view.unknownCount > 0 ? game.bullets / view.unknownCount : 0;
     return view;
 }
 
@@ -526,8 +579,13 @@ async function startTurn(game) {
     const view = buildView(game);
     await renderPanel(game, panels.firePanel(view));
 
-    // 虚拟玩家没有按钮可点，短暂"思考"后自动扣扳机。
+    // 虚拟玩家没有按钮可点，短暂"思考"后自动行动。
     const delay = view.autoPlay ? VIRTUAL_THINK_MS : undefined;
+    if (view.autoPlay && view.canUnload && randomFor(game) < 0.3) {
+        // 枪里高压时，测试机器人也会用抽弹保命，否则这个分支测试局覆盖不到。
+        armTurnTimer(game, view.turnToken, () => handleUnload(game, view.turnToken), delay);
+        return;
+    }
     armTurnTimer(game, view.turnToken, () => performShot(game, view.turnToken), delay);
 }
 
@@ -540,7 +598,11 @@ async function renderChoice(game) {
         armTurnTimer(
             game,
             view.turnToken,
-            () => handleChoice(game, pickVirtualAction(game), view.turnToken),
+            () => {
+                const action = pickVirtualAction(game, view);
+                if (action === 'riposte') return handleRiposte(game, view.turnToken);
+                return handleChoice(game, action, view.turnToken);
+            },
             VIRTUAL_THINK_MS
         );
         return;
@@ -567,6 +629,8 @@ async function resolveHit(game, victimId) {
         gameManager.removePlayer(game, victimId);
         game.eliminated.push({ userId: victimId, minutes, timeoutFailed: false, virtual });
         recordElimination(game.stats, victimId, minutes);
+        // 出局会对反手权造成连锁影响（顺延 / 作废 / 中止序列），统一在这里收尾。
+        releaseRiposte(game, victimId);
     });
 
     let timeoutFailed = !virtual;
@@ -627,14 +691,51 @@ async function performShot(game, expectedToken) {
         game.pointer = (index + 1) % CHAMBER_COUNT;
         game.shotNumber += 1;
         game.turnToken += 1;
-        game.phase = hit ? 'resolving' : 'choice';
+
+        // 抽弹枪：一次性标记，开枪后立刻消费掉，避免残留影响下一轮。
+        const unloadShot = game.unloadShotOwner === shooterId;
+        if (unloadShot) game.unloadShotOwner = null;
+
+        // 反手序列的驱动：加压者那枪、发起人补枪，都直接落到这里的阶段推进。
+        const riposteStage = game.riposte?.stage || null;
+        if (riposteStage === 'target') {
+            const initiatorId = game.riposte.initiatorId;
+            if (hit) {
+                // 加压者被这一枪送走 = 反手成功。
+                recordRiposteKill(game.stats, initiatorId);
+            }
+            game.riposte.stage = 'return';
+            const initiatorIndex = game.alive.indexOf(initiatorId);
+            const targetIndex = game.alive.indexOf(shooterId);
+            if (initiatorIndex === -1 || targetIndex === -1) {
+                // 发起人或加压者已经不在场（理论上只可能由并发移除造成），序列作废。
+                game.riposte = null;
+                game.phase = hit ? 'resolving' : 'choice';
+            } else {
+                // 加压者开枪后，无论死活，枪回到发起人手上。
+                // 空枪：加压者还在，alive 不变，turnIndex 直接指向发起人当前位置。
+                // 中弹：加压者即将被 resolveHit splice 掉，若发起人排在加压者之后，
+                //       他的索引会因前移而 -1；排在加压者之前则不变。
+                game.turnIndex = hit
+                    ? (initiatorIndex > targetIndex ? initiatorIndex - 1 : initiatorIndex)
+                    : initiatorIndex;
+                game.phase = hit ? 'resolving' : 'fire';
+            }
+        } else if (riposteStage === 'return') {
+            // 发起人的补枪结束，序列到此为止；死活都回正常流程。
+            game.riposte = null;
+            game.phase = hit ? 'resolving' : 'choice';
+        } else {
+            game.phase = hit ? 'resolving' : 'choice';
+        }
+
         recordShot(game.stats, shooterId, {
             hit,
             bulletsBefore,
             unknownBefore,
             hitChance: firstShot ? FIRST_SHOT_HIT_CHANCE : undefined,
         });
-        result = { shooterId, hit };
+        result = { shooterId, hit, unloadShot, riposteStage };
     });
 
     if (!result) return;
@@ -645,12 +746,24 @@ async function performShot(game, expectedToken) {
         return;
     }
 
-    // 先播报空枪，再给出选择面板，让全场都看清刚才发生了什么。
+    // 先播报空枪，再决定下一步，让全场都看清刚才发生了什么。
     await renderPanel(game, panels.missAnnouncement({
         ...buildView(game),
         shooterId: result.shooterId,
         shooterName: nameFor(game, result.shooterId),
     }));
+
+    if (result.riposteStage === 'target') {
+        // 加压者空枪：不进 choice，发起人补枪（反手 return 阶段）。
+        await startTurn(game);
+        return;
+    }
+    if (result.unloadShot) {
+        // 抽弹活下来后强制传枪：不能连开、不能加压、不能反手。
+        // 走 handleChoice('pass')，顺带触发「活着传枪 → 反手权作废」的规则。
+        await handleChoice(game, 'pass', game.turnToken);
+        return;
+    }
     await renderChoice(game);
 }
 
@@ -701,6 +814,18 @@ async function handleChoice(game, action, expectedToken) {
             game.turnIndex = (game.turnIndex + 1) % game.alive.length;
         }
 
+        // 反手权归属随选择联动：
+        // - 加压 → 加压者成为新目标，反手权转授给下一个接枪的人。
+        // - 传枪 → 活着把枪传出去（含抽弹后的强制传枪），反手权当场作废。
+        // - 再来一枪 → 枪没离手，反手权保留，什么都不用动。
+        if (effectiveAction === 'load') {
+            game.riposteTargetId = actorId;
+            game.riposteHolderId = game.alive[game.turnIndex];
+        } else if (effectiveAction === 'pass' && game.riposteHolderId === actorId) {
+            game.riposteHolderId = null;
+            game.riposteTargetId = null;
+        }
+
         game.phase = 'fire';
         game.turnToken += 1;
         accepted = true;
@@ -723,6 +848,138 @@ async function handleChoice(game, action, expectedToken) {
     await startTurn(game);
 }
 
+// ---------- 反制机制：🔧 抽弹开枪 / 🔙 反手还击 ----------
+
+// 出局 / 退出 / 退服时统一收尾反手权：
+// - 进行中的反手序列：发起人消失，或加压者在被迫开枪前消失 → 序列作废。
+//   加压者在 target 阶段中弹的情况由 performShot 在调用 resolveHit 前先把
+//   stage 推进到 'return'，所以这里不会误伤那条还要发起人补枪的序列。
+// - 待命的反手权：持有者出局（且没用过反手）→ 顺延给下一个接枪的人；
+//   加压者本人出局 → 反手权整体作废（没有目标了）。
+function releaseRiposte(game, userId) {
+    if (!game || !userId) return;
+
+    const rip = game.riposte;
+    if (rip) {
+        if (rip.initiatorId === userId) {
+            game.riposte = null;
+        } else if (rip.targetId === userId && rip.stage === 'target') {
+            game.riposte = null;
+        }
+    }
+
+    if (game.riposteHolderId === userId) {
+        // 出局时 turnIndex 已经被挪到下一个接枪的人身上。
+        game.riposteHolderId = game.alive[game.turnIndex] || null;
+        if (!game.riposteHolderId) game.riposteTargetId = null;
+        // 极端的 2 人局：顺延一圈后只剩加压者本人时，反手没有对象，作废。
+        if (game.riposteHolderId === game.riposteTargetId) {
+            game.riposteHolderId = null;
+            game.riposteTargetId = null;
+        }
+    }
+
+    if (game.riposteTargetId === userId) {
+        game.riposteHolderId = null;
+        game.riposteTargetId = null;
+    }
+}
+
+// 🔧 抽弹开枪：fire 阶段的纯防守动作。
+// 卸掉 1 发子弹 → 重转弹巢 → 立刻扣扳机。赌注一分不降。
+// 活下来就强制传枪（走 handleChoice('pass')），这轮不能再开 / 加压 / 反手。
+async function handleUnload(game, expectedToken) {
+    let accepted = false;
+    let actorId = null;
+    let unloadedBullets = 0;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'playing') return;
+        if (game.phase !== 'fire' || game.turnToken !== expectedToken) return;
+        if (game.alive.length === 0) return;
+
+        const shooterId = game.alive[game.turnIndex];
+        if (!shooterId) return;
+        // 反手序列中的强制开枪不能抽弹（设计：加压者与发起人的那两枪都不给选项）。
+        if (game.riposte) return;
+        if (game.bullets < UNLOAD_MIN_BULLETS) return;
+        if ((game.unloadUsed || []).includes(shooterId)) return;
+
+        actorId = shooterId;
+        unloadedBullets = 1;
+        game.bullets = Math.max(0, game.bullets - unloadedBullets);
+        spinCylinder(game);
+        game.unloadUsed = [...(game.unloadUsed || []), actorId];
+        // 蓄力清零：枪马上要离手。
+        setCharge(game, actorId, 0);
+        // 标记这一枪是抽弹枪：performShot 里消费掉，空枪存活 → 强制传枪。
+        game.unloadShotOwner = actorId;
+        game.phase = 'fire';
+        game.turnToken += 1;
+        recordUnload(game.stats, actorId);
+        accepted = true;
+    });
+
+    if (!accepted) return;
+    clearTurnTimer(game);
+
+    const view = buildView(game);
+    await renderPanel(game, panels.unloadAnnouncement({
+        ...view,
+        actorName: nameFor(game, actorId),
+        unloadedBullets,
+    }));
+
+    await performShot(game, game.turnToken);
+}
+
+// 🔙 反手还击：choice 阶段的复仇 / 威慑。
+// 把枪扔回给加压者，他必须开 1 枪；无论死活，枪回到发起人手上补 1 枪。
+async function handleRiposte(game, expectedToken) {
+    let accepted = false;
+    let actorId = null;
+    let targetId = null;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'playing') return;
+        if (game.phase !== 'choice' || game.turnToken !== expectedToken) return;
+        if (game.alive.length === 0) return;
+
+        const shooterId = game.alive[game.turnIndex];
+        if (!shooterId) return;
+        // 反手权已经被用过 / 有序列在跑时，按钮不会渲染，这里是兜底。
+        if (game.riposte) return;
+        if (game.riposteHolderId !== shooterId) return;
+        if (!game.riposteTargetId || !game.alive.includes(game.riposteTargetId)) return;
+
+        actorId = shooterId;
+        targetId = game.riposteTargetId;
+
+        game.riposte = { initiatorId: actorId, targetId, stage: 'target' };
+        // 反手权当场消费：用过之后不再顺延（无论后续死活）。
+        game.riposteHolderId = null;
+        game.riposteTargetId = null;
+        // 蓄力清零：枪离手了（现有规则）。
+        setCharge(game, actorId, 0);
+        // 枪交给加压者，他必须开这一枪。
+        game.turnIndex = game.alive.indexOf(targetId);
+        game.phase = 'fire';
+        game.turnToken += 1;
+        recordRiposte(game.stats, actorId, targetId);
+        accepted = true;
+    });
+
+    if (!accepted) return;
+    clearTurnTimer(game);
+
+    const view = buildView(game);
+    await renderPanel(game, panels.riposteAnnouncement({
+        ...view,
+        actorName: nameFor(game, actorId),
+        targetName: nameFor(game, targetId),
+    }));
+
+    await startTurn(game);
+}
+
 async function handleQuit(game, userId, expectedToken) {
     let accepted = false;
     let penaltyMinutes = 0;
@@ -732,6 +989,8 @@ async function handleQuit(game, userId, expectedToken) {
         if (game.alive[game.turnIndex] !== userId) return;
         // 戴罪上桌的人没有退路。按钮压根不会渲染给他，这里是兜底。
         if (isRedeemer(game, userId)) return;
+        // 反手序列中的强制开枪不能逃，按钮不会渲染，这里是兜底。
+        if (game.riposte) return;
 
         const index = game.alive.indexOf(userId);
         if (index !== -1) game.alive.splice(index, 1);
@@ -743,6 +1002,7 @@ async function handleQuit(game, userId, expectedToken) {
         game.cowards.push({ userId, stakeMinutes, penaltyMinutes });
         recordQuit(game.stats, userId, penaltyMinutes);
         game.turnToken += 1;
+        releaseRiposte(game, userId);
         accepted = true;
     });
 
@@ -787,6 +1047,7 @@ async function handleMemberInvalidated(game, userId) {
         dropRedeemer(game, userId);
         removed = true;
         if (wasCurrent) game.turnToken += 1;
+        releaseRiposte(game, userId);
     });
 
     if (!removed) return;
@@ -1044,7 +1305,15 @@ async function handleTurnInteraction(game, interaction, parsed) {
         return;
     }
     if (parsed.action === 'quit') {
-        await handleQuit(game, userId, parsed.turnToken);
+         await handleQuit(game, userId, parsed.turnToken);
+        return;
+    }
+    if (parsed.action === 'unload') {
+        await handleUnload(game, parsed.turnToken);
+        return;
+    }
+    if (parsed.action === 'riposte') {
+        await handleRiposte(game, parsed.turnToken);
         return;
     }
     await handleChoice(game, parsed.action, parsed.turnToken);
@@ -1149,6 +1418,13 @@ async function startPressureRoulette(interaction, options = {}) {
         charge: 0,
         chargeOwnerId: null,
         shotNumber: 0,
+        // 反制机制状态：抽弹额度 + 反手权归属 + 进行中的反手序列。
+        unloadUsed: [],
+        riposteHolderId: null,
+        riposteTargetId: null,
+        riposte: null,
+        // 抽弹枪的一次性标记：扣完这一枪立刻消费掉。
+        unloadShotOwner: null,
         alive: [],
         eliminated: [],
         cowards: [],
