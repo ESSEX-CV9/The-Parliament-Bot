@@ -273,12 +273,12 @@ function firePanel(view) {
 
     return message(
         baseEmbed(view, {
-            title: `🔫 第 ${view.shotNumber} 枪 · 轮到 ${view.shooterName}`,
+            title: `🔫 第 ${view.shotNumber} 枪 · 轮到 ${view.shooterName} 了`,
             description,
             color: COLORS.turn,
         }),
         view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken)],
-        turnMention(view, `🔫 轮到 ${view.shooterName} 开枪`)
+        // turnMention(view, `🔫 轮到 ${view.shooterName} 开枪`)
     );
 }
 
