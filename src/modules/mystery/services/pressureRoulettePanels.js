@@ -103,8 +103,22 @@ function baseEmbed(view, { title, description, color }) {
     return embed;
 }
 
-function message(embed, components = []) {
-    return { embeds: [embed], components, allowedMentions: NO_MENTIONS };
+function message(embed, components = [], options = {}) {
+    const payload = { embeds: [embed], components, allowedMentions: NO_MENTIONS };
+    if (options.content) payload.content = options.content;
+    if (options.allowedMentions) payload.allowedMentions = options.allowedMentions;
+    return payload;
+}
+
+// 「轮到你了」专用：正文放一条真实 @ 提及（embed 里的提及不通知人，正文里的才会真正震到玩家），
+// 同时把该玩家放进 allowedMentions 白名单，让标题里的 <@id> 也渲染成 @用户。
+// 虚拟测试玩家没有真实账号，直接返回空配置，保持原来的纯文本样式。
+function turnMention(view, content) {
+    if (view.autoPlay || !view.shooterId) return {};
+    return {
+        content,
+        allowedMentions: { parse: [], users: [view.shooterId] },
+    };
 }
 
 function formatChambers(chamberView) {
@@ -214,7 +228,7 @@ function recruitmentPanel(view) {
         '- 轮到你，自己点按钮扣扳机。中弹就出局，然后闭嘴',
         '- 活下来后三选一：',
         '　🔫 **传枪** — 弹巢前进一格，交给下一个人',
-        '　🔁 **再开一枪** — 继续对自己开，把空巢烧掉，后面的人会更难受',
+        '　🔁 **再开一枪** — 继续对自己开',
         `　💥 **加压** — 加一发子弹并滚动弹巢，赌注 +${view.minutesPerPressure} 分钟`,
         '- 轮到你的时候可以按 **🤡 胆小鬼** 退出',
         '　不禁言，但名字会被挂上 **🤡胆小鬼**，直到游戏结束后 5 分钟',
@@ -261,7 +275,8 @@ function firePanel(view) {
             description,
             color: COLORS.turn,
         }),
-        view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken)]
+        view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken)],
+        turnMention(view, `🔫 轮到 ${view.shooterName} 开枪`)
     );
 }
 
@@ -278,7 +293,7 @@ function choicePanel(view) {
         gunLine(view),
         '',
         `🔫 **传枪** — 下一个人面对 ${sameOdds}`,
-        `🔁 **再开一枪** — 同样是 ${sameOdds}，但枪口对着**自己**。烧掉一个空巢，后面的人会更难受`,
+        `🔁 **再开一枪** — 同样是 ${sameOdds}，但枪口对着**自己**。`,
         loadLine,
         '',
         tail,
@@ -290,7 +305,8 @@ function choicePanel(view) {
             description,
             color: COLORS.turn,
         }),
-        view.autoPlay ? [] : [choiceRow(view.gameId, view.turnToken, view.canLoad)]
+        view.autoPlay ? [] : [choiceRow(view.gameId, view.turnToken, view.canLoad)],
+        turnMention(view, `🎯 ${view.shooterName}，该你拿主意了`)
     );
 }
 
