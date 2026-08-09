@@ -132,9 +132,15 @@ function odds(view) {
     return `**${formatOdds(view.bullets, view.unknownCount)} ≈ ${formatPercent(view.hitChance)}**`;
 }
 
+// 戴罪上桌的人在名单里挂 🤡，全场才知道他跑过一次、而且这局跑不掉。
+function rosterName(view, userId) {
+    const name = nameOf(view, userId);
+    return (view?.redeemerIds || []).includes(userId) ? `🤡${name}` : name;
+}
+
 function mentionList(view, userIds) {
     if (!userIds || userIds.length === 0) return '—';
-    return userIds.map(userId => nameOf(view, userId)).join('、');
+    return userIds.map(userId => rosterName(view, userId)).join('、');
 }
 
 function eliminatedBlock(view) {
@@ -143,7 +149,7 @@ function eliminatedBlock(view) {
         let suffix = '';
         if (entry.virtual) suffix = '（测试玩家，不禁言）';
         else if (entry.timeoutFailed) suffix = '（禁言未生效）';
-        lines.push(`- ${nameOf(view, entry.userId)}　💥 中弹 · 💀  ${entry.minutes} 分钟${suffix}`);
+        lines.push(`- ${rosterName(view, entry.userId)}　💥 中弹 · 💀  ${entry.minutes} 分钟${suffix}`);
     }
     for (const entry of view.cowards || []) {
         const suffix = entry.penaltyMinutes ? ` · 🤡 ${entry.penaltyMinutes} 分钟` : '';
@@ -181,17 +187,24 @@ function joinRow(gameId, disabled = false) {
     );
 }
 
-function fireRow(gameId, turnToken) {
-    return new ActionRowBuilder().addComponents(
+// canQuit 为 false 时整个逃生按钮不渲染，而不是置灰：戴罪上桌的人
+// 不该看到一个自己永远点不了的出口。
+function fireRow(gameId, turnToken, canQuit = true) {
+    const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`mystery_pressure_fire:${gameId}:${turnToken}`)
             .setLabel('🔫 开枪')
-            .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-            .setCustomId(`mystery_pressure_quit:${gameId}:${turnToken}`)
-            .setLabel('🤡 胆小鬼')
-            .setStyle(ButtonStyle.Secondary)
+            .setStyle(ButtonStyle.Danger)
     );
+    if (canQuit) {
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mystery_pressure_quit:${gameId}:${turnToken}`)
+                .setLabel('🤡 胆小鬼')
+                .setStyle(ButtonStyle.Secondary)
+        );
+    }
+    return row;
 }
 
 function choiceRow(gameId, turnToken, canLoad) {
@@ -236,8 +249,11 @@ function recruitmentPanel(view) {
         '- 轮到你的时候可以按 **🤡 胆小鬼** 退出',
         '　不禁言，但名字会被挂上 **🤡胆小鬼**，游戏结束后至少还要再挂 **5 分钟**',
         '　你退出那一刻的赌注比 5 分钟长的话，就按赌注算',
-        '　挂着 🤡 的这段时间里，**不能参加下一局**',
         '　你改回去，我就改回来。**我不累。**',
+        '- 挂着 🤡 也能上桌，但是**戴罪**的：',
+        '　这一局你**没有逃生按钮**，机会你已经用掉一次了',
+        '　中弹的话，🤡 还没挂完的分钟会**折进禁言**一起还上',
+        '　只要打完这一局，🤡 当场摘掉 —— 倒下了也算',
         '- **枪里子弹打光 = 游戏立刻结束**',
         '　只剩 1 人 → 他是**冠军**，零禁言',
         '　还剩多人 → **平局**，谁也没赢',
@@ -265,8 +281,14 @@ function firePanel(view) {
         ? '🤖 **它正在思考人生……**'
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒内不动手，枪会自己响。`;
 
+    // 戴罪上桌的人没有逃生按钮，得当众说清楚，不然全场只会觉得面板少了个按钮。
+    const noEscapeLine = view.canQuit === false
+        ? '🤡 **他是戴罪上桌的，这局没有退路。**逃生的机会他上一局已经用掉了。'
+        : null;
+
     const description = [
         `**轮到 ${view.shooterName} 了。**`,
+        ...(noEscapeLine ? ['', noEscapeLine] : []),
         '',
         gunLine(view),
         ...(chargeLine(view) ? [chargeLine(view)] : []),
@@ -283,7 +305,7 @@ function firePanel(view) {
             description,
             color: COLORS.turn,
         }),
-        view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken)]
+        view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken, view.canQuit !== false)]
     );
 }
 
@@ -341,6 +363,15 @@ function missAnnouncement(view) {
 
 function hitAnnouncement(view) {
     const lines = [pick(HIT_LINES, view.victimName, view.victimMinutes)];
+    // 戴罪的人倒下时，禁言里有一段是上局逃跑欠的，得说明白它是怎么算出来的。
+    if (view.victimFoldedMinutes > 0) {
+        lines.push(
+            '',
+            `🤡 他是戴罪上桌的。**赌注 ${view.victimStakeMinutes} 分钟 `
+                + `+ 上局逃跑还欠的 ${view.victimFoldedMinutes} 分钟 = ${view.victimMinutes} 分钟。**`,
+            '*账清了。名字上的 🤡 这局结束就摘。*'
+        );
+    }
     if (view.victimVirtual) {
         lines.push('', '🤖 *测试机器人不会真的被禁言。*');
     } else if (view.timeoutFailed) {
@@ -419,7 +450,8 @@ function cowardAnnouncement(view) {
         lines.push(
             '',
             `他的名字已经被挂上 **🤡胆小鬼**，游戏结束后还要再挂 **${view.penaltyMinutes} 分钟**。`,
-            '这段时间里他也进不了下一局。'
+            '想提前摘掉？**顶着这个名字回桌上打完一局。**',
+            '但那一局他不会再有逃生按钮，中弹时还没挂完的分钟会折进禁言。'
         );
     }
     lines.push('', gunLine(view), ...rosterLines(view));

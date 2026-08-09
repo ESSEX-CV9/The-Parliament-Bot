@@ -5,6 +5,7 @@ const panels = require('./pressureRoulettePanels');
 const {
     applyCowardPenalty,
     settleCowardPenalties,
+    redeemCowardPenalties,
     cowardPenaltyMinutes,
     cowardPenaltyRemainingMs,
 } = require('./cowardPenalty');
@@ -54,15 +55,11 @@ const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在�
 const CHANNEL_BUSY_MESSAGE = '🎮 **这里已经有一场游戏在进行了。**\n等当前游戏结束后再开新的吧。';
 const TIMEOUT_BLOCKED_MESSAGE = '🔫 **左轮拒绝了你。**\n你当前还在禁言，暂时无法参加。';
 
-// 名字上还挂着 🤡 的时候不能上桌：跑一次就得把这轮的耻辱挂满。
-function cowardBlockedMessage(remainingMs) {
-    const minutes = Math.max(1, Math.ceil(remainingMs / 60000));
-    return [
-        '🤡 **你现在还是个胆小鬼。**',
-        `名字上的 🤡 还有大约 **${minutes} 分钟**才摘得掉。`,
-        '在那之前，这把枪不接待你。',
-    ].join('\n');
-}
+// 名字上挂着 🤡 的人可以上桌，但这局没有退路 —— 逃生机会你已经用掉一次了。
+const NO_ESCAPE_MESSAGE = [
+    '🤡 **你是戴罪上桌的，没有第二次。**',
+    '这局的逃生按钮对你不开放，枪已经在你手里了。',
+].join('\n');
 const INVALID_MEMBER_MESSAGE = '⚠️ **你现在无法参加这场加压俄罗斯轮盘。**';
 const EXPIRED_MESSAGE = '⌛ **这场加压俄罗斯轮盘已经结束或失效了。**';
 const FULL_MESSAGE = '🔫 **这局已经满员了。**';
@@ -176,6 +173,26 @@ function currentStakeMinutes(game) {
     return BASE_TIMEOUT_MINUTES + ((game.pressureBullets || 0) * MINUTES_PER_PRESSURE);
 }
 
+// 戴罪上桌：开局那一刻名字上还挂着 🤡 的人。名单在 beginGame 里快照一次，
+// 之后整局不再重算 —— 结算时 game.alive 已经不含中弹的人了，而他们照样算打完了这局。
+function isRedeemer(game, userId) {
+    return Boolean(userId) && (game.redeemers || []).includes(userId);
+}
+
+// 他没挂完的 🤡 还剩几分钟。中弹时按这个数折进禁言，等于把逃掉的那份还上。
+function redeemerRemainingMinutes(game, userId) {
+    if (!isRedeemer(game, userId)) return 0;
+    const remainingMs = cowardPenaltyRemainingMs(game.guildId, userId);
+    return remainingMs > 0 ? Math.ceil(remainingMs / 60000) : 0;
+}
+
+// 中途退服 / 被管理员禁言而出局的，不算把这局打完，摘牌资格一并取消。
+function dropRedeemer(game, userId) {
+    if (!Array.isArray(game.redeemers)) return;
+    const index = game.redeemers.indexOf(userId);
+    if (index !== -1) game.redeemers.splice(index, 1);
+}
+
 // 连开蓄力：连续对自己开枪，每撑过一枪攒 1 层，加压时兑现成额外子弹。
 // 蓄力连着持有人一起记，这样有人中途退出导致轮次错位时，
 // 攒下的层数也不会被别人捡走，枪一离手自然失效。
@@ -205,6 +222,7 @@ function chamberView(game) {
 
 function buildView(game) {
     const unknownCount = unknownChamberCount(game);
+    const shooterId = game.alive[game.turnIndex];
     return {
         gameId: game.id,
         turnToken: game.turnToken,
@@ -220,13 +238,17 @@ function buildView(game) {
         aliveIds: turnOrderIds(game),
         eliminated: game.eliminated.map(entry => ({ ...entry })),
         cowards: game.cowards.map(entry => ({ ...entry })),
-        shooterId: game.alive[game.turnIndex],
-        shooterName: panels.nameOf({ labels: game.labels || {} }, game.alive[game.turnIndex]),
+        shooterId,
+        shooterName: panels.nameOf({ labels: game.labels || {} }, shooterId),
+        // 名单里给戴罪的人挂上 🤡，否则「他这局跑不掉」这件事全场看不见。
+        redeemerIds: [...(game.redeemers || [])],
+        // 戴罪上桌的人没有逃生按钮：逃生机会他已经用掉一次了。
+        canQuit: !isRedeemer(game, shooterId),
         shotNumber: game.shotNumber + 1,
         turnTimeoutMs: turnDurationFor(game),
         labels: game.labels || {},
         testMode: Boolean(game.testConfig),
-        autoPlay: isVirtualPlayer(game.alive[game.turnIndex]),
+        autoPlay: isVirtualPlayer(shooterId),
     };
 }
 
@@ -465,7 +487,11 @@ async function settleGame(game, outcome) {
     // 游戏正式结束，清掉过程消息，频道里只留这条结算。
     await pruneToFinalPanel(game);
     settleCowardPenalties(game.guildId, game.cowards);
+    // 落库排在摘牌前面：摘牌要等 Discord 改昵称，慢的时候不该拖着这一局的数据。
     flushPressureStats(game, outcome, finalAliveIds);
+    // 戴罪上桌的人只要把这局打完就摘牌，中弹倒下的也算。
+    // 两个名单不会相交：戴罪的人没有逃生按钮，当不了这局的新胆小鬼。
+    await redeemCowardPenalties(game.guildId, game.redeemers);
     await cleanupPressureGame(game);
 }
 
@@ -523,7 +549,12 @@ async function renderChoice(game) {
 }
 
 async function resolveHit(game, victimId) {
-    const minutes = currentStakeMinutes(game);
+    const stakeMinutes = currentStakeMinutes(game);
+    // 戴罪上桌的人中弹时，把他没挂完的 🤡 折成禁言一起还上。
+    // 必须在结算摘牌之前读，此刻记录还在。折进去的部分照样计入「牢底坐穿」——
+    // 他确实被禁言了那么久。
+    const foldedMinutes = redeemerRemainingMinutes(game, victimId);
+    const minutes = stakeMinutes + foldedMinutes;
     const virtual = isVirtualPlayer(victimId);
     const member = virtual ? null : await fetchMember(game, victimId);
 
@@ -557,6 +588,8 @@ async function resolveHit(game, victimId) {
         victimId,
         victimName: nameFor(game, victimId),
         victimMinutes: minutes,
+        victimStakeMinutes: stakeMinutes,
+        victimFoldedMinutes: foldedMinutes,
         timeoutFailed,
         victimVirtual: virtual,
     }));
@@ -697,6 +730,8 @@ async function handleQuit(game, userId, expectedToken) {
         if (game.ended || game.state !== 'playing') return;
         if (game.phase !== 'fire' || game.turnToken !== expectedToken) return;
         if (game.alive[game.turnIndex] !== userId) return;
+        // 戴罪上桌的人没有退路。按钮压根不会渲染给他，这里是兜底。
+        if (isRedeemer(game, userId)) return;
 
         const index = game.alive.indexOf(userId);
         if (index !== -1) game.alive.splice(index, 1);
@@ -748,6 +783,8 @@ async function handleMemberInvalidated(game, userId) {
         game.alive.splice(index, 1);
         if (game.turnIndex >= game.alive.length) game.turnIndex = 0;
         gameManager.removePlayer(game, userId);
+        // 退服 / 被管理员禁言不算把这局打完，摘牌资格取消，🤡 计时器照原样走完。
+        dropRedeemer(game, userId);
         removed = true;
         if (wasCurrent) game.turnToken += 1;
     });
@@ -858,6 +895,11 @@ async function beginGame(game) {
         }
         game.state = 'playing';
         game.alive = shuffleInPlace([...validIds], game);
+        // 戴罪上桌名单：开局这一刻名字上还挂着 🤡 的人。快照一次，整局不再重算。
+        // 只有真正开局才有这份名单，招募人数不足被取消的局压根不该给人摘牌。
+        game.redeemers = validIds.filter(
+            id => !isVirtualPlayer(id) && cowardPenaltyRemainingMs(game.guildId, id) > 0
+        );
         // 数据只从这里开始记：招募人数不足被取消的局压根不该进榜单。
         // 测试局（含虚拟机器人，且真人可以混进来一起玩）整局跳过，避免污染正式数据。
         game.stats = game.testConfig ? null : createPressureStats(validIds);
@@ -929,11 +971,8 @@ async function handleJoin(game, interaction) {
         await replyEphemeral(interaction, TIMEOUT_BLOCKED_MESSAGE);
         return;
     }
-    const cowardRemainingMs = cowardPenaltyRemainingMs(game.guildId, userId);
-    if (cowardRemainingMs > 0) {
-        await replyEphemeral(interaction, cowardBlockedMessage(cowardRemainingMs));
-        return;
-    }
+    // 名字上还挂着 🤡 的人照样能上桌，代价是戴罪：这局没有逃生按钮，
+    // 中弹时没挂完的耻辱会折成禁言。名单在 beginGame 里快照。
 
     let rejection = null;
     let shouldStart = false;
@@ -986,6 +1025,11 @@ async function handleTurnInteraction(game, interaction, parsed) {
         }
         if (game.phase !== expectedPhase || game.turnToken !== parsed.turnToken) {
             rejection = STALE_ACTION_MESSAGE;
+            return;
+        }
+        // 按钮不会渲染给戴罪的人，但旧面板上的可能还留着，给他一句明话。
+        if (parsed.action === 'quit' && isRedeemer(game, userId)) {
+            rejection = NO_ESCAPE_MESSAGE;
         }
     });
 
@@ -1108,6 +1152,8 @@ async function startPressureRoulette(interaction, options = {}) {
         alive: [],
         eliminated: [],
         cowards: [],
+        // beginGame 快照，招募阶段恒为空。
+        redeemers: [],
         // 真正开局（beginGame）时才创建，在那之前没有任何数据可记。
         stats: null,
         turnIndex: 0,
@@ -1129,11 +1175,6 @@ async function startPressureRoulette(interaction, options = {}) {
     }
     if (isActivelyTimedOut(member)) {
         await replyEphemeral(interaction, TIMEOUT_BLOCKED_MESSAGE);
-        return false;
-    }
-    const cowardRemainingMs = cowardPenaltyRemainingMs(guildId, userId);
-    if (cowardRemainingMs > 0) {
-        await replyEphemeral(interaction, cowardBlockedMessage(cowardRemainingMs));
         return false;
     }
 

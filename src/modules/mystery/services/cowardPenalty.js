@@ -220,6 +220,20 @@ function settleCowardPenalties(guildId, cowards) {
     }
 }
 
+// 戴罪上桌的人只要真正把这一局打完了，🤡 当场摘掉，不用等计时器走完。
+// 中弹倒下的也算：他没挂完的那部分已经在中弹时折成禁言还上了，不该两头收。
+async function redeemCowardPenalties(guildId, userIds) {
+    if (!guildId || !Array.isArray(userIds)) return;
+    for (const userId of userIds) {
+        if (!userId) continue;
+        try {
+            await releaseCowardPenalty(guildId, userId);
+        } catch (error) {
+            logFailure('赎罪摘牌失败', `guild=${guildId} user=${userId}`, error);
+        }
+    }
+}
+
 function cowardPenaltyRemainingMs(guildId, userId, now = Date.now()) {
     if (!guildId || !userId || !store.isLoaded()) return 0;
     const record = store.get(guildId, userId);
@@ -345,6 +359,7 @@ module.exports = {
     cowardPenaltyRemainingMs,
     applyCowardPenalty,
     settleCowardPenalties,
+    redeemCowardPenalties,
     releaseCowardPenalty,
     handleGuildMemberUpdate,
     startCowardPenaltyRestorer,
