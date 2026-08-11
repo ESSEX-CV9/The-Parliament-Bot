@@ -358,9 +358,7 @@ function firePanel(view) {
     // 反手序列中的强制开枪：不能逃、不能加压、不能抽弹。要把原因说清楚。
     let forcedLine = null;
     if (view.riposte) {
-        forcedLine = view.riposte.stage === 'return'
-            ? '🔙 **这一枪是反手换回来的补枪。**不能逃、不能加压、不能抽弹。'
-            : `🔙 **${view.riposte.targetName} 被反手逼到了枪口上。**这一枪不能逃、不能加压、不能抽弹。`;
+        forcedLine = `🔙 **${view.riposte.targetName} 被反手逼到了枪口上。**这一枪不能逃、不能加压、不能抽弹。`;
     } else if (view.canQuit === false) {
         // 戴罪上桌的人没有逃生按钮，得当众说清楚，不然全场只会觉得面板少了个按钮。
         forcedLine = '🤡 **他是戴罪上桌的，这局没有退路。**逃生的机会他上一局已经用掉了。';
@@ -420,7 +418,7 @@ function choicePanel(view) {
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒不选，默认传枪。`;
 
     const riposteLine = view.canRiposte
-        ? `🔙 **反手还击** — 把枪扔回给 ${view.riposteTargetName}。他必须开一枪（**${formatOdds(view.bullets, view.unknownCount)} ≈ ${formatPercent(view.riposteTargetChance)}**），无论他中没中，枪都会回到你手上，你再补一枪。`
+        ? `🔙 **反手还击** — 把枪扔回给 ${view.riposteTargetName}。他必须开一枪（**${formatOdds(view.bullets, view.unknownCount)} ≈ ${formatPercent(view.riposteTargetChance)}**），无论他中没中，这一枪打完枪会直接顺延到你后面的人，你不用再补枪。`
         : null;
 
     const description = [
@@ -590,7 +588,7 @@ function riposteAnnouncement(view) {
         `${view.actorName} 没有把枪传下去，而是朝着 ${view.targetName} 扔了回去。`,
         '',
         `**${view.targetName} 必须开这一枪** —— 不能逃、不能加压、不能抽弹。`,
-        '无论他中没中，枪都会回到发起人手上补第二枪。',
+        '无论他中没中，这一枪打完反手就到此为止，枪会直接顺延到发起人后面的人。',
         '',
         gunLine(view),
         ...rosterLines(view),

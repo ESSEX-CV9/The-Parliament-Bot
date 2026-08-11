@@ -44,9 +44,9 @@ const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 // 公开的只有「池里还剩几发」和「本轮一共几发哑弹」。哪一发是哑弹、
 // 枪里当前这几发的真假构成，全场都不知道（包括加压的人自己）。
 // 打出去的哑弹会当众播报，想推构成就自己数——面板不替玩家记账。
-const POOL_SIZE = 12;
-const POOL_DUD_MIN = 1;
-const POOL_DUD_MAX = 4;
+const POOL_SIZE = 6;
+const POOL_DUD_MIN = 0;
+const POOL_DUD_MAX = 2;
 // 枪打空且池里还有弹时，系统自动补进去的发数。系统补的不算加压，不抬赌注。
 const AUTO_RELOAD_BULLETS = 1;
 // 池子也空了之后的和局判定：存活的人投票，超时算同意，一人反对就重开一轮。
@@ -226,19 +226,20 @@ function reloadIntoUnknownChambers(game, count) {
 
 // 存活名单按接下来的行动顺序排：当前持枪的人排第一，后面依次是排在他之后的人。
 // 中弹 / 退出时 turnIndex 已经被挪到了下一个人身上，所以这里直接从它起转一圈就对。
-// 反手序列的「target 阶段」当前持枪的是被反手的加压者，但下一枪是发起人的补枪，
-// 所以名单要把发起人拎出来放在加压者后面，之后才回到正常轮转。
+// 反手序列的「target 阶段」当前持枪的是被反手的加压者，这一枪之后发起人被跳过，
+// 所以名单要把发起人挪到队尾，之后才回到正常轮转。
 function turnOrderIds(game) {
     const alive = game.alive || [];
     if (alive.length <= 1) return [...alive];
     const rip = game.riposte;
     if (rip?.stage === 'target') {
         const targetIndex = alive.indexOf(rip.targetId);
-        const initiatorIndex = alive.indexOf(rip.initiatorId);
-        if (targetIndex !== -1 && initiatorIndex !== -1) {
-            const rest = alive.filter((_, index) => index !== targetIndex);
-            const restInitPos = rest.indexOf(rip.initiatorId);
-            return [rip.targetId, ...rest.slice(restInitPos), ...rest.slice(0, restInitPos)];
+        if (targetIndex !== -1 && alive.includes(rip.initiatorId)) {
+            // 加压者这一枪之后发起人被跳过，直接轮到发起人后面的人：
+            // 从加压者起按原顺序列队，把发起人挪到队尾。
+            const rest = alive.filter(id => id !== rip.initiatorId);
+            const restTargetPos = rest.indexOf(rip.targetId);
+            return [...rest.slice(restTargetPos), ...rest.slice(0, restTargetPos), rip.initiatorId];
         }
     }
     const start = ((game.turnIndex % alive.length) + alive.length) % alive.length;
@@ -783,7 +784,7 @@ async function performShot(game, expectedToken) {
         const unloadShot = game.unloadShotOwner === shooterId;
         if (unloadShot) game.unloadShotOwner = null;
 
-        // 反手序列的驱动：加压者那枪、发起人补枪，都直接落到这里的阶段推进。
+        // 反手序列的驱动：加压者被迫开的那一枪落到这里，开完序列即止。
         const riposteStage = game.riposte?.stage || null;
         if (riposteStage === 'target') {
             const initiatorId = game.riposte.initiatorId;
@@ -791,27 +792,25 @@ async function performShot(game, expectedToken) {
                 // 加压者被这一枪送走 = 反手成功。
                 recordRiposteKill(game.stats, initiatorId);
             }
-            game.riposte.stage = 'return';
+            // 加压者这一枪结束，反手到此为止：不再让发起人补枪，
+            // 直接顺延到发起人后面的玩家（发起人已经开过自己那枪了）。
+            game.riposte = null;
             const initiatorIndex = game.alive.indexOf(initiatorId);
-            const targetIndex = game.alive.indexOf(shooterId);
-            if (initiatorIndex === -1 || targetIndex === -1) {
-                // 发起人或加压者已经不在场（理论上只可能由并发移除造成），序列作废。
-                game.riposte = null;
+            if (initiatorIndex === -1) {
+                // 发起人已不在场（理论上只可能由并发移除造成），序列作废。
                 game.phase = hit ? 'resolving' : 'choice';
             } else {
-                // 加压者开枪后，无论死活，枪回到发起人手上。
-                // 空枪：加压者还在，alive 不变，turnIndex 直接指向发起人当前位置。
-                // 中弹：加压者即将被 resolveHit splice 掉，若发起人排在加压者之后，
-                //       他的索引会因前移而 -1；排在加压者之前则不变。
-                game.turnIndex = hit
-                    ? (initiatorIndex > targetIndex ? initiatorIndex - 1 : initiatorIndex)
-                    : initiatorIndex;
+                const targetIndex = game.alive.indexOf(shooterId);
+                // 空枪：alive 不变，下一个持枪者 = 发起人后面的人。
+                // 中弹：加压者即将被 resolveHit splice 掉，若加压者排在目标之前，
+                //       目标索引会因前移而 -1。
+                let nextIndex = (initiatorIndex + 1) % game.alive.length;
+                if (hit && targetIndex !== -1 && targetIndex < nextIndex) {
+                    nextIndex -= 1;
+                }
+                game.turnIndex = nextIndex;
                 game.phase = hit ? 'resolving' : 'fire';
             }
-        } else if (riposteStage === 'return') {
-            // 发起人的补枪结束，序列到此为止；死活都回正常流程。
-            game.riposte = null;
-            game.phase = hit ? 'resolving' : 'choice';
         } else {
             game.phase = hit ? 'resolving' : 'choice';
         }
@@ -846,7 +845,7 @@ async function performShot(game, expectedToken) {
     if (game.bullets === 0 && await resolveEmptyGun(game, resumeMode) !== 'continue') return;
 
     if (result.riposteStage === 'target') {
-        // 加压者没倒下：不进 choice，发起人补枪（反手 return 阶段）。
+        // 加压者没倒下：反手序列已结束，直接进下一个人（发起人后面的人）的回合。
         await startTurn(game);
         return;
     }
@@ -867,7 +866,7 @@ async function performShot(game, expectedToken) {
 // resumeMode 记的是「投票通过继续打之后，本来该发生什么」：
 //   choice     — 开枪的人活下来了，该轮到他选传枪 / 再来一枪 / 加压
 //   forcedPass — 抽弹活下来后的强制传枪
-//   fire       — 直接进下一枪（反手补枪，或上一枪淘汰了人之后轮到下一个人）
+//   fire       — 直接进下一枪（反手序列加压者那枪之后，或上一枪淘汰了人之后轮到下一个人）
 async function resolveEmptyGun(game, resumeMode = 'fire') {
     let mode = 'halted';
     let outcome = null;
@@ -1175,8 +1174,8 @@ async function handleChoice(game, action, expectedToken) {
 
 // 出局 / 退出 / 退服时统一收尾反手权：
 // - 进行中的反手序列：发起人消失，或加压者在被迫开枪前消失 → 序列作废。
-//   加压者在 target 阶段中弹的情况由 performShot 在调用 resolveHit 前先把
-//   stage 推进到 'return'，所以这里不会误伤那条还要发起人补枪的序列。
+//   加压者在 target 阶段中弹的情况由 performShot 先把序列清空再 resolveHit，
+//   所以这里不会误伤那条本要顺延给发起人后面玩家的序列。
 // - 待命的反手权：持有者出局（且没用过反手）→ 顺延给下一个接枪的人；
 //   加压者本人出局 → 反手权整体作废（没有目标了）。
 function releaseRiposte(game, userId) {
@@ -1261,7 +1260,8 @@ async function handleUnload(game, expectedToken) {
 }
 
 // 🔙 反手还击：choice 阶段的复仇 / 威慑。
-// 把枪扔回给加压者，他必须开 1 枪；无论死活，枪回到发起人手上补 1 枪。
+// 把枪扔回给加压者，他必须开 1 枪；这一枪结束反手就到此为止，
+// 发起人不用补枪，直接顺延到发起人后面的玩家。
 async function handleRiposte(game, expectedToken) {
     let accepted = false;
     let actorId = null;
