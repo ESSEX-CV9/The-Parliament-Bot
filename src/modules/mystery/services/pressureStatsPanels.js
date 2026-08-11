@@ -60,6 +60,23 @@ function emptyPanel(text) {
     }));
 }
 
+// 该玩家在 12 个榜里的名次。查询时现算，复用 leaderboardPanel 同款 rankBy，
+// 所以这里的口径、并列名次与排行榜子命令完全一致。不满足上榜门槛 → rank 为 null。
+function ranksForUser(rows, userId) {
+    return METRICS.map(metric => {
+        const ranked = rankBy(rows, metric);
+        const entry = ranked.find(item => item.row.user_id === userId);
+        return { metric, rank: entry ? entry.rank : null };
+    });
+}
+
+// 单个榜的排名串。未上榜用斜体弱化，别和「第 1 名」抢视觉。
+function rankCell({ metric, rank }) {
+    return rank
+        ? `${metric.label}　**第 ${rank} 名**`
+        : `${metric.label}　_未上榜_`;
+}
+
 /** 个人战绩面板。 */
 function profilePanel({ row, rows, userId, totalPlayers }) {
     if (!row) {
@@ -72,6 +89,13 @@ function profilePanel({ row, rows, userId, totalPlayers }) {
 
     const { thrones, achievements } = titlesForUser(rows, userId);
     const luck = luckOf(row);
+
+    // 12 个榜两两一行，名次查询时现算：每打完一局写库后，下一次查询自动跟着变。
+    const rankCells = ranksForUser(rows, userId);
+    const rankLines = [];
+    for (let i = 0; i < rankCells.length; i += 2) {
+        rankLines.push(rankCells.slice(i, i + 2).map(rankCell).join('　│　'));
+    }
 
     const lines = [
         `${mention(userId)} 的加压轮盘战绩`,
@@ -86,6 +110,9 @@ function profilePanel({ row, rows, userId, totalPlayers }) {
         row.shots_fired >= MIN_LUCK_SHOTS
             ? `🍀 **运气值 ${formatLuck(luck)}**　（按当时概率算他该中 ${row.expected_hits.toFixed(2)} 枪，实际中了 ${row.hits_taken} 枪）`
             : `🍀 运气值　还需要再开 **${MIN_LUCK_SHOTS - row.shots_fired}** 枪才够样本量`,
+        '',
+        '**📊 全服各榜排名**',
+        ...rankLines,
     ];
 
     if (thrones.length > 0) {

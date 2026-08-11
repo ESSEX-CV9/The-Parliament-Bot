@@ -184,7 +184,7 @@ function eliminatedBlock(view) {
 function gunLine(view) {
     const gun = `弹巢 ${formatChambers(view.chambers)}　│　枪内 **${view.bullets} 发**`
         + `　│　赌注 **💤 ${view.stakeMinutes} 分钟**`;
-    const pool = `-# 待发 ${view.poolRemaining || 0} 发　│　本轮哑弹 ${view.poolDudTotal || 0} 发`;
+    const pool = `-# 子弹盒里还有 ${view.poolRemaining || 0} 发　│　本轮哑弹 ${view.poolDudTotal || 0} 发`;
     return `${gun}\n${pool}`;
 }
 
@@ -501,12 +501,16 @@ function dudAnnouncement(view) {
 }
 
 // 枪打空但箱子里还有货：系统自动补 1 发接着打。补的这发不算加压，不抬赌注。
+// 默认只补进剩余未验格（保留弹巢历史）；弹巢打穿一整轮后才整巢重转。
 function reloadAnnouncement(view) {
+    const how = view.reloadMode === 'spin'
+        ? '**弹巢一整圈都验完了，转轮重新滚了一圈。**'
+        : `**系统往剩下的 ${view.reloadUnknownBefore} 个未验格子里补了 ${view.reloadCount} 发，没动已经验过的格子。**`;
     return message(baseEmbed(view, {
         title: '🔄 自动上膛',
         description: [
             '枪空了，可桌上那箱子还没见底。',
-            '**系统往弹巢里补了 1 发，转轮重新滚了一圈。**',
+            how,
             '',
             '*这一发没人付钱，赌注一分没涨。*',
             '*当然，它也可能是发哑弹 —— 谁知道呢。*',

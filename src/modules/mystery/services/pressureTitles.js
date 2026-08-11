@@ -23,12 +23,17 @@ function isCursed(row) {
     return luckOf(row) <= -LUCK_EPSILON;
 }
 
+// 加压现在是半分钟一步，累计时长也可能是 .5 结尾，显示精度对齐到 0.5（3.5 → "3.5"）。
 function formatMinutes(minutes) {
-    const total = Math.max(0, Math.round(Number(minutes) || 0));
-    if (total < 60) return `${total} 分钟`;
+    const total = Math.max(0, Number(minutes) || 0);
+    const roundHalf = value => {
+        const half = Math.round(value * 2) / 2;
+        return Number.isInteger(half) ? String(half) : half.toFixed(1);
+    };
+    if (total < 60) return `${roundHalf(total)} 分钟`;
     const hours = Math.floor(total / 60);
     const rest = total % 60;
-    return rest === 0 ? `${hours} 小时` : `${hours} 小时 ${rest} 分钟`;
+    return rest === 0 ? `${hours} 小时` : `${hours} 小时 ${roundHalf(rest)} 分钟`;
 }
 
 function formatLuck(value) {

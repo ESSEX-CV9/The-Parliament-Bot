@@ -32,7 +32,9 @@ const RECRUITMENT_DURATION_MS = 3 * 60 * 1000;
 const TURN_DURATION_MS = 60 * 1000;
 const HIT_PAUSE_MS = 3 * 1000;
 const BASE_TIMEOUT_MINUTES = 3;
-const MINUTES_PER_PRESSURE = 1;
+// 每加压一发赌注涨 0.5 分钟（Discord 禁言最短 1 分钟，基础赌注 3 分钟起，
+// 3.5 / 4 / 4.5 … 都是合法时长，永远不会低于下限）。
+const MINUTES_PER_PRESSURE = 0.5;
 const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 
 // ---------- 待发子弹池 ----------
@@ -199,6 +201,27 @@ function drawIntoGun(game, count) {
     game.bullets += drawn.total;
     game.gunDuds += drawn.duds;
     return drawn;
+}
+
+// 系统自动补弹：只往「还没验过」的格子里随机补，已验格子的历史原样保留。
+// 弹巢被打穿一整轮（6 格全验过、没有可补的未知格）时才回退到整巢重转。
+function reloadIntoUnknownChambers(game, count) {
+    const unknownIndexes = [];
+    for (let index = 0; index < CHAMBER_COUNT; index += 1) {
+        if (!game.revealed[index]) unknownIndexes.push(index);
+    }
+    if (unknownIndexes.length === 0) {
+        drawIntoGun(game, count);
+        spinCylinder(game);
+        return { mode: 'spin', filled: 0, unknownBefore: 0 };
+    }
+    const drawn = drawIntoGun(game, Math.min(count, unknownIndexes.length));
+    const positions = shuffleInPlace([...unknownIndexes], game);
+    for (let index = 0; index < drawn.total; index += 1) {
+        game.chambers[positions[index]] = index < drawn.duds ? DUD : LIVE;
+    }
+    // 弹巢历史不动：revealed / hitChambers / dudChambers / pointer 全保留。
+    return { mode: 'fill', filled: drawn.total, unknownBefore: unknownIndexes.length };
 }
 
 // 存活名单按接下来的行动顺序排：当前持枪的人排第一，后面依次是排在他之后的人。
@@ -848,6 +871,7 @@ async function performShot(game, expectedToken) {
 async function resolveEmptyGun(game, resumeMode = 'fire') {
     let mode = 'halted';
     let outcome = null;
+    let reloadInfo = null;
     await gameManager.runExclusive(game, () => {
         if (game.ended || game.state !== 'playing') return;
         if (game.bullets > 0) {
@@ -863,8 +887,9 @@ async function resolveEmptyGun(game, resumeMode = 'fire') {
         }
 
         if (game.pool.length > 0) {
-            drawIntoGun(game, AUTO_RELOAD_BULLETS);
-            spinCylinder(game);
+            // 自动补弹：优先补进剩余未验格（保留弹巢历史），
+            // 弹巢被打穿一整轮（没有可补的未知格）时才整巢重转。
+            reloadInfo = reloadIntoUnknownChambers(game, AUTO_RELOAD_BULLETS);
             mode = 'reload';
             return;
         }
@@ -882,7 +907,11 @@ async function resolveEmptyGun(game, resumeMode = 'fire') {
         return 'halted';
     }
     if (mode === 'reload') {
-        await renderPanel(game, panels.reloadAnnouncement(buildView(game)));
+        const view = buildView(game);
+        view.reloadMode = reloadInfo?.mode || 'spin';
+        view.reloadCount = reloadInfo?.filled || 0;
+        view.reloadUnknownBefore = reloadInfo?.unknownBefore || 0;
+        await renderPanel(game, panels.reloadAnnouncement(view));
         return 'continue';
     }
     if (mode === 'vote') {
