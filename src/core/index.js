@@ -167,6 +167,7 @@ const { startSafetySetupSystem } = require('../modules/safetySetup');
 const mysteryCommand = require('../modules/mystery/commands/mysteryCommand');
 const manageCommand = require('../modules/mystery/commands/manageCommand');
 const mysteryGameStatsCommand = require('../modules/mystery/commands/gameStatsCommand');
+const mysterySettingsCommand = require('../modules/mystery/commands/mysterySettingsCommand');
 const { mysteryGuildMemberRemoveHandler } = require('../modules/mystery/events/guildMemberRemove');
 const { mysteryGuildMemberUpdateHandler } = require('../modules/mystery/events/guildMemberUpdate');
 const mysteryNicknameLock = require('../modules/mystery/services/mysteryNicknameLock');
@@ -339,6 +340,7 @@ client.commands.set(manageCommand.data.name, manageCommand);
 // 神秘指令娱乐系统
 client.commands.set(mysteryCommand.data.name, mysteryCommand);
 client.commands.set(mysteryGameStatsCommand.data.name, mysteryGameStatsCommand);
+client.commands.set(mysterySettingsCommand.data.name, mysterySettingsCommand);
 
 // 加压轮盘测试指令：仅在 .env 里设置 MYSTERY_TEST_COMMANDS=true 时才注册，
 // 避免测试用的虚拟机器人局出现在正式服务器的指令列表里。

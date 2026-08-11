@@ -922,13 +922,15 @@ async function finishRecruitment(game) {
 }
 
 async function startBomb(interaction, {
-    useCooldown = true,
+    cooldownMs = defaultCooldownStore.DEFAULT_COOLDOWN_DURATION_MS,
     panelLifecycle = defaultPanelLifecycle,
 } = {}) {
     const userId = interaction.user?.id;
     const guildId = interaction.guildId || interaction.guild?.id;
     const channelId = interaction.channelId;
     const cooldownStore = interaction.bombCooldownStore || defaultCooldownStore;
+    // 该频道解析出来的冷却为 0 时，检查和写入都跳过。
+    const useCooldown = Number.isFinite(cooldownMs) && cooldownMs > 0;
     const provisionalGame = {
         id: randomUUID(),
         type: 'bomb',
@@ -971,7 +973,7 @@ async function startBomb(interaction, {
     }
     if (useCooldown) {
         try {
-            const expiresAt = cooldownStore.getExpiresAt(guildId, userId);
+            const expiresAt = cooldownStore.getExpiresAt(guildId, userId, channelId);
             if (expiresAt !== null) {
                 await failDeferredStart(interaction, cooldownMessage(expiresAt), provisionalGame);
                 return false;
@@ -1033,7 +1035,7 @@ async function startBomb(interaction, {
     }
     if (useCooldown) {
         try {
-            await cooldownStore.startCooldown(guildId, userId);
+            await cooldownStore.startCooldown(guildId, userId, channelId, cooldownMs);
         } catch (error) {
             logDiscordFailure(game, 'cooldown-start', error, userId);
         }
