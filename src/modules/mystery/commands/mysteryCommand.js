@@ -16,6 +16,7 @@ const { startBomb } = require('../services/bombGame');
 const { startDuel } = require('../services/duelGame');
 const { startPressureRoulette } = require('../services/pressureRouletteGame');
 const { getNames } = require('../services/namePoolStore');
+const { isChannelBlocked } = require('../utils/mysteryChannelBlocklist');
 
 const SUBCOMMAND_SELF_TIMEOUT = '自刎归天';
 const SUBCOMMAND_RANDOM_NICKNAME = '取名字好麻烦';
@@ -45,6 +46,7 @@ const TIMEOUT_FAILURE_MESSAGE = '❌ 神秘力量失效了，我无法对你施�
 const NICKNAME_FAILURE_MESSAGE = '❌ 名字取好了，但我改不了你的昵称。\n可能是机器人权限或身份组层级不足。';
 const GENERIC_FAILURE_MESSAGE = '❌ 处理神秘指令时出现错误，请稍后重试。';
 const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
+const CHANNEL_BLOCKED_MESSAGE = '🚫 **神秘指令在本频道/子区已被禁用。**\n请到其他频道使用。';
 const initiationQueues = new Map();
 
 const data = new SlashCommandBuilder()
@@ -226,12 +228,20 @@ async function execute(interaction) {
             await interaction.reply({ content: '❌ 此指令只能在服务器中使用。', flags: MessageFlags.Ephemeral });
             return;
         }
+
+        // 检查当前频道/子区是否被禁用了神秘指令
+        guildId = interaction.guild.id;
+        const channelId = interaction.channel?.id || interaction.channelId;
+        if (isChannelBlocked(guildId, channelId)) {
+            await interaction.reply({ content: CHANNEL_BLOCKED_MESSAGE, flags: MessageFlags.Ephemeral });
+            return;
+        }
+
         subcommand = interaction.options.getSubcommand(false);
         if (!VALID_SUBCOMMANDS.includes(subcommand)) {
             await interaction.reply({ content: '❌ 未知的神秘指令。', flags: MessageFlags.Ephemeral });
             return;
         }
-        guildId = interaction.guild.id;
         userId = interaction.user.id;
         lockAcquired = acquireInFlight(guildId, userId, subcommand);
         if (!lockAcquired) {
