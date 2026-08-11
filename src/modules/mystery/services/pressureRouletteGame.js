@@ -22,6 +22,7 @@ const {
     finalizePressureStats,
 } = require('./pressureStatsRecorder');
 const { recordPressureGame } = require('../utils/mysteryStatsDatabase');
+const gameStore = require('../utils/pressureGameStore');
 
 const GAME_TYPE = 'pressure';
 const CUSTOM_ID_PREFIX = 'mystery_pressure_';
@@ -44,9 +45,9 @@ const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 // 公开的只有「池里还剩几发」和「本轮一共几发哑弹」。哪一发是哑弹、
 // 枪里当前这几发的真假构成，全场都不知道（包括加压的人自己）。
 // 打出去的哑弹会当众播报，想推构成就自己数——面板不替玩家记账。
-const POOL_SIZE = 6;
-const POOL_DUD_MIN = 0;
-const POOL_DUD_MAX = 2;
+const POOL_SIZE = 9;
+const POOL_DUD_MIN = 1;
+const POOL_DUD_MAX = 3;
 // 枪打空且池里还有弹时，系统自动补进去的发数。系统补的不算加压，不抬赌注。
 const AUTO_RELOAD_BULLETS = 1;
 // 池子也空了之后的和局判定：存活的人投票，超时算同意，一人反对就重开一轮。
@@ -565,6 +566,8 @@ async function acknowledge(interaction) {
 async function cleanupPressureGame(game) {
     clearTurnTimer(game);
     clearRecruitmentTimer(game);
+    // 这一局到此为止，快照不能留 —— 否则下次启动会把已经结算完的局又拉起来。
+    forgetGame(game);
     await gameManager.cleanupGame(game);
 }
 
@@ -662,6 +665,9 @@ async function startTurn(game) {
     const view = buildView(game);
     await renderPanel(game, panels.firePanel(view));
 
+    // 检查点：停在「轮到某人开枪」，重启后能原样接上。
+    persistGame(game);
+
     // 虚拟玩家没有按钮可点，短暂"思考"后自动行动。
     const delay = view.autoPlay ? VIRTUAL_THINK_MS : undefined;
     if (view.autoPlay && view.canUnload && randomFor(game) < 0.3) {
@@ -676,6 +682,9 @@ async function renderChoice(game) {
     if (game.ended || game.state !== 'playing') return;
     const view = buildChoiceView(game);
     await renderPanel(game, panels.choicePanel(view));
+
+    // 检查点：停在「活下来了，接下来怎么办」。
+    persistGame(game);
 
     if (view.autoPlay) {
         armTurnTimer(
@@ -965,6 +974,10 @@ async function startDrawVote(game) {
 
     const view = buildVoteView(game);
     await renderPanel(game, panels.drawVotePanel(view));
+
+    // 检查点：停在和局判定。恢复时会清空已投的票，让大家重新投一轮。
+    persistGame(game);
+
     armTurnTimer(
         game,
         view.turnToken,
@@ -1726,6 +1739,323 @@ function buildTestSetup(options) {
     };
 }
 
+// ---------- 断点续玩：进行中对局的快照与恢复 ----------
+
+// 快照只在**稳定检查点**写：fire / choice / vote 这三个「停下来等玩家动作」的状态。
+// resolving（正在结算中弹）这种过渡状态一律不写 —— 崩在那里就回退到上一个检查点，
+// 顶多重来一个动作，绝不会写出「淘汰到一半」的残缺状态。
+//
+// 招募中的局不存：它的冷却是靠 onGameStarted 闭包扣的，那个闭包重建不了，
+// 恢复它等于开了「开局后重启就不扣冷却」的口子；而招募局本来也没人投入什么。
+function persistGame(game) {
+    if (!game || game.ended || game.settled) return;
+    // 测试局全是虚拟机器人，恢复它没意义，还会白占频道锁。
+    if (game.testConfig) return;
+    if (game.state !== 'playing') return;
+
+    try {
+        gameStore.saveSnapshot(game.id, serializeGame(game));
+    } catch (error) {
+        // 存盘失败最多是这一局不能续玩，绝不能反过来影响正在进行的游戏。
+        logDiscordFailure(game, 'persist-game', error);
+    }
+}
+
+function forgetGame(game) {
+    if (!game?.id) return;
+    try {
+        gameStore.deleteSnapshot(game.id);
+    } catch (error) {
+        logDiscordFailure(game, 'forget-game', error);
+    }
+}
+
+function serializeGame(game) {
+    return {
+        savedAt: Date.now(),
+        id: game.id,
+        guildId: game.guildId,
+        channelId: game.channelId,
+        initiatorId: game.initiatorId,
+        participantIds: [...game.participantIds],
+        labels: game.labels || {},
+        turnDurationMs: game.turnDurationMs,
+        state: game.state,
+        phase: game.phase,
+        turnToken: game.turnToken,
+        turnIndex: game.turnIndex,
+        // 弹巢 + 子弹盒。真假构成也在里面 —— 快照落在服务器磁盘上，玩家看不到。
+        chambers: [...game.chambers],
+        revealed: [...game.revealed],
+        hitChambers: [...game.hitChambers],
+        dudChambers: [...(game.dudChambers || [])],
+        pointer: game.pointer,
+        bullets: game.bullets,
+        gunDuds: game.gunDuds || 0,
+        pool: [...(game.pool || [])],
+        poolDudTotal: game.poolDudTotal || 0,
+        wave: game.wave || 0,
+        // 局面
+        pressure: game.pressure,
+        pressureBullets: game.pressureBullets || 0,
+        charge: game.charge || 0,
+        chargeOwnerId: game.chargeOwnerId || null,
+        shotNumber: game.shotNumber,
+        unloadUsed: [...(game.unloadUsed || [])],
+        unloadShotOwner: game.unloadShotOwner || null,
+        riposteHolderId: game.riposteHolderId || null,
+        riposteTargetId: game.riposteTargetId || null,
+        riposte: game.riposte ? { ...game.riposte } : null,
+        alive: [...game.alive],
+        eliminated: game.eliminated.map(entry => ({ ...entry })),
+        cowards: game.cowards.map(entry => ({ ...entry })),
+        redeemers: [...(game.redeemers || [])],
+        resumeAfterVote: game.resumeAfterVote || null,
+        // 统计累加器：Map 进不了 JSON，摊平成数组，恢复时再装回去。
+        stats: game.stats
+            ? { startedAt: game.stats.startedAt, players: [...game.stats.players.values()] }
+            : null,
+        // 恢复时要把这些旧面板删掉，否则频道里会留一堆过期按钮。
+        panelMessageIds: (game.panels || [])
+            .map(entry => entry.message?.id)
+            .filter(Boolean),
+    };
+}
+
+// 把快照还原成一个可运行的对局对象。Discord 的活对象（channel / guild）
+// 由调用方取好传进来，定时器和 Promise 一律重建。
+function deserializeGame(snapshot, { guild, channel }) {
+    return {
+        id: snapshot.id,
+        type: GAME_TYPE,
+        guildId: snapshot.guildId,
+        channelId: snapshot.channelId,
+        channel,
+        guild,
+        initiatorId: snapshot.initiatorId,
+        participantIds: [...snapshot.participantIds],
+        testConfig: null,
+        keepMessages: false,
+        labels: snapshot.labels || {},
+        turnDurationMs: snapshot.turnDurationMs || TURN_DURATION_MS,
+        state: 'playing',
+        settled: false,
+        chambers: [...snapshot.chambers],
+        revealed: [...snapshot.revealed],
+        hitChambers: [...snapshot.hitChambers],
+        dudChambers: [...(snapshot.dudChambers || new Array(CHAMBER_COUNT).fill(false))],
+        pointer: snapshot.pointer,
+        bullets: snapshot.bullets,
+        gunDuds: snapshot.gunDuds || 0,
+        pool: [...(snapshot.pool || [])],
+        poolDudTotal: snapshot.poolDudTotal || 0,
+        wave: snapshot.wave || 1,
+        // 投票不沿用重启前的票：面板是新发的、token 也换了，
+        // 让点过的人收到「你已经投过了」只会莫名其妙。重新投一轮。
+        votes: null,
+        resumeAfterVote: snapshot.resumeAfterVote || null,
+        pressure: snapshot.pressure,
+        pressureBullets: snapshot.pressureBullets || 0,
+        charge: snapshot.charge || 0,
+        chargeOwnerId: snapshot.chargeOwnerId || null,
+        shotNumber: snapshot.shotNumber,
+        unloadUsed: [...(snapshot.unloadUsed || [])],
+        riposteHolderId: snapshot.riposteHolderId || null,
+        riposteTargetId: snapshot.riposteTargetId || null,
+        riposte: snapshot.riposte ? { ...snapshot.riposte } : null,
+        // 抽弹枪标记不恢复：那一枪早就打完或者被回退了，留着只会误伤下一轮。
+        unloadShotOwner: null,
+        alive: [...snapshot.alive],
+        eliminated: (snapshot.eliminated || []).map(entry => ({ ...entry })),
+        cowards: (snapshot.cowards || []).map(entry => ({ ...entry })),
+        redeemers: [...(snapshot.redeemers || [])],
+        stats: snapshot.stats
+            ? {
+                startedAt: snapshot.stats.startedAt,
+                players: new Map((snapshot.stats.players || []).map(row => [row.userId, row])),
+            }
+            : null,
+        turnIndex: snapshot.turnIndex,
+        // token 往前推一格，让重启前那些还挂在频道里的旧按钮彻底失效。
+        turnToken: (Number(snapshot.turnToken) || 0) + 1,
+        phase: snapshot.phase,
+        panels: [],
+        recruitmentEntry: null,
+        panelQueue: Promise.resolve(),
+        recruitmentEndsAt: Date.now(),
+        random: Math.random,
+        timers: new Set(),
+        // 冷却在开局那一刻就已经扣过了，恢复的局不该再扣一次。
+        onGameStarted: null,
+    };
+}
+
+// 运行期才有的东西：成员失效回调、摘按钮、关停钩子。
+// 新开的局和恢复的局都走这里，保证两条路径挂的是同一套行为。
+function attachRuntime(game) {
+    game.onMemberInvalidated = async invalidMember => {
+        const invalidUserId = invalidMember?.id || invalidMember?.user?.id;
+        if (invalidUserId) await handleMemberInvalidated(game, invalidUserId);
+    };
+    game.disableComponents = async () => {
+        const entry = game.panels?.at(-1);
+        if (!entry?.interactive || typeof entry.message?.edit !== 'function') return;
+        entry.interactive = false;
+        try {
+            await entry.message.edit({ components: [] });
+        } catch (error) {
+            // 面板可能已被删除，忽略。
+        }
+    };
+    game.onShutdown = () => handleShutdown(game);
+    return game;
+}
+
+// 进程要退出了。已经开打的局存一份快照下次接着打；还在招募的局直接取消
+// （见 persistGame 的说明）。两种情况都要先把按钮摘掉，别留下点了没反应的面板。
+async function handleShutdown(game) {
+    clearTurnTimer(game);
+    clearRecruitmentTimer(game);
+
+    const resumable = !game.testConfig && game.state === 'playing' && !game.settled && !game.ended;
+    if (!resumable) {
+        // 招募局 / 测试局：干净取消，释放频道锁和玩家锁。
+        await settleGame(game, 'cancelled');
+        return;
+    }
+
+    try {
+        await game.disableComponents?.();
+    } catch (error) {
+        // 摘按钮是尽力而为，摘不掉也要把快照存下去。
+    }
+
+    // 先发公告再存快照：这样公告消息的 id 会被记进 panelMessageIds，
+    // 恢复的时候一并删掉，频道里不会留着「正在重启」的僵尸消息。
+    try {
+        const sent = await game.channel?.send?.(panels.shutdownNotice(buildView(game)));
+        if (sent) game.panels.push({ message: sent, interactive: false });
+    } catch (error) {
+        logDiscordFailure(game, 'shutdown-notice', error);
+    }
+
+    persistGame(game);
+}
+
+/**
+ * 启动时把上次没打完的对局捞回来。应当在 client ready 之后调用。
+ * @param {import('discord.js').Client} client
+ */
+async function restorePressureGames(client) {
+    let snapshots = [];
+    try {
+        snapshots = gameStore.loadSnapshots();
+    } catch (error) {
+        console.error('[MysteryPressure] 读取对局快照失败:', error);
+        return { restored: 0, dropped: 0 };
+    }
+    if (snapshots.length === 0) return { restored: 0, dropped: 0 };
+
+    // 这一批快照无论成败都不留到下次启动再试：恢复成功的那些会在
+    // 下一个检查点重新写入，失败的重试一百次也还是失败。
+    gameStore.clearAll();
+
+    let restored = 0;
+    let dropped = 0;
+    for (const snapshot of snapshots) {
+        try {
+            if (await restoreOneGame(client, snapshot)) restored += 1;
+            else dropped += 1;
+        } catch (error) {
+            dropped += 1;
+            console.error(`[MysteryPressure] 恢复对局失败 (game=${snapshot?.id}):`, error);
+        }
+    }
+
+    console.log(
+        `[MysteryPressure] 🔄 对局恢复完成：接上 ${restored} 场，放弃 ${dropped} 场。`
+    );
+    return { restored, dropped };
+}
+
+// 删掉重启前留在频道里的面板。拿不到就算了，不能让清理失败挡住恢复。
+async function purgeStalePanels(channel, messageIds) {
+    for (const messageId of messageIds || []) {
+        try {
+            const message = await channel.messages.fetch(messageId);
+            await message.delete();
+        } catch (error) {
+            // 消息可能已经被删了、或者权限没了，忽略。
+        }
+    }
+}
+
+// 停机期间有人退服、或者被管理员禁言了，这些人不能再算在场上。
+// 返回还站着的人。
+async function reconcileAliveMembers(game) {
+    const survivors = [];
+    for (const userId of game.alive) {
+        if (isVirtualPlayer(userId)) continue;
+        const member = await fetchMember(game, userId);
+        if (isValidHumanMember(member) && !isActivelyTimedOut(member)) {
+            survivors.push(userId);
+            continue;
+        }
+        // 没打完这一局，🤡 摘牌资格取消，和中途退服一个待遇。
+        dropRedeemer(game, userId);
+        gameManager.removePlayer(game, userId);
+        releaseRiposte(game, userId);
+    }
+    game.alive = survivors;
+    if (game.turnIndex >= game.alive.length) game.turnIndex = 0;
+    return survivors;
+}
+
+async function restoreOneGame(client, snapshot) {
+    if (!snapshot?.id || !snapshot.guildId || !snapshot.channelId) return false;
+    if (snapshot.state !== 'playing') return false;
+
+    const guild = await client.guilds.fetch(snapshot.guildId).catch(() => null);
+    if (!guild) return false;
+    const channel = await client.channels.fetch(snapshot.channelId).catch(() => null);
+    if (!channel || typeof channel.send !== 'function') return false;
+
+    const created = gameManager.createGame(deserializeGame(snapshot, { guild, channel }));
+    if (!created.ok) {
+        console.warn(
+            `[MysteryPressure] 快照 ${snapshot.id} 无法注册（${created.reason}），放弃恢复。`
+        );
+        return false;
+    }
+    const game = attachRuntime(created.game);
+
+    await purgeStalePanels(channel, snapshot.panelMessageIds);
+    await reconcileAliveMembers(game);
+
+    // 人不够就别硬接了，直接按当前局面收场。
+    const outcome = evaluateOutcome(game);
+    if (outcome) {
+        await settleGame(game, outcome);
+        return true;
+    }
+
+    await renderPanel(game, panels.restoredAnnouncement(buildView(game)));
+
+    // 按停机时停在哪个检查点接着走。计时器全部重新计满 —— 玩家刚回来，
+    // 不该让他背上重启前只剩几秒的那个回合。
+    if (game.phase === 'choice') {
+        await renderChoice(game);
+    } else if (game.phase === 'vote') {
+        game.votes = new Map();
+        await startDrawVote(game);
+    } else {
+        // fire，以及任何对不上的过渡状态，一律回到「轮到你开枪」。
+        game.phase = 'fire';
+        await startTurn(game);
+    }
+    return true;
+}
+
 async function startPressureRoulette(interaction, options = {}) {
     const userId = interaction.user?.id;
     const guildId = interaction.guildId || interaction.guild?.id;
@@ -1809,24 +2139,6 @@ async function startPressureRoulette(interaction, options = {}) {
         return false;
     }
 
-    let game;
-    provisionalGame.onMemberInvalidated = async invalidMember => {
-        const invalidUserId = invalidMember?.id || invalidMember?.user?.id;
-        if (invalidUserId && game) {
-            await handleMemberInvalidated(game, invalidUserId);
-        }
-    };
-    provisionalGame.disableComponents = async () => {
-        const entry = game?.panels?.at(-1);
-        if (!entry?.interactive || typeof entry.message?.edit !== 'function') return;
-        entry.interactive = false;
-        try {
-            await entry.message.edit({ components: [] });
-        } catch (error) {
-            // 面板可能已被删除，忽略。
-        }
-    };
-
     const created = gameManager.createGame(provisionalGame);
     if (!created.ok) {
         await replyEphemeral(
@@ -1835,7 +2147,9 @@ async function startPressureRoulette(interaction, options = {}) {
         );
         return false;
     }
-    game = created.game;
+    // 成员失效回调 / 摘按钮 / 关停钩子统一在这里挂，
+    // 和从快照恢复出来的对局走的是同一套 —— 两条路径行为不会漂。
+    const game = attachRuntime(created.game);
 
     await renderRecruitment(game);
     if (game.panels.length === 0) {
@@ -1875,6 +2189,11 @@ module.exports = {
     AUTO_RELOAD_BULLETS,
     DRAW_VOTE_DURATION_MS,
     startPressureRoulette,
+    restorePressureGames,
+    // 导出给测试用：验证「快照字段没漏」这件事必须能自动化，
+    // 漏一个字段就是恢复后状态悄悄丢失，靠眼睛看是看不住的。
+    serializeGame,
+    deserializeGame,
     handlePressureInteraction,
     parsePressureCustomId,
     renderPanel,

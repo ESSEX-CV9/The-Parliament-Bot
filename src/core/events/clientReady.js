@@ -1,9 +1,10 @@
 // src\core\events\clientReady.js
 
-const { 
-    REST, 
-    Routes, 
+const {
+    REST,
+    Routes,
 } = require('discord.js');
+const { restorePressureGames } = require('../../modules/mystery/services/pressureRouletteGame');
 
 function normalizeDiscordToken(raw) {
     if (!raw) return '';
@@ -120,7 +121,14 @@ async function clientReadyHandler(client){
         console.error('❌ 命令注册流程失败，启动中止：', error);
         throw error;
     }
-    
+
+    // 把上次没打完的加压轮盘接回来。放在命令注册之后，并且单独兜底：
+    // 恢复几场游戏失败不该把整个机器人的启动带崩。
+    try {
+        await restorePressureGames(client);
+    } catch (error) {
+        console.error('❌ [MysteryPressure] 对局恢复流程异常（已跳过，不影响启动）：', error);
+    }
 }
 
 module.exports = {

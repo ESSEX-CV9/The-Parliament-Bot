@@ -171,6 +171,7 @@ const mysterySettingsCommand = require('../modules/mystery/commands/mysterySetti
 const { mysteryGuildMemberRemoveHandler } = require('../modules/mystery/events/guildMemberRemove');
 const { mysteryGuildMemberUpdateHandler } = require('../modules/mystery/events/guildMemberUpdate');
 const mysteryNicknameLock = require('../modules/mystery/services/mysteryNicknameLock');
+const mysteryGameManager = require('../modules/mystery/services/mysteryGameManager');
 
 const DISCORD_REST_TIMEOUT_MS = (() => {
     const n = Number(process.env.DISCORD_REST_TIMEOUT_MS);
@@ -441,6 +442,60 @@ function normalizeDiscordToken(raw) {
     // 兼容误填 "Bot <token>"
     token = token.replace(/^Bot\s+/i, '').trim();
     return token;
+}
+
+// --- 优雅退出 ---
+// 推送更新重启时，进程会收到 SIGTERM（或 Ctrl+C 的 SIGINT）。
+// 在这之前，进行中的神秘游戏只活在内存里，进程一死就全没了 —— 频道里留下一堆
+// 点了就回「已失效」的按钮，玩家一局白打。这里给它们一个收尾的机会：
+//   · 加压轮盘：存快照，下次启动自动接着打
+//   · 其余游戏：干净取消，释放频道锁和玩家锁，摘掉按钮
+//
+// 收尾必须有硬上限。托管平台通常在 SIGTERM 后十几秒就 SIGKILL，
+// 与其被砍在半路，不如自己卡着时间退。
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+let shuttingDown = false;
+
+async function gracefulShutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n🛑 收到 ${signal}，开始收尾...`);
+
+    const killer = setTimeout(() => {
+        console.error('⏱️ 收尾超时，强制退出。');
+        process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+    killer.unref?.();
+
+    try {
+        const result = await mysteryGameManager.shutdownAllGames({
+            timeoutMs: SHUTDOWN_TIMEOUT_MS - 2000,
+        });
+        if (result.total > 0) {
+            console.log(`🎮 神秘游戏收尾完成：${result.done}/${result.total} 场。`);
+        }
+    } catch (error) {
+        console.error('❌ 神秘游戏收尾失败：', error);
+    }
+
+    try {
+        await client.destroy();
+    } catch (error) {
+        console.error('❌ 断开 Discord 连接失败：', error);
+    }
+
+    clearTimeout(killer);
+    console.log('👋 已安全退出。');
+    process.exit(0);
+}
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.on(signal, () => {
+        gracefulShutdown(signal).catch(error => {
+            console.error('❌ 优雅退出流程异常：', error);
+            process.exit(1);
+        });
+    });
 }
 
 const token = normalizeDiscordToken(process.env.DISCORD_TOKEN);

@@ -690,6 +690,44 @@ function cowardRenameMessage(taunt) {
     };
 }
 
+// ---------- 重启前后 ----------
+
+// 机器人要重启了。这条发完就存快照，恢复的时候会连同它一起删掉。
+function shutdownNotice(view) {
+    return message(baseEmbed(view, {
+        title: '⏸️ 机器人要重启一下',
+        description: [
+            '**这一局已经存下来了，不用重开。**',
+            '',
+            '枪里几发、盒子里剩多少、谁欠着多少赌注、谁还没用过抽弹 —— 全都记着。',
+            '机器人回来之后会自己把牌桌摆回原样，从当前这个人继续。',
+            '',
+            '这期间上面那些按钮点不动，等新面板出来再说。',
+            '',
+            gunLine(view),
+        ].join('\n'),
+        color: COLORS.over,
+    }));
+}
+
+// 恢复成功，牌桌摆回来了。
+function restoredAnnouncement(view) {
+    return message(baseEmbed(view, {
+        title: '🔄 牌桌摆回来了',
+        description: [
+            '**接着打。** 局面和重启前一模一样：',
+            '',
+            gunLine(view),
+            ...(chargeLine(view) ? [chargeLine(view)] : []),
+            '',
+            '*重启期间掉线或被禁言的人已经从名单里拿掉了。*',
+            '*这一回合的时间重新计满 —— 刚回来，不能让你背着只剩几秒的枪。*',
+            ...rosterLines(view),
+        ].join('\n'),
+        color: COLORS.reload,
+    }));
+}
+
 // ---------- 结算 ----------
 
 function cancellationPanel(view, minParticipants) {
@@ -790,6 +828,8 @@ module.exports = {
     actionAnnouncement,
     cowardAnnouncement,
     cowardRenameMessage,
+    shutdownNotice,
+    restoredAnnouncement,
     cancellationPanel,
     championPanel,
     drawPanel,
