@@ -250,6 +250,11 @@ const THRONES = Object.freeze([
 ]);
 
 // 成就称号：达标即得，不会被抢走，人人可以同时拥有多个。
+//
+// 这里不存「已解锁」快照，每次展示都拿当前统计行现算，所以「不会被抢走」全靠 test 自己保证：
+// 新增成就时，test 必须是单调条件——只对累加列 / max_ 列做 >= 比较。
+// 一旦写出 === 0、<= N 这种会随着继续玩而变假的条件，成就就会被撤销。
+// （'pacifist' 早先写成 loads === 0，加压一次就没了，现在改用累加的 peaceful_games。）
 const ACHIEVEMENTS = Object.freeze([
     {
         id: 'first_load',
@@ -276,8 +281,8 @@ const ACHIEVEMENTS = Object.freeze([
         id: 'pacifist',
         emoji: '🕊️',
         name: '和平主义者',
-        rule: '打满 5 场，一发子弹都没往枪里加过',
-        test: row => row.games_played >= 5 && row.loads === 0,
+        rule: '累计 5 场全程没往枪里加过子弹',
+        test: row => row.peaceful_games >= 5,
     },
     {
         id: 'full_cylinder',

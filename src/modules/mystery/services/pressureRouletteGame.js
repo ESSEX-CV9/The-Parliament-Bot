@@ -37,7 +37,7 @@ const UNLOAD_MIN_BULLETS = 3;
 // 全局第一枪单独掷判定，不走弹巢的 1/6。压得比 1/6 低是为了让开局别太容易
 // 一枪结束，但保留「真的可能中」的悬念。改这个值会直接影响运气值的期望计算，
 // performShot 里那次 recordShot 用的就是它。
-const FIRST_SHOT_HIT_CHANCE = 0.15;
+const FIRST_SHOT_HIT_CHANCE = 0.05;
 const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;

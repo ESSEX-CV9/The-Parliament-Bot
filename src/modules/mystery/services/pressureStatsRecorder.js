@@ -19,6 +19,8 @@ function createPlayerRow(userId) {
         blanks: 0,
         loads: 0,
         bullets_loaded: 0,
+        peaceful_games: 0, // 终局时按本局 loads 是否为 0 填，见 finalizePressureStats
+
         again_count: 0,
         pass_count: 0,
         quits: 0,
@@ -178,6 +180,13 @@ function finalizePressureStats(stats, { outcome, aliveIds = [] } = {}) {
         if (!row) continue;
         row.survived += 1;
         if (outcome === 'champion') row.wins += 1;
+    }
+
+    // 「这一局全程没往枪里加过子弹」是个只有终局才能下结论的判断，和胜场/存活一样放在这里。
+    // 存成累加列而不是在称号里查 loads === 0，是为了让「和平主义者」这类成就单调只增：
+    // 攒够的和平局数是既成事实，之后再怎么加压也抹不掉。
+    for (const row of stats.players.values()) {
+        row.peaceful_games = row.loads === 0 ? 1 : 0;
     }
 
     return [...stats.players.values()];

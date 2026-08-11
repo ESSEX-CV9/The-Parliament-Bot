@@ -25,6 +25,7 @@ const ADDITIVE_COLUMNS = Object.freeze([
     'blanks',
     'loads',
     'bullets_loaded',
+    'peaceful_games',
     'again_count',
     'pass_count',
     'quits',
@@ -61,6 +62,7 @@ function initializeMysteryStatsDatabase() {
             blanks            INTEGER NOT NULL DEFAULT 0,
             loads             INTEGER NOT NULL DEFAULT 0,
             bullets_loaded    INTEGER NOT NULL DEFAULT 0,
+            peaceful_games    INTEGER NOT NULL DEFAULT 0,
             again_count       INTEGER NOT NULL DEFAULT 0,
             pass_count        INTEGER NOT NULL DEFAULT 0,
             quits             INTEGER NOT NULL DEFAULT 0,
@@ -92,12 +94,22 @@ function initializeMysteryStatsDatabase() {
         ripostes: 'INTEGER',
         riposte_kills: 'INTEGER',
         riposted_count: 'INTEGER',
+        peaceful_games: 'INTEGER',
     };
     for (const [column, type] of Object.entries(newColumns)) {
         if (existingColumns.has(column)) continue;
         statsDb.exec(
             `ALTER TABLE pressure_player_stats ADD COLUMN ${column} ${type} NOT NULL DEFAULT 0`
         );
+    }
+
+    // peaceful_games 是后加的列，补列后默认全 0，会把已经拿到「和平主义者」的人
+    // 打回原形。老数据只有累计值、没有逐局明细，但有一种情况可以精确还原：
+    // 生涯 loads 为 0 的人，他打过的每一场按定义都是和平局，直接用 games_played 回填。
+    // 加压过的人还原不出来，只能从 0 开始重新攒——但他们本来也没有这个成就。
+    // 条件里的 existingColumns 是 ALTER 之前的快照，所以这句只在补列的那一次生效。
+    if (!existingColumns.has('peaceful_games')) {
+        statsDb.exec('UPDATE pressure_player_stats SET peaceful_games = games_played WHERE loads = 0');
     }
 
     initialized = true;
