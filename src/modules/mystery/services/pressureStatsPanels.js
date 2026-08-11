@@ -108,7 +108,7 @@ function profilePanel({ row, rows, userId, totalPlayers }) {
         `⛓️ 中弹禁言累计 **${formatMinutes(row.timeout_minutes)}**${row.coward_minutes > 0 ? `　│　🤡 逃跑惩罚累计 **${formatMinutes(row.coward_minutes)}**` : ''}`,
         '',
         row.shots_fired >= MIN_LUCK_SHOTS
-            ? `🍀 **运气值 ${formatLuck(luck)}**　（按当时概率算他该中 ${row.expected_hits.toFixed(2)} 枪，实际中了 ${row.hits_taken} 枪）`
+            ? `🍀 **运气值 ${formatLuck(luck)}**　（按每次扣扳机那一刻的实弹概率算，他该中 ${row.expected_hits.toFixed(2)} 枪，实际中了 ${row.hits_taken} 枪）`
             : `🍀 运气值　还需要再开 **${MIN_LUCK_SHOTS - row.shots_fired}** 枪才够样本量`,
         '',
         '**📊 全服各榜排名**',

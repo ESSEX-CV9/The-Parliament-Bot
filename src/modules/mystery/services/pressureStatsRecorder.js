@@ -63,10 +63,11 @@ function rowFor(stats, userId) {
  * @param {object} shot
  * @param {boolean} shot.hit 是否中弹（只有实弹才算）
  * @param {boolean} [shot.dud] 这一枪打到的是哑弹
- * @param {number} shot.bulletsBefore 开枪前枪里有几发（实弹 + 哑弹）
+ * @param {number} shot.bulletsBefore 开枪前枪里有几发（实弹 + 哑弹），公开口径
+ * @param {number} [shot.liveBefore] 开枪前枪里有几发是实弹，全场都不知道的口径
  * @param {number} shot.unknownBefore 开枪前还有几个弹巢没验过
  */
-function recordShot(stats, userId, { hit, dud = false, bulletsBefore, unknownBefore }) {
+function recordShot(stats, userId, { hit, dud = false, bulletsBefore, liveBefore, unknownBefore }) {
     const row = rowFor(stats, userId);
     if (!row) return;
 
@@ -84,16 +85,21 @@ function recordShot(stats, userId, { hit, dud = false, bulletsBefore, unknownBef
     // 这里的弹数是公开口径（含哑弹）—— 他扣扳机时看到的就是这个数。
     row.max_bullets_faced = Math.max(row.max_bullets_faced, Number(bulletsBefore) || 0);
 
-    // 打到哑弹的那一枪不计入运气值：它压根不可能淘汰你，
-    // 既没躲过什么也没吃亏，记成「走运活下来」是不对的。
-    if (dud) return;
-
-    // 开枪那一刻打到子弹的概率累加起来，就是这个人「理论上该中几枪」。
+    // 扣扳机那一刻真正会淘汰他的概率累加起来，就是这个人「理论上该中几枪」。
     // expected_hits - hits_taken 即运气值：正数是欧皇，负数是非酋。
     // 这比单纯数空枪次数靠谱得多——后者只会选出玩得最多的人。
+    //
+    // 两个必须守住的口径，否则运气值会系统性跑偏：
+    // ① 分子只能用实弹数。哑弹占着弹巢但杀不了人，把它算进分子等于凭空发运气
+    //    （开局那一发要是哑弹，真实中弹概率就是 0）。而 hits_taken 只数实弹，
+    //    分子分母两边口径不一致，全服就会人均欧皇。
+    // ② 每一枪都要记，包括打出哑弹的那一枪。扣扳机时他并不知道会是哑弹，
+    //    承担的是同一份真实风险；按结果回头筛掉这些样本，就是拿结论去挑证据。
+    // 守住这两条，luck 的期望才严格为 0，欧皇 / 非酋才是在比手气。
     const unknown = Number(unknownBefore) || 0;
     if (unknown > 0) {
-        row.expected_hits += (Number(bulletsBefore) || 0) / unknown;
+        const live = Number.isFinite(liveBefore) ? Math.max(0, liveBefore) : (Number(bulletsBefore) || 0);
+        row.expected_hits += live / unknown;
     }
 }
 

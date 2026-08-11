@@ -39,7 +39,8 @@ const MINUTES_PER_PRESSURE = 0.5;
 const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 
 // ---------- 待发子弹池 ----------
-// 每一轮准备一池 12 发，其中随机 1~4 发是哑弹。枪里的每一发都是从这里抽的，
+// 每一轮准备一池 POOL_SIZE 发，其中随机 POOL_DUD_MIN~POOL_DUD_MAX 发是哑弹。
+// 枪里的每一发都是从这里抽的，
 // 池子没空之前游戏不会因为「子弹打光」而收场：枪打空就自动补 1 发接着打。
 //
 // 公开的只有「池里还剩几发」和「本轮一共几发哑弹」。哪一发是哑弹、
@@ -175,7 +176,7 @@ function spinCylinder(game) {
     game.pointer = 0;
 }
 
-// 备一轮新的待发子弹池：12 发，其中随机 3~6 发哑弹，洗匀。
+// 备一轮新的待发子弹池：POOL_SIZE 发，其中随机 POOL_DUD_MIN~POOL_DUD_MAX 发哑弹，洗匀。
 // 哑弹总数本轮固定且公开，具体是哪几发不公开。
 function preparePool(game) {
     const span = POOL_DUD_MAX - POOL_DUD_MIN + 1;
@@ -769,7 +770,10 @@ async function performShot(game, expectedToken) {
         const hit = round === LIVE;
         const dud = round === DUD;
         // 统计要的是「扣扳机那一刻」的局面，所以必须在验巢、扣子弹之前取。
+        // bulletsBefore 是公开弹数（含哑弹），liveBefore 是只有系统知道的实弹数——
+        // 运气值要用后者算，勇气类数据（max_bullets_faced）要用前者，别混。
         const bulletsBefore = game.bullets;
+        const liveBefore = Math.max(0, bulletsBefore - (game.gunDuds || 0));
         const unknownBefore = unknownChamberCount(game);
         game.revealed[index] = true;
         // 哑弹和实弹一样被消耗掉：弹巢清空、弹数 -1。唯一的区别是不淘汰人。
@@ -824,7 +828,7 @@ async function performShot(game, expectedToken) {
             game.phase = hit ? 'resolving' : 'choice';
         }
 
-        recordShot(game.stats, shooterId, { hit, dud, bulletsBefore, unknownBefore });
+        recordShot(game.stats, shooterId, { hit, dud, bulletsBefore, liveBefore, unknownBefore });
         result = { shooterId, hit, dud, unloadShot, riposteStage };
     });
 
@@ -1429,7 +1433,7 @@ function recruitmentView(game) {
         minParticipants: minParticipantsFor(game),
         baseMinutes: BASE_TIMEOUT_MINUTES,
         minutesPerPressure: MINUTES_PER_PRESSURE,
-        // 规则清单里要写「一箱 12 发，其中 3~6 发哑弹」，招募阶段还没建池，
+        // 规则清单里要写「一箱几发、其中几发哑弹」，招募阶段还没建池，
         // 所以这几个数直接取常量。
         poolSize: POOL_SIZE,
         poolDudMin: POOL_DUD_MIN,

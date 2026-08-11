@@ -59,7 +59,8 @@ const METRICS = Object.freeze([
     {
         key: 'luck',
         label: '🍀 运气值',
-        hint: `理论该中的枪数减去实际中弹数，正数是欧皇。需累计开枪 ${MIN_LUCK_SHOTS} 次以上才上榜。`,
+        hint: '理论该中的枪数减去实际中弹数，正数是欧皇。'
+            + `按扣扳机那一刻的实弹概率算，哑弹不计入分子。需累计开枪 ${MIN_LUCK_SHOTS} 次以上才上榜。`,
         value: luckOf,
         format: formatLuck,
         eligible: row => row.shots_fired >= MIN_LUCK_SHOTS,
@@ -114,6 +115,14 @@ const METRICS = Object.freeze([
         value: row => row.hits_taken,
         format: value => `${value} 次`,
         eligible: row => row.hits_taken >= 1,
+    },
+    {
+        key: 'duds',
+        label: '😶 哑弹次数',
+        hint: '扣下扳机、击针砸了下去，子弹却没响。摸到次品的次数最多的人。',
+        value: row => row.duds_fired || 0,
+        format: value => `${value} 发`,
+        eligible: row => (row.duds_fired || 0) >= 1,
     },
     {
         key: 'quits',
@@ -231,6 +240,17 @@ const THRONES = Object.freeze([
         higherIsBetter: true,
     },
     {
+        id: 'dud_king',
+        emoji: '😶',
+        name: '哑弹之神',
+        blurb: '这箱子里的次品好像都归他打，运气都用在这上面了。',
+        rule: '打出哑弹次数最多（至少 1 次）',
+        value: row => row.duds_fired || 0,
+        format: value => `${value} 发`,
+        eligible: row => (row.duds_fired || 0) >= 1,
+        higherIsBetter: true,
+    },
+    {
         id: 'jailbird',
         emoji: '⛓️',
         name: '牢底坐穿',
@@ -337,6 +357,13 @@ const ACHIEVEMENTS = Object.freeze([
         name: '一小时监禁',
         rule: '因中弹累计被禁言满 60 分钟',
         test: row => row.timeout_minutes >= 60,
+    },
+    {
+        id: 'dud_collector',
+        emoji: '🫧',
+        name: '次品鉴定师',
+        rule: '累计打出 10 发哑弹',
+        test: row => (row.duds_fired || 0) >= 10,
     },
     {
         id: 'bomb_squad',
