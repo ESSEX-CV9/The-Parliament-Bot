@@ -1,7 +1,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const COOLDOWN_DURATION_MS = 30 * 60 * 1000;
+// 只有在频道设置没给出冷却时长时才会用到；正常路径由 mysteryCommand 传入解析结果。
+const DEFAULT_COOLDOWN_DURATION_MS = 30 * 60 * 1000;
 let temporaryFileSequence = 0;
 let corruptionBackupSequence = 0;
 
@@ -9,8 +10,15 @@ function logFailure(operation, error) {
     console.error(`[bombCooldownStore] ${operation} failed:`, error);
 }
 
-function buildCooldownKey(guildId, userId) {
-    return `${guildId}:${userId}`;
+// 与内存冷却保持一致：按「服务器 + 用户 + 频道」计数，每个子区/帖子各算各的。
+function buildCooldownKey(guildId, userId, channelId) {
+    return `${guildId}:${userId}:${channelId}`;
+}
+
+// 旧数据是 `guildId:userId` 两段式，没有频道信息、无法安全归属到任何频道，
+// 加载时直接丢弃（最坏情况是少数人的传炸弹冷却提前解除一次）。
+function isCurrentSchemaKey(key) {
+    return typeof key === 'string' && key.split(':').length === 3;
 }
 
 function createBombCooldownStore({ filePath, now = Date.now }) {
@@ -78,7 +86,7 @@ function createBombCooldownStore({ filePath, now = Date.now }) {
         let removed = false;
 
         for (const [key, expiresAt] of Object.entries(cooldowns)) {
-            if (!Number.isFinite(expiresAt) || expiresAt <= currentTime) {
+            if (!isCurrentSchemaKey(key) || !Number.isFinite(expiresAt) || expiresAt <= currentTime) {
                 delete cooldowns[key];
                 removed = true;
             }
@@ -150,8 +158,8 @@ function createBombCooldownStore({ filePath, now = Date.now }) {
         }
     }
 
-    function isOnCooldown(guildId, userId) {
-        const key = buildCooldownKey(guildId, userId);
+    function getExpiresAt(guildId, userId, channelId) {
+        const key = buildCooldownKey(guildId, userId, channelId);
         const expiresAt = cooldowns[key];
 
         if (!Number.isFinite(expiresAt) || expiresAt <= now()) {
@@ -159,15 +167,28 @@ function createBombCooldownStore({ filePath, now = Date.now }) {
                 delete cooldowns[key];
                 void queueWrite();
             }
-            return false;
+            return null;
         }
 
-        return true;
+        return expiresAt;
     }
 
-    function startCooldown(guildId, userId) {
-        cooldowns[buildCooldownKey(guildId, userId)] = now() + COOLDOWN_DURATION_MS;
+    function isOnCooldown(guildId, userId, channelId) {
+        return getExpiresAt(guildId, userId, channelId) !== null;
+    }
+
+    /**
+     * @param {number} durationMs 该频道解析出来的冷却时长；0 表示不进冷却。
+     * @returns {number|null} 冷却到期时间戳；durationMs 为 0 时返回 null。
+     */
+    function startCooldown(guildId, userId, channelId, durationMs = DEFAULT_COOLDOWN_DURATION_MS) {
+        const duration = Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 0;
+        if (duration === 0) return null;
+
+        const expiresAt = now() + duration;
+        cooldowns[buildCooldownKey(guildId, userId, channelId)] = expiresAt;
         void queueWrite();
+        return expiresAt;
     }
 
     async function flush() {
@@ -179,6 +200,7 @@ function createBombCooldownStore({ filePath, now = Date.now }) {
     }
 
     return {
+        getExpiresAt,
         isOnCooldown,
         startCooldown,
         load,
@@ -191,8 +213,10 @@ const defaultStore = createBombCooldownStore({
 });
 
 module.exports = {
-    COOLDOWN_DURATION_MS,
+    DEFAULT_COOLDOWN_DURATION_MS,
+    buildCooldownKey,
     createBombCooldownStore,
+    getExpiresAt: defaultStore.getExpiresAt,
     isOnCooldown: defaultStore.isOnCooldown,
     startCooldown: defaultStore.startCooldown,
     load: defaultStore.load,

@@ -4,6 +4,7 @@ const {
     getPermissionDeniedMessage,
 } = require('../../../core/utils/permissionManager');
 const { openNamePoolManager } = require('../services/namePoolManager');
+const { openChannelAccessManager } = require('../services/channelAccessManager');
 const { executeCloseDoor } = require('../../safetySetup/commands/closeDoor');
 const { executeOpenDoor } = require('../../safetySetup/commands/openDoor');
 const {
@@ -21,6 +22,9 @@ function buildData() {
         .addSubcommand(subcommand => subcommand
             .setName('神秘名字库')
             .setDescription('管理全 Bot 共用的神秘昵称名字库'))
+        .addSubcommand(subcommand => subcommand
+            .setName('神秘频道设置')
+            .setDescription('管理神秘指令可使用的频道白名单和黑名单'))
         .addSubcommand(subcommand => subcommand
             .setName('关门')
             .setDescription('暂停服务器邀请并交由 Bot 自动续期托管')
@@ -85,6 +89,7 @@ async function executeResetStats(interaction) {
 
 function createManageCommand({
     openNamePoolManager: openNames = openNamePoolManager,
+    openChannelAccessManager: openChannels = openChannelAccessManager,
     executeCloseDoor: closeDoor = executeCloseDoor,
     executeOpenDoor: openDoor = executeOpenDoor,
     executeResetStats: resetStats = executeResetStats,
@@ -112,6 +117,8 @@ function createManageCommand({
         const subcommand = interaction.options.getSubcommand(false);
         if (subcommand === '神秘名字库') {
             await openNames(interaction);
+        } else if (subcommand === '神秘频道设置') {
+            await openChannels(interaction);
         } else if (subcommand === '关门') {
             await closeDoor(interaction);
         } else if (subcommand === '开门') {

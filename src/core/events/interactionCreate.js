@@ -551,6 +551,11 @@ async function interactionCreateHandler(interaction) {
                 return;
             }
 
+            if (interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)) {
+                await handleMysteryInteraction(interaction);
+                return;
+            }
+
             if (interaction.customId === 'form_submission') {
                 // 表单提交处理
                 await processFormSubmission(interaction);

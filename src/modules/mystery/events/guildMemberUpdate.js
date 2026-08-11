@@ -1,4 +1,5 @@
 const gameManager = require('../services/mysteryGameManager');
+const cowardPenalty = require('../services/cowardPenalty');
 
 function getMemberIds(member) {
     const guildId = member?.guild?.id;
@@ -39,6 +40,17 @@ async function mysteryGuildMemberUpdateHandler(oldMember, newMember) {
         return;
     }
 
+    // 1) 昵称锁生命周期：改名重新强制 / 到期释放 / 胆小鬼嘲讽。
+    try {
+        await cowardPenalty.handleGuildMemberUpdate(oldMember, newMember);
+    } catch (error) {
+        console.error(
+            `[Mystery] nickname lock member-update failed guildId=${newIds.guildId} userId=${newIds.userId}:`,
+            error
+        );
+    }
+
+    // 2) 游戏失效：只对新施加的 external Timeout 生效。
     const now = Date.now();
     const oldTimeout = oldMember.communicationDisabledUntilTimestamp;
     const newTimeout = newMember.communicationDisabledUntilTimestamp;
