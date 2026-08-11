@@ -62,6 +62,9 @@ const PANEL_HISTORY_LIMIT = 3;
 // 测试用虚拟玩家。真实 Discord ID 全是数字，不会撞。
 const VIRTUAL_PREFIX = 'testbot-';
 const VIRTUAL_THINK_MS = 2500;
+// 和局判定里，整场机器人合起来有多大概率派一个出来掀桌。
+// 只是为了让测试局能覆盖到「重开一轮」，调高了会让测试局打不完。
+const VIRTUAL_OBJECT_CHANCE = 0.35;
 const TEST_MIN_PARTICIPANTS = 2;
 const MAX_TEST_BOTS = 5;
 const TURN_ACTIONS = Object.freeze({
@@ -902,14 +905,20 @@ function buildVoteView(game) {
 }
 
 async function startDrawVote(game) {
-    // 虚拟玩家没有按钮可点，开票时就替它们投掉。一半概率掀桌，
-    // 否则测试局永远覆盖不到「重开一轮」那条路径。
+    // 虚拟玩家没有按钮可点，开票时就替它们投掉。
+    // 整场只掷一次「有没有机器人掀桌」，而不是每个机器人各掷一次：
+    // 后者在 5 机器人的测试局里几乎必然有人反对，一轮接一轮永远打不完。
     let settled = null;
     await gameManager.runExclusive(game, () => {
         if (game.ended || game.phase !== 'vote') return;
-        for (const userId of game.alive) {
-            if (!isVirtualPlayer(userId) || game.votes.has(userId)) continue;
-            game.votes.set(userId, randomFor(game) < 0.5 ? 'object' : 'agree');
+        const bots = game.alive.filter(
+            userId => isVirtualPlayer(userId) && !game.votes.has(userId)
+        );
+        const objector = bots.length > 0 && randomFor(game) < VIRTUAL_OBJECT_CHANCE
+            ? bots[Math.floor(randomFor(game) * bots.length)]
+            : null;
+        for (const userId of bots) {
+            game.votes.set(userId, userId === objector ? 'object' : 'agree');
         }
         settled = tallyVotes(game);
     });
@@ -1359,6 +1368,11 @@ function recruitmentView(game) {
         minParticipants: minParticipantsFor(game),
         baseMinutes: BASE_TIMEOUT_MINUTES,
         minutesPerPressure: MINUTES_PER_PRESSURE,
+        // 规则清单里要写「一箱 12 发，其中 3~6 发哑弹」，招募阶段还没建池，
+        // 所以这几个数直接取常量。
+        poolSize: POOL_SIZE,
+        poolDudMin: POOL_DUD_MIN,
+        poolDudMax: POOL_DUD_MAX,
         startsAtSeconds: Math.floor(game.recruitmentEndsAt / 1000),
     };
 }
