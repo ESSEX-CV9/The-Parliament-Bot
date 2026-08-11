@@ -1,4 +1,5 @@
 const gameManager = require('../services/mysteryGameManager');
+const nicknameLock = require('../services/mysteryNicknameLock');
 
 function getMemberIds(member) {
     const guildId = member?.guild?.id;
@@ -27,6 +28,16 @@ async function mysteryGuildMemberRemoveHandler(member) {
     const ids = getMemberIds(member);
     if (!ids) {
         return;
+    }
+
+    // 成员离开：同时清理昵称锁（不可恢复）与游戏失效。
+    try {
+        await nicknameLock.service.handleGuildMemberRemove(member);
+    } catch (error) {
+        console.error(
+            `[Mystery] nickname lock member-remove failed guildId=${ids.guildId} userId=${ids.userId}:`,
+            error
+        );
     }
 
     try {

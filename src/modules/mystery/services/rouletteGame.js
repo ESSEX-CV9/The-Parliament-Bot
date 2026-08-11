@@ -7,6 +7,7 @@ const {
     MessageFlags,
 } = require('discord.js');
 const gameManager = require('./mysteryGameManager');
+const defaultPanelLifecycle = require('./panelLifecycle');
 
 const RECRUITMENT_DURATION_MS = 3 * 60 * 1000;
 const RESULT_REVEAL_DELAY_MS = 5 * 1000;
@@ -298,42 +299,49 @@ async function waitForRecruitmentPanelQueue(game) {
     }
 }
 
-function scheduleComponentDisable(game) {
-    if (!game || game.componentsDisabled || !game.message) {
-        return Promise.resolve(game?.componentsDisabled === true);
-    }
-    if (game.componentDisablePromise) return game.componentDisablePromise;
+function invalidateRecruitmentPanel(game, action) {
+    if (!game?.message) return;
+    void game.panelLifecycle.invalidatePanel(game.message, {
+        disablePayload: { components: [joinRow(game.id, true)] },
+        context: { action, guildId: game.guildId, gameId: game.id },
+    });
+}
 
-    let operation;
-    operation = (async () => {
-        await waitForRecruitmentPanelQueue(game);
-        if (game.componentsDisabled) return true;
-        const disabled = await editPublicPanel(game, {
-            components: [joinRow(game.id, true)],
-        }, 'disable-components');
-        if (disabled) game.componentsDisabled = true;
-        return disabled;
-    })()
-        .catch(error => {
-            logDiscordFailure(game, 'disable-components', error);
-            return false;
-        })
-        .finally(() => {
-            if (game.componentDisablePromise === operation) {
-                game.componentDisablePromise = null;
-            }
-        });
-    game.componentDisablePromise = operation;
-    return operation;
+function invalidateProcessPanel(game, message, action, keepMessage = false) {
+    if (!message) return;
+    void game.panelLifecycle.invalidatePanel(message, {
+        keepMessage,
+        context: { action, guildId: game.guildId, gameId: game.id },
+    });
+}
+
+function stageProcessPanelDeletion(game, message, action) {
+    if (!message) return;
+    if (!game.processDeletionAfterCleanup) {
+        game.processDeletionAfterCleanup = {
+            message,
+            context: { action, guildId: game.guildId, gameId: game.id },
+        };
+    }
+    invalidateProcessPanel(game, message, action, true);
 }
 
 async function cleanupRouletteGame(game) {
     cancelResultReveal(game);
     await waitForRecruitmentPanelQueue(game);
-    if (!game.componentsDisabled) {
-        await scheduleComponentDisable(game);
+    if (game.processMessage && !game.processDeletionAfterCleanup) {
+        stageProcessPanelDeletion(game, game.processMessage, 'game-cleanup');
     }
     await gameManager.cleanupGame(game);
+    const pendingDeletion = game.processDeletionAfterCleanup;
+    if (pendingDeletion && !pendingDeletion.armed) {
+        pendingDeletion.armed = true;
+        game.panelLifecycle.deleteMessageAfter(
+            pendingDeletion.message,
+            5_000,
+            pendingDeletion.context
+        );
+    }
 }
 
 async function fetchValidParticipants(game, participantIds) {
@@ -394,7 +402,7 @@ async function claimSettlement(game) {
 }
 
 async function settleClaimedGame(game) {
-    await scheduleComponentDisable(game);
+    invalidateRecruitmentPanel(game, 'recruitment-ended');
 
     const participantSnapshot = [...game.participantIds];
     const fetchedMembers = await fetchValidParticipants(game, participantSnapshot);
@@ -420,11 +428,10 @@ async function settleClaimedGame(game) {
 
     if (!decision) return;
     if (decision.cancelled) {
-        const cancellationUpdated = await editPublicPanel(game, {
+        await sendPublicPanel(game, {
             embeds: [makeEmbed(cancellationDescription())],
-            components: [joinRow(game.id, true)],
+            components: [],
         }, 'cancel-panel');
-        if (cancellationUpdated) game.componentsDisabled = true;
     } else {
         let publishedParticipantIds = decision.participantIds;
         const startingMessage = await sendPublicPanel(game, {
@@ -435,6 +442,7 @@ async function settleClaimedGame(game) {
             await cleanupRouletteGame(game);
             return;
         }
+        game.processMessage = startingMessage;
         if (!await waitForResultReveal(game)) {
             await cleanupRouletteGame(game);
             return;
@@ -485,7 +493,8 @@ async function settleClaimedGame(game) {
         }
 
         if (cancelledDuringPublish) {
-            await editMessage(game, startingMessage, {
+            stageProcessPanelDeletion(game, startingMessage, 'starting-cancelled');
+            await sendPublicPanel(game, {
                 embeds: [makeEmbed(cancellationDescription())],
                 components: [],
             }, 'cancel-starting-panel');
@@ -500,6 +509,7 @@ async function settleClaimedGame(game) {
         const description = outcome.allWinners
             ? allWinnersResultDescription(false)
             : ordinaryResultDescription(outcome.selectedIds[0], false);
+        stageProcessPanelDeletion(game, startingMessage, 'result-finalized');
         const resultMessage = await sendPublicPanel(game, {
             embeds: [makeEmbed(description)],
             components: [],
@@ -527,7 +537,7 @@ async function finishRecruitment(game) {
     }
 }
 
-async function startRoulette(interaction) {
+async function startRoulette(interaction, { panelLifecycle = defaultPanelLifecycle } = {}) {
     const userId = interaction.user?.id;
     const guildId = interaction.guildId || interaction.guild?.id;
     const channelId = interaction.channelId;
@@ -550,6 +560,7 @@ async function startRoulette(interaction) {
         resultRevealDelayMs: RESULT_REVEAL_DELAY_MS,
         random: Math.random,
         timers: new Set(),
+        panelLifecycle,
     };
 
     if (!await deferReply(interaction, undefined, provisionalGame, 'defer-recruitment')) {
@@ -575,7 +586,16 @@ async function startRoulette(interaction) {
     };
     provisionalGame.disableComponents = () => {
         cancelResultReveal(game);
-        void scheduleComponentDisable(game);
+        if (game?.processMessage) {
+            invalidateProcessPanel(
+                game,
+                game.processMessage,
+                'game-cleanup',
+                Boolean(game.processDeletionAfterCleanup)
+            );
+        } else {
+            invalidateRecruitmentPanel(game, 'game-cleanup');
+        }
     };
 
     const created = gameManager.createGame(provisionalGame);

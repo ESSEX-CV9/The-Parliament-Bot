@@ -1,4 +1,4 @@
-const { randomUUID } = require('node:crypto');
+const { randomInt, randomUUID } = require('node:crypto');
 const {
     ActionRowBuilder,
     ButtonBuilder,
@@ -8,10 +8,13 @@ const {
     StringSelectMenuBuilder,
 } = require('discord.js');
 const gameManager = require('./mysteryGameManager');
+const defaultPanelLifecycle = require('./panelLifecycle');
 const defaultCooldownStore = require('../utils/bombCooldownStore');
 
 const RECRUITMENT_DURATION_MS = 3 * 60 * 1000;
 const BOMB_TIMEOUT_DURATION_MS = 5 * 60 * 1000;
+const DEFUSE_FAILURE_TIMEOUT_DURATION_MS = 10 * 60 * 1000;
+const DEFUSE_TARGET_DURATION_MS = 30 * 1000;
 const BOMB_TIMEOUT_REASON = '神秘指令：传炸弹';
 const MIN_PARTICIPANTS = 3;
 const MAX_PARTICIPANTS = 8;
@@ -20,7 +23,9 @@ const PANEL_SKIPPED = Symbol('panel-skipped');
 
 const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
 const CHANNEL_BUSY_MESSAGE = '🎮 **这里已经有一场游戏在进行了。**\n等当前游戏结束后再开新的吧。';
-const COOLDOWN_MESSAGE = '⏳ **这个神秘指令还在冷却中**， **30分钟后才能再次使用**。';
+function cooldownMessage(expiresAt) {
+    return `⏳ **这个神秘指令还在冷却中。**\n可再次使用：<t:${Math.floor(expiresAt / 1000)}:R>`;
+}
 const TIMEOUT_BLOCKED_MESSAGE = '💣 **炸弹拒绝了你。**\n你当前还在禁言，暂时无法参加。';
 const INVALID_MEMBER_MESSAGE = '⚠️ **你现在无法参加这场传炸弹游戏。**';
 const EXPIRED_MESSAGE = '⌛ **这场传炸弹游戏已经结束或失效了。**';
@@ -69,8 +74,8 @@ function randomIndex(length, randomValue) {
     return Math.min(length - 1, Math.max(0, Math.floor(randomValue * length)));
 }
 
-function randomExplosionDelayMs(random = Math.random) {
-    return (30 + randomIndex(91, random())) * 1000;
+function randomExplosionDelayMs(randomInteger = randomInt) {
+    return randomInteger(1, 121) * 1000;
 }
 
 function makeEmbed(description) {
@@ -93,6 +98,10 @@ function recruitmentDescription(game, participantCount = game.participantIds.len
         '- 拿到炸弹的人可以把它传给其他参与者',
         '- 炸弹什么时候爆炸，没人知道',
         '- 爆炸时持有炸弹的人将被 **禁言 5 分钟**',
+        '- 当前持有者也可以尝试拆弹，成功率 **50%**',
+        '- 拆弹失败会当场爆炸，拆弹者被 **禁言 10 分钟**',
+        '- 拆弹成功可在 30 秒内指定其他参与者；目标会立刻爆炸并被 **禁言 5 分钟**',
+        '- 超时未指定则随机选择目标；没有其他有效目标时由拆弹者承担',
         '',
         `**当前人数：${participantCount} / 8**`,
         `⏳ **预计开始：<t:${startsAt}:R>**`,
@@ -202,8 +211,79 @@ function passRow(gameId, messageToken, disabled = false) {
             .setCustomId(`mystery_bomb_pass:${gameId}:${messageToken}`)
             .setLabel('💣 传炸弹')
             .setStyle(ButtonStyle.Danger)
+            .setDisabled(disabled),
+        new ButtonBuilder()
+            .setCustomId(`mystery_bomb_defuse:${gameId}:${messageToken}`)
+            .setLabel('🛡️ 拆弹')
+            .setStyle(ButtonStyle.Success)
             .setDisabled(disabled)
     );
+}
+
+function defuseDescription(game, timeoutFailed) {
+    const durationSeconds = Math.max(
+        0,
+        Math.floor(((game.defuseClaimedAt ?? nowFor(game)) - game.startedAt) / 1000)
+    );
+    const succeeded = game.defuseOutcome === 'defuse_success';
+    const lines = succeeded
+        ? [
+            '🛠️ **拆弹成功！**',
+            '',
+            `<@${game.finalHolderId}> 在最后关头成功拆除了炸弹。`,
+            '',
+            '**本局统计**',
+            `- 总传递次数：**${game.passCount} 次**`,
+            `- 本局持续时间：**${durationSeconds} 秒**`,
+            `- 拆弹者：<@${game.finalHolderId}>`,
+        ]
+        : [
+            '💥 **拆弹失败！**',
+            '',
+            `<@${game.finalHolderId}> 剪错了线，炸弹当场爆炸。`,
+            '',
+            '奖励：**禁言 10 分钟。**',
+            '',
+            '**本局统计**',
+            `- 总传递次数：**${game.passCount} 次**`,
+            `- 本局持续时间：**${durationSeconds} 秒**`,
+            `- 拆弹者：<@${game.finalHolderId}>`,
+        ];
+    if (timeoutFailed) lines.push('', TIMEOUT_FAILURE_LINE);
+    return lines.join('\n');
+}
+
+function defuseTargetingDescription(game) {
+    return [
+        '🛠️ **拆弹成功！但事情还没结束。**',
+        '',
+        `<@${game.defuseActorId}> 获得了指定爆炸目标的机会。`,
+        '',
+        '目标选定后炸弹将立刻爆炸；30 秒未选择则随机指定。',
+    ].join('\n');
+}
+
+function forcedExplosionDescription(game, timeoutFailed) {
+    const lines = [
+        '💥 **拆弹后的最后惊喜！**',
+        '',
+        `<@${game.defuseActorId}> 指定了 <@${game.finalHolderId}>。`,
+        '炸弹在目标手中立刻爆炸。',
+        '',
+        '奖励：**禁言 5 分钟。**',
+        '',
+        '**本局统计**',
+        `- 总传递次数：**${game.passCount} 次**`,
+        `- 拆弹者：<@${game.defuseActorId}>`,
+        `- 最终目标：<@${game.finalHolderId}>`,
+    ];
+    if (timeoutFailed) lines.push('', TIMEOUT_FAILURE_LINE);
+    return lines.join('\n');
+}
+
+function defuseSucceeds(game) {
+    const randomInteger = typeof game?.randomInt === 'function' ? game.randomInt : randomInt;
+    return randomInteger(0, 2) === 0;
 }
 
 function recruitmentPayload(game, disabled = false, description = recruitmentDescription(game)) {
@@ -355,38 +435,86 @@ function queuePublicWrite(game, operation) {
     return queued;
 }
 
-async function disableBombMessage(game, message, token) {
-    if (!message) return false;
-    return safeEdit(message, {
-        components: [passRow(game.id, token, true)],
-    }, game, 'disable-bomb-message');
+function lifecycleFor(game) {
+    return game?.panelLifecycle || defaultPanelLifecycle;
 }
 
-async function disableAllComponents(game) {
+function panelContext(game, action) {
+    return { action, guildId: game?.guildId, gameId: game?.id };
+}
+
+function invalidateRecruitmentPanel(game, action, {
+    keepMessage = false,
+    disablePayload = { components: [joinRow(game.id, true)] },
+} = {}) {
+    if (!game?.recruitmentMessage) return Promise.resolve(false);
+    return lifecycleFor(game).invalidatePanel(game.recruitmentMessage, {
+        keepMessage,
+        disablePayload,
+        context: panelContext(game, action),
+    });
+}
+
+function invalidateBombMessage(game, message, token, action, keepMessage = false) {
+    if (!message) return Promise.resolve(false);
+    return lifecycleFor(game).invalidatePanel(message, {
+        keepMessage,
+        disablePayload: { components: [passRow(game.id, token, true)] },
+        context: panelContext(game, action),
+    });
+}
+
+async function stagePanelDeletion(game, message, options) {
+    if (!message) return false;
+    game.pendingPanelDeletions ||= new Map();
+    if (!game.pendingPanelDeletions.has(message)) {
+        game.pendingPanelDeletions.set(message, {
+            message,
+            context: panelContext(game, options.action),
+        });
+    }
+    if (options.kind === 'recruitment') {
+        return invalidateRecruitmentPanel(game, options.action, { keepMessage: true });
+    }
+    return invalidateBombMessage(game, message, options.token, options.action, true);
+}
+
+async function disableAllComponents(game, action = 'game-final') {
     try {
         await game.panelWriteQueue;
         await game.publicWriteQueue;
     } catch (error) {
         logDiscordFailure(game, 'wait-component-writes', error);
     }
-    await safeEdit(game.recruitmentMessage, {
-        components: [joinRow(game.id, true)],
-    }, game, 'disable-recruitment-message');
+    const invalidations = [stagePanelDeletion(game, game.recruitmentMessage, {
+        kind: 'recruitment',
+        action: `${action}-recruitment`,
+    })];
     const messages = [...(game.bombMessages || [])];
-    await Promise.all(messages.map(message => disableBombMessage(
-        game,
-        message,
-        message.bombMessageToken ?? game.messageToken
-    )));
+    invalidations.push(...messages.map(message => stagePanelDeletion(game, message, {
+        kind: 'holder',
+        token: message.bombMessageToken ?? game.messageToken,
+        action: `${action}-holder`,
+    })));
+    await Promise.all(invalidations);
+}
+
+function armPanelDeletions(game) {
+    for (const pending of game.pendingPanelDeletions?.values?.() || []) {
+        if (pending.armed) continue;
+        pending.armed = true;
+        lifecycleFor(game).deleteMessageAfter(pending.message, 5_000, pending.context);
+    }
 }
 
 async function cleanupBombGame(game) {
     if (!game || game.cleanupPromise) return game?.cleanupPromise;
     let operation;
     operation = (async () => {
-        await disableAllComponents(game);
+        await disableAllComponents(game, 'game-cleanup');
         await gameManager.cleanupGame(game);
         game.state = 'ended';
+        armPanelDeletions(game);
     })().catch(error => {
         logDiscordFailure(game, 'cleanup', error);
     });
@@ -394,14 +522,19 @@ async function cleanupBombGame(game) {
     return operation;
 }
 
+function claimNaturalExplosion(game, currentTime) {
+    if (game.ended || game.state !== 'active' || currentTime < game.explodeAt) return false;
+    game.state = 'exploding';
+    game.finalHolderId = game.currentHolderId;
+    game.explosionClaimedAt = currentTime;
+    game.settlementCount = (game.settlementCount || 0) + 1;
+    return true;
+}
+
 async function claimExplosion(game, currentTime) {
     let claimed = false;
     await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'active' || currentTime < game.explodeAt) return;
-        game.state = 'exploding';
-        game.finalHolderId = game.currentHolderId;
-        game.explosionClaimedAt = currentTime;
-        claimed = true;
+        claimed = claimNaturalExplosion(game, currentTime);
     });
     return claimed;
 }
@@ -410,54 +543,242 @@ async function finishExplosion(game) {
     if (game.explosionPromise) return game.explosionPromise;
     let operation;
     operation = (async () => {
-        await game.publicWriteQueue;
-        await disableAllComponents(game);
+        try {
+            await game.publicWriteQueue;
+            await disableAllComponents(game);
 
-        const resultMessage = await queuePublicWrite(game, () => safeSend(
-            game,
-            { embeds: [makeEmbed(explosionDescription(game, false))], components: [] },
-            'explosion-result'
-        ));
-        if (!resultMessage || resultMessage === PANEL_SKIPPED) {
-            await cleanupBombGame(game);
-            return;
-        }
-
-        let timeoutFailed = false;
-        const member = await safeFetchMember(game, game.finalHolderId);
-        if (!member?.moderatable || typeof member.timeout !== 'function') {
-            timeoutFailed = true;
-        } else {
-            try {
-                await member.timeout(BOMB_TIMEOUT_DURATION_MS, BOMB_TIMEOUT_REASON);
-            } catch (error) {
-                timeoutFailed = true;
-                logDiscordFailure(game, 'timeout-final-holder', error, game.finalHolderId);
-            }
-        }
-
-        if (timeoutFailed) {
-            const appended = await queuePublicWrite(game, () => safeEdit(
-                resultMessage,
-                { embeds: [makeEmbed(explosionDescription(game, true))], components: [] },
+            const resultMessage = await queuePublicWrite(game, () => safeSend(
                 game,
-                'append-timeout-failure'
+                { embeds: [makeEmbed(explosionDescription(game, false))], components: [] },
+                'explosion-result'
             ));
-            if (!appended) {
-                await queuePublicWrite(game, () => safeSend(
-                    game,
-                    { content: TIMEOUT_FAILURE_LINE, components: [] },
-                    'timeout-failure-supplement'
-                ));
+            if (!resultMessage || resultMessage === PANEL_SKIPPED) return;
+
+            let timeoutFailed = false;
+            const member = await safeFetchMember(game, game.finalHolderId);
+            if (!member?.moderatable || typeof member.timeout !== 'function') {
+                timeoutFailed = true;
+            } else {
+                try {
+                    await member.timeout(BOMB_TIMEOUT_DURATION_MS, BOMB_TIMEOUT_REASON);
+                } catch (error) {
+                    timeoutFailed = true;
+                    logDiscordFailure(game, 'timeout-final-holder', error, game.finalHolderId);
+                }
             }
+
+            if (timeoutFailed) {
+                const appended = await queuePublicWrite(game, () => safeEdit(
+                    resultMessage,
+                    { embeds: [makeEmbed(explosionDescription(game, true))], components: [] },
+                    game,
+                    'append-timeout-failure'
+                ));
+                if (!appended) {
+                    await queuePublicWrite(game, () => safeSend(
+                        game,
+                        { content: TIMEOUT_FAILURE_LINE, components: [] },
+                        'timeout-failure-supplement'
+                    ));
+                }
+            }
+        } finally {
+            await cleanupBombGame(game);
         }
-        await cleanupBombGame(game);
-    })().catch(async error => {
+    })().catch(error => {
         logDiscordFailure(game, 'finish-explosion', error);
-        await cleanupBombGame(game);
     });
     game.explosionPromise = operation;
     return operation;
+}
+
+async function finishDefuse(game) {
+    if (game.defusePromise) return game.defusePromise;
+    let operation;
+    operation = (async () => {
+        try {
+            await game.publicWriteQueue;
+            await disableAllComponents(game);
+
+            const resultMessage = await queuePublicWrite(game, () => safeSend(
+                game,
+                { embeds: [makeEmbed(defuseDescription(game, false))], components: [] },
+                'defuse-result'
+            ));
+            if (!resultMessage || resultMessage === PANEL_SKIPPED) return;
+            if (game.defuseOutcome !== 'defuse_failure') return;
+
+            let timeoutFailed = false;
+            const member = await safeFetchMember(game, game.finalHolderId);
+            if (!member?.moderatable || typeof member.timeout !== 'function') {
+                timeoutFailed = true;
+            } else {
+                try {
+                    await member.timeout(
+                        DEFUSE_FAILURE_TIMEOUT_DURATION_MS,
+                        BOMB_TIMEOUT_REASON
+                    );
+                } catch (error) {
+                    timeoutFailed = true;
+                    logDiscordFailure(game, 'timeout-failed-defuser', error, game.finalHolderId);
+                }
+            }
+
+            if (timeoutFailed) {
+                const appended = await queuePublicWrite(game, () => safeEdit(
+                    resultMessage,
+                    { embeds: [makeEmbed(defuseDescription(game, true))], components: [] },
+                    game,
+                    'append-defuse-timeout-failure'
+                ));
+                if (!appended) {
+                    await queuePublicWrite(game, () => safeSend(
+                        game,
+                        { content: TIMEOUT_FAILURE_LINE, components: [] },
+                        'defuse-timeout-failure-supplement'
+                    ));
+                }
+            }
+        } finally {
+            await cleanupBombGame(game);
+        }
+    })().catch(error => {
+        logDiscordFailure(game, 'finish-defuse', error);
+    });
+    game.defusePromise = operation;
+    return operation;
+}
+
+function clearDefuseTargetTimer(game) {
+    if (!game?.defuseTargetTimer) return;
+    const clearTimer = game.clearTimeoutImpl || clearTimeout;
+    clearTimer(game.defuseTargetTimer);
+    game.timers?.delete(game.defuseTargetTimer);
+    game.defuseTargetTimer = null;
+}
+
+async function finishForcedExplosion(game) {
+    if (game.forcedExplosionPromise) return game.forcedExplosionPromise;
+    const operation = (async () => {
+        try {
+            await game.publicWriteQueue;
+            await disableAllComponents(game);
+            const resultMessage = await queuePublicWrite(game, () => safeSend(
+                game,
+                { embeds: [makeEmbed(forcedExplosionDescription(game, false))], components: [] },
+                'forced-explosion-result'
+            ));
+            if (!resultMessage || resultMessage === PANEL_SKIPPED) return;
+
+            let timeoutFailed = false;
+            const member = await safeFetchMember(game, game.finalHolderId);
+            if (!member?.moderatable || typeof member.timeout !== 'function') {
+                timeoutFailed = true;
+            } else {
+                try {
+                    await member.timeout(BOMB_TIMEOUT_DURATION_MS, BOMB_TIMEOUT_REASON);
+                } catch (error) {
+                    timeoutFailed = true;
+                    logDiscordFailure(game, 'timeout-forced-target', error, game.finalHolderId);
+                }
+            }
+            if (timeoutFailed) {
+                await safeEdit(
+                    resultMessage,
+                    { embeds: [makeEmbed(forcedExplosionDescription(game, true))], components: [] },
+                    game,
+                    'append-forced-timeout-failure'
+                );
+            }
+        } finally {
+            await cleanupBombGame(game);
+        }
+    })().catch(error => logDiscordFailure(game, 'finish-forced-explosion', error));
+    game.forcedExplosionPromise = operation;
+    return operation;
+}
+
+async function submitDefuseTarget(game, input = {}) {
+    const targetMember = input.targetId ? await safeFetchMember(game, input.targetId) : null;
+    let result = { accepted: false, outcome: 'rejected', reason: 'expired' };
+    await gameManager.runExclusive(game, () => {
+        if (
+            gameManager.getGame(game.id) !== game
+            || game.ended
+            || game.state !== 'defuse_targeting'
+            || game.defuseActorId !== input.actorId
+            || game.messageToken !== input.messageToken
+        ) return;
+        if (
+            input.targetId === input.actorId
+            || !game.participantIds.includes(input.targetId)
+            || !isValidHumanMember(targetMember)
+        ) {
+            result = { accepted: false, outcome: 'rejected', reason: 'target' };
+            return;
+        }
+        clearDefuseTargetTimer(game);
+        game.state = 'exploding';
+        game.finalHolderId = input.targetId;
+        game.explosionClaimedAt = nowFor(game);
+        result = { accepted: true, outcome: 'forced_explosion' };
+    });
+    if (result.accepted) await finishForcedExplosion(game);
+    return result;
+}
+
+async function settleDefuseTargetFallback(game) {
+    const candidates = [];
+    for (const userId of game.participantIds || []) {
+        if (userId === game.defuseActorId) continue;
+        const member = await safeFetchMember(game, userId);
+        if (isValidHumanMember(member)) candidates.push(userId);
+    }
+    const targetId = candidates.length > 0
+        ? candidates[randomIndex(candidates.length, randomFor(game))]
+        : game.defuseActorId;
+    if (targetId === game.defuseActorId) {
+        let claimed = false;
+        await gameManager.runExclusive(game, () => {
+            if (game.ended || game.state !== 'defuse_targeting') return;
+            clearDefuseTargetTimer(game);
+            game.state = 'exploding';
+            game.finalHolderId = game.defuseActorId;
+            game.explosionClaimedAt = nowFor(game);
+            claimed = true;
+        });
+        if (claimed) await finishForcedExplosion(game);
+        return claimed;
+    }
+    const result = await submitDefuseTarget(game, {
+        actorId: game.defuseActorId,
+        targetId,
+        messageToken: game.messageToken,
+    });
+    return result.accepted;
+}
+
+async function beginDefuseTargeting(game) {
+    if (game.explosionTimer) {
+        const clearTimer = game.clearTimeoutImpl || clearTimeout;
+        clearTimer(game.explosionTimer);
+        game.timers?.delete(game.explosionTimer);
+        game.explosionTimer = null;
+    }
+    await disableAllComponents(game, 'defuse-targeting');
+    const statusMessage = await queuePublicWrite(game, () => safeSend(
+        game,
+        { embeds: [makeEmbed(defuseTargetingDescription(game))], components: [] },
+        'defuse-targeting-status'
+    ));
+    if (statusMessage && statusMessage !== PANEL_SKIPPED) game.bombMessages?.add(statusMessage);
+    const setTimer = game.setTimeoutImpl || setTimeout;
+    game.defuseTargetTimer = setTimer(() => {
+        return settleDefuseTargetFallback(game)
+            .catch(error => logDiscordFailure(game, 'defuse-target-timeout', error));
+    }, DEFUSE_TARGET_DURATION_MS);
+    game.defuseTargetTimer?.unref?.();
+    game.timers?.add(game.defuseTargetTimer);
 }
 
 async function explodeBomb(game, currentTime = nowFor(game)) {
@@ -495,20 +816,11 @@ async function abortAfterCriticalPanelFailure(game) {
 
 async function cancelForTooFew(game, recruitment = false) {
     const description = recruitment ? cancellationDescription() : cancellationAfterInvalidationDescription();
-    if (recruitment) {
-        await queuePanelWrite(game, () => safeEdit(
-            game.recruitmentMessage,
-            recruitmentPayload(game, true, description),
-            game,
-            'recruitment-cancelled'
-        ));
-    } else {
-        await queuePublicWrite(game, () => safeSend(
-            game,
-            { embeds: [makeEmbed(description)], components: [] },
-            'active-game-cancelled'
-        ));
-    }
+    await queuePublicWrite(game, () => safeSend(
+        game,
+        { embeds: [makeEmbed(description)], components: [] },
+        recruitment ? 'recruitment-cancelled' : 'active-game-cancelled'
+    ));
     await cleanupBombGame(game);
 }
 
@@ -552,7 +864,7 @@ async function finishRecruitment(game) {
         const currentTime = nowFor(game);
         game.state = 'active';
         game.startedAt = currentTime;
-        game.explodeAt = currentTime + randomExplosionDelayMs(game.random);
+        game.explodeAt = currentTime + randomExplosionDelayMs();
         game.currentHolderId = game.participantIds[randomIndex(game.participantIds.length, randomFor(game))];
         game.holderSince = currentTime;
         game.passCount = 0;
@@ -577,7 +889,7 @@ async function finishRecruitment(game) {
         activationSnapshot.messageToken,
         firstHolderDescription(activationSnapshot)
     );
-    const firstMessagePromise = queuePublicWrite(game, async () => {
+    const firstMessage = await queuePublicWrite(game, async () => {
         if (
             game.ended
             || game.state !== 'active'
@@ -593,27 +905,26 @@ async function finishRecruitment(game) {
         }
         return message;
     });
-    const closePanelPromise = queuePanelWrite(game, () => safeEdit(
-        game.recruitmentMessage,
-        recruitmentPayload(
-            game,
-            true,
-            recruitmentClosedDescription(activationSnapshot.participantIds.length)
-        ),
-        game,
-        'close-recruitment'
-    ));
-    const firstMessage = await firstMessagePromise;
     if (firstMessage === null) {
         await abortAfterCriticalPanelFailure(game);
-        await closePanelPromise;
         return false;
     }
-    await closePanelPromise;
+    if (firstMessage !== PANEL_SKIPPED) {
+        await invalidateRecruitmentPanel(game, 'close-recruitment', {
+            disablePayload: recruitmentPayload(
+                game,
+                true,
+                recruitmentClosedDescription(activationSnapshot.participantIds.length)
+            ),
+        });
+    }
     return firstMessage !== PANEL_SKIPPED;
 }
 
-async function startBomb(interaction) {
+async function startBomb(interaction, {
+    useCooldown = true,
+    panelLifecycle = defaultPanelLifecycle,
+} = {}) {
     const userId = interaction.user?.id;
     const guildId = interaction.guildId || interaction.guild?.id;
     const channelId = interaction.channelId;
@@ -639,6 +950,7 @@ async function startBomb(interaction) {
         recruitmentStartRequested: false,
         panelWriteQueue: Promise.resolve(),
         publicWriteQueue: Promise.resolve(),
+        panelLifecycle,
     };
 
     if (!await deferPublicCommand(interaction, provisionalGame)) return false;
@@ -653,19 +965,22 @@ async function startBomb(interaction) {
         return false;
     }
     provisionalGame.memberById.set(userId, member);
-    if (!await ensureCooldownStoreLoaded(cooldownStore, provisionalGame, userId)) {
+    if (useCooldown && !await ensureCooldownStoreLoaded(cooldownStore, provisionalGame, userId)) {
         await failDeferredStart(interaction, INVALID_MEMBER_MESSAGE, provisionalGame);
         return false;
     }
-    try {
-        if (cooldownStore.isOnCooldown(guildId, userId)) {
-            await failDeferredStart(interaction, COOLDOWN_MESSAGE, provisionalGame);
+    if (useCooldown) {
+        try {
+            const expiresAt = cooldownStore.getExpiresAt(guildId, userId);
+            if (expiresAt !== null) {
+                await failDeferredStart(interaction, cooldownMessage(expiresAt), provisionalGame);
+                return false;
+            }
+        } catch (error) {
+            logDiscordFailure(provisionalGame, 'cooldown-check', error, userId);
+            await failDeferredStart(interaction, INVALID_MEMBER_MESSAGE, provisionalGame);
             return false;
         }
-    } catch (error) {
-        logDiscordFailure(provisionalGame, 'cooldown-check', error, userId);
-        await failDeferredStart(interaction, INVALID_MEMBER_MESSAGE, provisionalGame);
-        return false;
     }
 
     let game;
@@ -679,9 +994,7 @@ async function startBomb(interaction) {
             );
         }
     };
-    provisionalGame.disableComponents = () => {
-        void disableAllComponents(game);
-    };
+    provisionalGame.disableComponents = () => cleanupBombGame(game);
 
     const currentMember = await safeFetchMember(provisionalGame, userId);
     if (!isValidHumanMember(currentMember)) {
@@ -718,10 +1031,12 @@ async function startBomb(interaction) {
         await failDeferredStart(interaction, INVALID_MEMBER_MESSAGE, game);
         return false;
     }
-    try {
-        await cooldownStore.startCooldown(guildId, userId);
-    } catch (error) {
-        logDiscordFailure(game, 'cooldown-start', error, userId);
+    if (useCooldown) {
+        try {
+            await cooldownStore.startCooldown(guildId, userId);
+        } catch (error) {
+            logDiscordFailure(game, 'cooldown-start', error, userId);
+        }
     }
     try {
         const fetched = await interaction.fetchReply?.();
@@ -944,38 +1259,59 @@ async function handlePassButton(interaction, game, messageToken) {
     return true;
 }
 
-async function submitBombTarget(game, input) {
-    if (!game || game.type !== 'bomb') return { ok: false, reason: 'expired' };
-    const targetMember = await safeFetchMember(game, input.targetId);
-    let result = { ok: false, reason: 'expired' };
+async function submitBombMutation(game, input = {}) {
+    if (!game || game.type !== 'bomb') {
+        return { accepted: false, outcome: 'rejected', reason: 'expired' };
+    }
+
+    const targetMember = input.kind === 'pass'
+        ? await safeFetchMember(game, input.targetId)
+        : null;
+    let result = { accepted: false, outcome: 'rejected', reason: 'expired' };
     let passCommit = null;
-    let explosionClaimed = false;
 
     await gameManager.runExclusive(game, () => {
         const currentTime = input.now ?? nowFor(game);
-        if (game.ended || game.state !== 'active') return;
-        if (currentTime >= game.explodeAt) {
-            game.state = 'exploding';
-            game.finalHolderId = game.currentHolderId;
-            game.explosionClaimedAt = currentTime;
-            explosionClaimed = true;
-            result = { ok: false, reason: 'exploded' };
+        if (
+            gameManager.getGame(game.id) !== game
+            || game.ended
+            || game.state !== 'active'
+        ) return;
+
+        if (claimNaturalExplosion(game, currentTime)) {
+            result = { accepted: true, outcome: 'natural_explosion' };
             return;
         }
-        if (game.currentHolderId !== input.actorId) {
-            result = { ok: false, reason: 'holder' };
+        if (game.currentHolderId !== input.userId) {
+            result = { accepted: false, outcome: 'rejected', reason: 'holder' };
             return;
         }
         if (game.messageToken !== input.messageToken) {
-            result = { ok: false, reason: 'stale' };
+            result = { accepted: false, outcome: 'rejected', reason: 'stale' };
+            return;
+        }
+
+        if (input.kind === 'defuse') {
+            const outcome = defuseSucceeds(game) ? 'defuse_success' : 'defuse_failure';
+            game.state = outcome === 'defuse_success' ? 'defuse_targeting' : 'defusing';
+            game.finalHolderId = game.currentHolderId;
+            game.defuseActorId = game.currentHolderId;
+            game.defuseClaimedAt = currentTime;
+            game.defuseOutcome = outcome;
+            game.settlementCount = (game.settlementCount || 0) + 1;
+            result = { accepted: true, outcome };
+            return;
+        }
+        if (input.kind !== 'pass') {
+            result = { accepted: false, outcome: 'rejected', reason: 'kind' };
             return;
         }
         if (
-            input.targetId === input.actorId
+            input.targetId === input.userId
             || !game.participantIds.includes(input.targetId)
             || !isValidHumanMember(targetMember)
         ) {
-            result = { ok: false, reason: 'target' };
+            result = { accepted: false, outcome: 'rejected', reason: 'target' };
             return;
         }
 
@@ -987,7 +1323,7 @@ async function submitBombTarget(game, input) {
         game.passCount += 1;
         game.messageToken += 1;
         passCommit = {
-            fromId: input.actorId,
+            fromId: input.userId,
             toId: input.targetId,
             oldMessage,
             oldToken,
@@ -995,11 +1331,19 @@ async function submitBombTarget(game, input) {
             passCount: game.passCount,
             randomValue,
         };
-        result = { ok: true };
+        result = { accepted: true, outcome: 'pass' };
     });
 
-    if (explosionClaimed) {
+    if (result.outcome === 'natural_explosion') {
         await finishExplosion(game);
+        return result;
+    }
+    if (result.outcome === 'defuse_success') {
+        await beginDefuseTargeting(game);
+        return result;
+    }
+    if (result.outcome === 'defuse_failure') {
+        await finishDefuse(game);
         return result;
     }
     if (!passCommit) return result;
@@ -1011,8 +1355,6 @@ async function submitBombTarget(game, input) {
             || game.messageToken !== passCommit.newToken
             || game.currentHolderId !== passCommit.toId
         ) return PANEL_SKIPPED;
-        const oldMessage = game.messageByToken?.get(passCommit.oldToken) || passCommit.oldMessage;
-        await disableBombMessage(game, oldMessage, passCommit.oldToken);
         const payload = {
             embeds: [makeEmbed(passDescription(
                 passCommit.fromId,
@@ -1030,14 +1372,34 @@ async function submitBombTarget(game, input) {
             game.bombMessages.add(message);
             game.messageByToken ||= new Map();
             game.messageByToken.set(passCommit.newToken, message);
+            const oldMessage = game.messageByToken?.get(passCommit.oldToken) || passCommit.oldMessage;
+            await invalidateBombMessage(
+                game,
+                oldMessage,
+                passCommit.oldToken,
+                'pass-previous-holder'
+            );
         }
         return message;
     });
     if (deliveredMessage === null) {
         await abortAfterCriticalPanelFailure(game);
-        return { ok: false, reason: 'delivery' };
+        return { accepted: false, outcome: 'rejected', reason: 'delivery' };
     }
     return result;
+}
+
+async function submitBombTarget(game, input) {
+    const result = await submitBombMutation(game, {
+        kind: 'pass',
+        userId: input.actorId,
+        targetId: input.targetId,
+        messageToken: input.messageToken,
+        now: input.now,
+    });
+    if (result.accepted && result.outcome === 'pass') return { ok: true };
+    if (result.outcome === 'natural_explosion') return { ok: false, reason: 'exploded' };
+    return { ok: false, reason: result.reason || 'expired' };
 }
 
 async function handleTargetSelect(interaction, game, messageToken) {
@@ -1059,6 +1421,63 @@ async function handleTargetSelect(interaction, game, messageToken) {
     return false;
 }
 
+async function handleDefuseButton(interaction, game, messageToken) {
+    const result = await submitBombMutation(game, {
+        kind: 'defuse',
+        userId: interaction.user?.id,
+        messageToken,
+    });
+    if (result.accepted && result.outcome === 'defuse_success') {
+        const options = [];
+        for (const userId of game.participantIds || []) {
+            if (userId === interaction.user?.id) continue;
+            const member = await safeFetchMember(game, userId);
+            if (!isValidHumanMember(member)) continue;
+            const label = member.displayName || member.user.globalName || member.user.username || userId;
+            options.push({ label: String(label).slice(0, 100), value: userId });
+        }
+        if (options.length > 0) {
+            const select = new StringSelectMenuBuilder()
+                .setCustomId(`mystery_bomb_defuse_target:${game.id}:${messageToken}`)
+                .setPlaceholder('选择必爆目标')
+                .addOptions(options);
+            await safeEphemeralReply(
+                interaction,
+                '🛠️ **拆弹成功。请选择一名必爆目标；30 秒后将随机选择。**',
+                game,
+                [new ActionRowBuilder().addComponents(select)]
+            );
+            return true;
+        }
+        await safeEphemeralReply(interaction, '🛠️ **拆弹成功，但没有其他有效目标。**', game);
+        return true;
+    }
+    if (result.accepted && result.outcome === 'defuse_failure') {
+        await safeEphemeralReply(interaction, '🛠️ **拆弹结果已经揭晓。**', game);
+        return true;
+    }
+    await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
+    return false;
+}
+
+async function handleDefuseTargetSelect(interaction, game, messageToken) {
+    const result = await submitDefuseTarget(game, {
+        actorId: interaction.user?.id,
+        targetId: interaction.values?.[0],
+        messageToken,
+    });
+    if (result.accepted) {
+        await safeEphemeralReply(interaction, '💥 **已指定目标，炸弹已经爆炸。**', game);
+        return true;
+    }
+    await safeEphemeralReply(
+        interaction,
+        result.reason === 'target' ? TARGET_INVALID_MESSAGE : EXPIRED_MESSAGE,
+        game
+    );
+    return false;
+}
+
 async function handleBombInteraction(interaction, parts) {
     const parsed = parseParts(parts);
     const game = parsed.gameId && gameManager.getGame(parsed.gameId);
@@ -1069,6 +1488,8 @@ async function handleBombInteraction(interaction, parts) {
     }
     if (parsed.action === 'join') return handleJoin(interaction, game);
     if (parsed.action === 'pass') return handlePassButton(interaction, game, parsed.messageToken);
+    if (parsed.action === 'defuse') return handleDefuseButton(interaction, game, parsed.messageToken);
+    if (parsed.action === 'defuse_target') return handleDefuseTargetSelect(interaction, game, parsed.messageToken);
     if (parsed.action === 'target') return handleTargetSelect(interaction, game, parsed.messageToken);
     await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
     return false;
@@ -1084,14 +1505,17 @@ async function handleBombMemberInvalidated(game, userId, reason) {
     await gameManager.runExclusive(game, () => {
         if (
             game.ended
-            || (game.state !== 'recruiting' && game.state !== 'active')
+            || !['recruiting', 'active', 'defuse_targeting'].includes(game.state)
             || !game.participantIds.includes(userId)
         ) return;
+        if (game.state === 'defuse_targeting') {
+            removed = gameManager.removePlayer(game, userId);
+            game.memberById?.delete(userId);
+            if (removed) outcome = 'defuse_fallback';
+            return;
+        }
         const currentTime = nowFor(game);
-        if (game.state === 'active' && currentTime >= game.explodeAt) {
-            game.state = 'exploding';
-            game.finalHolderId = game.currentHolderId;
-            game.explosionClaimedAt = currentTime;
+        if (claimNaturalExplosion(game, currentTime)) {
             explosionClaimed = true;
             return;
         }
@@ -1145,7 +1569,9 @@ async function handleBombMemberInvalidated(game, userId, reason) {
         return false;
     }
     if (!removed) return false;
-    if (outcome === 'recruiting') {
+    if (outcome === 'defuse_fallback') {
+        await settleDefuseTargetFallback(game);
+    } else if (outcome === 'recruiting') {
         await queuePanelWrite(game, () => {
             if (game.state !== 'recruiting') return false;
             game.recruitmentPayload = recruitmentPayload(game);
@@ -1161,8 +1587,6 @@ async function handleBombMemberInvalidated(game, userId, reason) {
                 || game.messageToken !== reassignment.newToken
                 || game.currentHolderId !== reassignment.newHolderId
             ) return PANEL_SKIPPED;
-            const oldMessage = game.messageByToken?.get(reassignment.oldToken) || reassignment.oldMessage;
-            await disableBombMessage(game, oldMessage, reassignment.oldToken);
             const payload = {
                 embeds: [makeEmbed(reassignmentDescription(userId, reassignment.newHolderId, reason))],
                 components: [passRow(game.id, reassignment.newToken)],
@@ -1175,6 +1599,13 @@ async function handleBombMemberInvalidated(game, userId, reason) {
                 game.bombMessages.add(message);
                 game.messageByToken ||= new Map();
                 game.messageByToken.set(reassignment.newToken, message);
+                const oldMessage = game.messageByToken?.get(reassignment.oldToken) || reassignment.oldMessage;
+                await invalidateBombMessage(
+                    game,
+                    oldMessage,
+                    reassignment.oldToken,
+                    'member-invalidated-previous-holder'
+                );
             }
             return message;
         });
@@ -1186,9 +1617,13 @@ async function handleBombMemberInvalidated(game, userId, reason) {
 }
 
 module.exports = {
+    bombPayload,
+    recruitmentPayload,
     startBomb,
     handleBombInteraction,
     randomExplosionDelayMs,
+    submitBombMutation,
+    submitDefuseTarget,
     submitBombTarget,
     handleBombMemberInvalidated,
 };

@@ -1,7 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const COOLDOWN_DURATION_MS = 30 * 60 * 1000;
+const COOLDOWN_DURATION_MS = 15 * 60 * 1000;
 let temporaryFileSequence = 0;
 let corruptionBackupSequence = 0;
 
@@ -150,7 +150,7 @@ function createBombCooldownStore({ filePath, now = Date.now }) {
         }
     }
 
-    function isOnCooldown(guildId, userId) {
+    function getExpiresAt(guildId, userId) {
         const key = buildCooldownKey(guildId, userId);
         const expiresAt = cooldowns[key];
 
@@ -159,15 +159,21 @@ function createBombCooldownStore({ filePath, now = Date.now }) {
                 delete cooldowns[key];
                 void queueWrite();
             }
-            return false;
+            return null;
         }
 
-        return true;
+        return expiresAt;
+    }
+
+    function isOnCooldown(guildId, userId) {
+        return getExpiresAt(guildId, userId) !== null;
     }
 
     function startCooldown(guildId, userId) {
-        cooldowns[buildCooldownKey(guildId, userId)] = now() + COOLDOWN_DURATION_MS;
+        const expiresAt = now() + COOLDOWN_DURATION_MS;
+        cooldowns[buildCooldownKey(guildId, userId)] = expiresAt;
         void queueWrite();
+        return expiresAt;
     }
 
     async function flush() {
@@ -179,6 +185,7 @@ function createBombCooldownStore({ filePath, now = Date.now }) {
     }
 
     return {
+        getExpiresAt,
         isOnCooldown,
         startCooldown,
         load,
@@ -193,6 +200,7 @@ const defaultStore = createBombCooldownStore({
 module.exports = {
     COOLDOWN_DURATION_MS,
     createBombCooldownStore,
+    getExpiresAt: defaultStore.getExpiresAt,
     isOnCooldown: defaultStore.isOnCooldown,
     startCooldown: defaultStore.startCooldown,
     load: defaultStore.load,

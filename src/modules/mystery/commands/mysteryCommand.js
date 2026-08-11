@@ -4,18 +4,18 @@ const {
     PermissionFlagsBits,
     SlashCommandBuilder,
 } = require('discord.js');
-const {
-    isOnCooldown,
-    startCooldown,
-    acquireInFlight,
-    releaseInFlight,
-} = require('../utils/cooldown');
+const path = require('node:path');
+const cooldown = require('../utils/cooldown');
 const gameManager = require('../services/mysteryGameManager');
 const { startRoulette } = require('../services/rouletteGame');
 const { startBomb } = require('../services/bombGame');
 const { startDuel } = require('../services/duelGame');
 const { startPressureRoulette } = require('../services/pressureRouletteGame');
+const { startBlackBox } = require('../services/blackBoxGame');
 const { getNames } = require('../services/namePoolStore');
+const { resolveChannelAccess } = require('../services/channelAccessService');
+const { createChannelAccessStore } = require('../utils/channelAccessStore');
+const defaultPanelLifecycle = require('../services/panelLifecycle');
 
 const SUBCOMMAND_SELF_TIMEOUT = '自刎归天';
 const SUBCOMMAND_RANDOM_NICKNAME = '取名字好麻烦';
@@ -23,6 +23,7 @@ const SUBCOMMAND_ROULETTE = '运气轮盘';
 const SUBCOMMAND_BOMB = '传炸弹';
 const SUBCOMMAND_DUEL = '死斗';
 const SUBCOMMAND_PRESSURE = '加压轮盘';
+const SUBCOMMAND_BLACKBOX = '黑箱交易';
 const VALID_SUBCOMMANDS = [
     SUBCOMMAND_SELF_TIMEOUT,
     SUBCOMMAND_RANDOM_NICKNAME,
@@ -30,6 +31,7 @@ const VALID_SUBCOMMANDS = [
     SUBCOMMAND_BOMB,
     SUBCOMMAND_DUEL,
     SUBCOMMAND_PRESSURE,
+    SUBCOMMAND_BLACKBOX,
 ];
 const IN_MEMORY_COOLDOWN_SUBCOMMANDS = new Set([
     SUBCOMMAND_SELF_TIMEOUT,
@@ -37,15 +39,28 @@ const IN_MEMORY_COOLDOWN_SUBCOMMANDS = new Set([
     SUBCOMMAND_ROULETTE,
     SUBCOMMAND_DUEL,
     SUBCOMMAND_PRESSURE,
+    SUBCOMMAND_BLACKBOX,
 ]);
+const MULTIPLAYER_SUBCOMMANDS = new Set([
+    SUBCOMMAND_ROULETTE,
+    SUBCOMMAND_BOMB,
+    SUBCOMMAND_DUEL,
+    SUBCOMMAND_PRESSURE,
+    '黑箱交易',
+]);
+const WHITELIST_ACCESS_SOURCES = new Set(['direct_whitelist', 'parent_whitelist']);
 const SELF_TIMEOUT_DURATION_MS = 5 * 60 * 1000;
 const SELF_TIMEOUT_REASON = '神秘指令：自刎归天';
-const COOLDOWN_MESSAGE = '⏳ **这个神秘指令还在冷却中**， **30分钟后才能再次使用**。';
+const PROCESSING_MESSAGE = '⏳ **上一条神秘指令正在处理中。**\n请等上一条处理完成后再试。';
+const CHANNEL_ACCESS_DENIED_MESSAGE = '🚫 **此频道未开放神秘指令。**\n请在已允许的线程或帖子中使用，或请管理员调整频道设置。';
 const TIMEOUT_FAILURE_MESSAGE = '❌ 神秘力量失效了，我无法对你施加禁言。\n可能是机器人权限或身份组层级不足。';
 const NICKNAME_FAILURE_MESSAGE = '❌ 名字取好了，但我改不了你的昵称。\n可能是机器人权限或身份组层级不足。';
 const GENERIC_FAILURE_MESSAGE = '❌ 处理神秘指令时出现错误，请稍后重试。';
 const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
 const initiationQueues = new Map();
+const defaultChannelAccessStore = createChannelAccessStore({
+    filePath: path.join('data', 'mystery', 'channel-access.json'),
+});
 
 const data = new SlashCommandBuilder()
     .setName('神秘指令')
@@ -71,7 +86,10 @@ const data = new SlashCommandBuilder()
             .setRequired(false)))
     .addSubcommand(subcommand => subcommand
         .setName(SUBCOMMAND_PRESSURE)
-        .setDescription('参加一场加压俄罗斯轮盘，自己往枪里加子弹'));
+        .setDescription('参加一场加压俄罗斯轮盘，自己往枪里加子弹'))
+    .addSubcommand(subcommand => subcommand
+        .setName(SUBCOMMAND_BLACKBOX)
+        .setDescription('参加一场 4-8 人的黑箱交易游戏'));
 
 function botHasPermission(interaction, permission) {
     return interaction.guild.members.me?.permissions?.has(permission) === true;
@@ -163,14 +181,21 @@ async function executeRandomNickname(interaction) {
     };
 }
 
-async function sendSuccessPanels(interaction, result) {
+async function sendSuccessPanels(interaction, result, panelLifecycle) {
+    let publicMessage;
     try {
-        await interaction.editReply({ embeds: [result.publicEmbed] });
+        const replyResult = await interaction.editReply({ embeds: [result.publicEmbed] });
+        publicMessage = replyResult?.resource?.message || replyResult;
     } catch (error) {
         console.error(`[Mystery] 发送公开面板失败 (guild=${interaction.guild.id}, user=${interaction.user.id}):`, error);
         await replacePublicDeferWithPrivateFailure(interaction, result.privateContent);
         return;
     }
+    panelLifecycle.deleteMessageAfter(publicMessage, 15_000, {
+        action: 'single-player-success',
+        guildId: interaction.guild.id,
+        userId: interaction.user.id,
+    });
     try {
         await interaction.followUp({
             content: result.privateContent,
@@ -181,17 +206,31 @@ async function sendSuccessPanels(interaction, result) {
     }
 }
 
-async function startMultiplayerGame(interaction, subcommand, onGameStarted) {
+function shouldUseMysteryCooldown(subcommand, accessSource) {
+    return !(
+        MULTIPLAYER_SUBCOMMANDS.has(subcommand)
+        && WHITELIST_ACCESS_SOURCES.has(accessSource)
+    );
+}
+
+function cooldownMessage(expiresAt) {
+    return `⏳ **这个神秘指令还在冷却中。**\n可再次使用：<t:${Math.floor(expiresAt / 1000)}:R>`;
+}
+
+async function startMultiplayerGame(interaction, subcommand, onGameStarted, useCooldown, services) {
     if (subcommand === SUBCOMMAND_ROULETTE) {
-        return startRoulette(interaction);
+        return services.startRoulette(interaction);
     }
     if (subcommand === SUBCOMMAND_BOMB) {
-        return startBomb(interaction);
+        return services.startBomb(interaction, { useCooldown });
     }
     if (subcommand === SUBCOMMAND_PRESSURE) {
-        return startPressureRoulette(interaction, { onGameStarted });
+        return services.startPressureRoulette(interaction, { onGameStarted });
     }
-    return startDuel(interaction, interaction.options.getUser('对手'));
+    if (subcommand === SUBCOMMAND_BLACKBOX) {
+        return services.startBlackBox(interaction, { onGameStarted });
+    }
+    return services.startDuel(interaction, interaction.options.getUser('对手'));
 }
 
 async function acquireInitiationLock(guildId, userId) {
@@ -215,7 +254,26 @@ async function acquireInitiationLock(guildId, userId) {
     };
 }
 
-async function execute(interaction) {
+function createMysteryCommand({
+    channelAccessStore = defaultChannelAccessStore,
+    cooldown: cooldownUtils = cooldown,
+    gameManager: gameManagerImpl = gameManager,
+    startRoulette: startRouletteGame = startRoulette,
+    startBomb: startBombGame = startBomb,
+    startDuel: startDuelGame = startDuel,
+    startPressureRoulette: startPressureRouletteGame = startPressureRoulette,
+    startBlackBox: startBlackBoxGame = startBlackBox,
+    panelLifecycle = defaultPanelLifecycle,
+} = {}) {
+    const services = {
+        startRoulette: startRouletteGame,
+        startBomb: startBombGame,
+        startDuel: startDuelGame,
+        startPressureRoulette: startPressureRouletteGame,
+        startBlackBox: startBlackBoxGame,
+    };
+
+    async function execute(interaction) {
     let guildId = null;
     let userId = interaction.user?.id || 'unknown';
     let subcommand = null;
@@ -233,38 +291,50 @@ async function execute(interaction) {
         }
         guildId = interaction.guild.id;
         userId = interaction.user.id;
-        lockAcquired = acquireInFlight(guildId, userId, subcommand);
+        await channelAccessStore.load();
+        const access = resolveChannelAccess(
+            interaction.channel,
+            channelAccessStore.getGuildConfig(guildId),
+        );
+        if (!access.allowed) {
+            await interaction.reply({ content: CHANNEL_ACCESS_DENIED_MESSAGE, flags: MessageFlags.Ephemeral });
+            return;
+        }
+        const useMysteryCooldown = shouldUseMysteryCooldown(subcommand, access.source);
+        lockAcquired = cooldownUtils.acquireInFlight(guildId, userId, subcommand);
         if (!lockAcquired) {
-            await interaction.reply({ content: COOLDOWN_MESSAGE, flags: MessageFlags.Ephemeral });
+            await interaction.reply({ content: PROCESSING_MESSAGE, flags: MessageFlags.Ephemeral });
             return;
         }
         releaseInitiationLock = await acquireInitiationLock(guildId, userId);
-        if (gameManager.getPlayerGame(guildId, userId)) {
+        if (gameManagerImpl.getPlayerGame(guildId, userId)) {
             await interaction.reply({ content: PLAYER_BUSY_MESSAGE, flags: MessageFlags.Ephemeral });
             return;
         }
-        const usesInMemoryCooldown = IN_MEMORY_COOLDOWN_SUBCOMMANDS.has(subcommand);
-        if (usesInMemoryCooldown && isOnCooldown(guildId, userId, subcommand)) {
-            await interaction.reply({ content: COOLDOWN_MESSAGE, flags: MessageFlags.Ephemeral });
+        const usesInMemoryCooldown = useMysteryCooldown && IN_MEMORY_COOLDOWN_SUBCOMMANDS.has(subcommand);
+        const expiresAt = usesInMemoryCooldown
+            ? cooldownUtils.getCooldownExpiresAt(guildId, userId, subcommand)
+            : null;
+        if (expiresAt !== null) {
+            await interaction.reply({ content: cooldownMessage(expiresAt), flags: MessageFlags.Ephemeral });
             return;
         }
-        const isMultiplayer = subcommand === SUBCOMMAND_ROULETTE
-            || subcommand === SUBCOMMAND_BOMB
-            || subcommand === SUBCOMMAND_DUEL
-            || subcommand === SUBCOMMAND_PRESSURE;
+        const isMultiplayer = MULTIPLAYER_SUBCOMMANDS.has(subcommand);
         if (isMultiplayer) {
             // 加压轮盘的冷却推迟到真正开局时才扣：招募人数不足被取消的话不消耗冷却。
-            const deferCooldown = subcommand === SUBCOMMAND_PRESSURE;
+            const deferCooldown = subcommand === SUBCOMMAND_PRESSURE || subcommand === SUBCOMMAND_BLACKBOX;
             const beginCooldown = () => {
-                if (usesInMemoryCooldown) startCooldown(guildId, userId, subcommand);
+                if (usesInMemoryCooldown) cooldownUtils.startCooldown(guildId, userId, subcommand);
             };
             const started = await startMultiplayerGame(
                 interaction,
                 subcommand,
-                deferCooldown ? beginCooldown : undefined
+                deferCooldown && usesInMemoryCooldown ? beginCooldown : undefined,
+                useMysteryCooldown,
+                services,
             );
             if (started && usesInMemoryCooldown && !deferCooldown) {
-                startCooldown(guildId, userId, subcommand);
+                cooldownUtils.startCooldown(guildId, userId, subcommand);
             }
             return;
         }
@@ -284,8 +354,8 @@ async function execute(interaction) {
             await interaction.editReply({ content: failureMessage });
             return;
         }
-        startCooldown(guildId, userId, subcommand);
-        await sendSuccessPanels(interaction, result);
+        cooldownUtils.startCooldown(guildId, userId, subcommand);
+        await sendSuccessPanels(interaction, result, panelLifecycle);
     } catch (error) {
         console.error(
             `[Mystery] 执行指令失败 (guild=${guildId || interaction.guild?.id || 'dm'}, user=${userId}, subcommand=${subcommand || 'unknown'}):`,
@@ -294,8 +364,17 @@ async function execute(interaction) {
         await replyWithUnexpectedError(interaction);
     } finally {
         releaseInitiationLock?.();
-        if (lockAcquired) releaseInFlight(guildId, userId, subcommand);
+        if (lockAcquired) cooldownUtils.releaseInFlight(guildId, userId, subcommand);
     }
 }
 
-module.exports = { data, execute };
+    return { data, execute };
+}
+
+const command = createMysteryCommand();
+
+module.exports = {
+    ...command,
+    createMysteryCommand,
+    shouldUseMysteryCooldown,
+};

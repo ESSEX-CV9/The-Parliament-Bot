@@ -169,10 +169,7 @@ const manageCommand = require('../modules/mystery/commands/manageCommand');
 const mysteryGameStatsCommand = require('../modules/mystery/commands/gameStatsCommand');
 const { mysteryGuildMemberRemoveHandler } = require('../modules/mystery/events/guildMemberRemove');
 const { mysteryGuildMemberUpdateHandler } = require('../modules/mystery/events/guildMemberUpdate');
-const {
-    handleGuildMemberUpdate: cowardPenaltyGuildMemberUpdateHandler,
-    startCowardPenaltyRestorer,
-} = require('../modules/mystery/services/cowardPenalty');
+const mysteryNicknameLock = require('../modules/mystery/services/mysteryNicknameLock');
 
 const DISCORD_REST_TIMEOUT_MS = (() => {
     const n = Number(process.env.DISCORD_REST_TIMEOUT_MS);
@@ -386,9 +383,9 @@ client.once(Events.ClientReady, async (readyClient) => {
 
     startActivityTracker();
 
-    // 恢复未结束的「胆小鬼」昵称惩罚，避免重启后 🤡 前缀永久卡在别人名字上
-    await startCowardPenaltyRestorer(readyClient);
-    console.log('✅ 胆小鬼惩罚恢复完成');
+    // 统一恢复未结束的 Mystery 昵称锁（coward + duel），避免重启后昵称永久卡住
+    await mysteryNicknameLock.initialize(readyClient);
+    console.log('✅ Mystery 昵称锁恢复完成');
 
     // SelfRole 申请过期检查器（预留名额释放/旧数据兼容迁移）
     startSelfRoleApplicationChecker(readyClient);
@@ -434,7 +431,6 @@ client.on(Events.GuildMemberUpdate, roleSyncGuildMemberUpdateHandler);
 client.on(Events.GuildRoleDelete, roleSyncGuildRoleDeleteHandler);
 client.on(Events.GuildMemberRemove, mysteryGuildMemberRemoveHandler);
 client.on(Events.GuildMemberUpdate, mysteryGuildMemberUpdateHandler);
-client.on(Events.GuildMemberUpdate, cowardPenaltyGuildMemberUpdateHandler);
 
 function normalizeDiscordToken(raw) {
     if (!raw) return '';

@@ -4,9 +4,23 @@ const { handleRouletteInteraction } = require('./rouletteGame');
 const { handleBombInteraction } = require('./bombGame');
 const { handleDuelInteraction } = require('./duelGame');
 const {
+    defaultService: duelPunishmentService,
+    PUNISHMENT_CUSTOM_ID_PREFIX,
+    RENAME_MODAL_CUSTOM_ID_PREFIX,
+} = require('./duelPunishment');
+const {
     CUSTOM_ID_PREFIX: PRESSURE_CUSTOM_ID_PREFIX,
     handlePressureInteraction,
 } = require('./pressureRouletteGame');
+const {
+    CHANNEL_ACCESS_CUSTOM_ID_PREFIX,
+    CHANNEL_ACCESS_MODAL_ID_PREFIX,
+    handleChannelAccessInteraction,
+} = require('./channelAccessManager');
+const {
+    BLACKBOX_CUSTOM_ID_PREFIX,
+    handleBlackBoxInteraction,
+} = require('./blackBoxGame');
 
 const MYSTERY_CUSTOM_ID_PREFIX = 'mystery_';
 const EXPIRED_INTERACTION_MESSAGE = '⌛ **这次游戏交互已经过期或失效了。**';
@@ -20,7 +34,9 @@ const ROUTES = Object.freeze({
     bomb: {
         join: { component: 'button', partCount: 2 },
         pass: { component: 'button', partCount: 3, tokenIndex: 2 },
+        defuse: { component: 'button', partCount: 3, tokenIndex: 2 },
         target: { component: 'string', partCount: 3, tokenIndex: 2 },
+        defuse_target: { component: 'string', partCount: 3, tokenIndex: 2 },
     },
     duel: {
         accept: { component: 'button', partCount: 2 },
@@ -46,7 +62,7 @@ function parseMysteryCustomId(customId, kind) {
     }
 
     const parts = customId.split(':');
-    const routeMatch = /^mystery_(roulette|bomb|duel)_([a-z]+)$/.exec(parts[0]);
+    const routeMatch = /^mystery_(roulette|bomb|duel)_([a-z_]+)$/.exec(parts[0]);
     if (!routeMatch) return { valid: false, parts };
 
     const [, type, action] = routeMatch;
@@ -103,13 +119,32 @@ async function safePrivateResponse(interaction, content, parsed, phase) {
 }
 
 async function handleMysteryInteraction(interaction) {
+    if (typeof interaction?.customId !== 'string') return false;
+    if (
+        interaction.customId.startsWith(CHANNEL_ACCESS_CUSTOM_ID_PREFIX)
+        || interaction.customId.startsWith(CHANNEL_ACCESS_MODAL_ID_PREFIX)
+    ) {
+        return handleChannelAccessInteraction(interaction);
+    }
+
+    // 死斗裁决会话不注册在 gameManager，必须走独立路由（含 rename modal 提交）。
+    if (interaction.customId.startsWith(PUNISHMENT_CUSTOM_ID_PREFIX)) {
+        return duelPunishmentService.handleInteraction(interaction);
+    }
+    if (interaction.isModalSubmit?.() && interaction.customId.startsWith(RENAME_MODAL_CUSTOM_ID_PREFIX)) {
+        return duelPunishmentService.handleInteraction(interaction);
+    }
+
     const kind = componentKind(interaction);
-    if (!kind || typeof interaction?.customId !== 'string') return false;
-    if (!interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)) return false;
+    if (!kind || !interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)) return false;
 
     // 加压俄罗斯轮盘自带解析与校验，直接短路，不走下面的路由表。
     if (interaction.customId.startsWith(PRESSURE_CUSTOM_ID_PREFIX)) {
         return handlePressureInteraction(interaction);
+    }
+    // 黑箱交易自带解析与校验，直接短路。
+    if (interaction.customId.startsWith(BLACKBOX_CUSTOM_ID_PREFIX)) {
+        return handleBlackBoxInteraction(interaction);
     }
 
     let parsed;

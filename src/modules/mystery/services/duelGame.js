@@ -7,12 +7,13 @@ const {
     MessageFlags,
 } = require('discord.js');
 const gameManager = require('./mysteryGameManager');
+const { defaultService: duelPunishmentService } = require('./duelPunishment');
+const defaultPanelLifecycle = require('./panelLifecycle');
+const { createPanelRegistry } = defaultPanelLifecycle;
 
 const INVITATION_DURATION_MS = 60_000;
 const ROUND_DURATION_MS = 30_000;
 const MAX_DUEL_ROUNDS = 7;
-const DUEL_TIMEOUT_DURATION_MS = 3 * 60_000;
-const DUEL_TIMEOUT_REASON = '神秘指令：死斗';
 
 const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
 const CHANNEL_BUSY_MESSAGE = '🎮 **这里已经有一场游戏在进行了。**\n等当前游戏结束后再开新的吧。';
@@ -35,8 +36,6 @@ const ROUND_LIMIT_DESCRIPTION = [
     '',
     '本场死斗到此为止，双方均不受处罚。',
 ].join('\n');
-const SHIELD_LINE = '🛡️ **但禁言被神秘力量阻挡，未能生效。**';
-
 const CHOICES = {
     rock: { label: '✊ 石头', display: '✊ 石头', style: ButtonStyle.Secondary },
     scissors: { label: '✌️ 剪刀', display: '✌️ 剪刀', style: ButtonStyle.Secondary },
@@ -197,18 +196,24 @@ function choiceRow(gameId, roundId) {
 }
 
 function invitationDescription(initiatorId, requestedOpponentId) {
+    const rules = [
+        '**游戏规则**',
+        '- 双人石头剪刀布，三局两胜',
+        '- 每轮须在 **30 秒**内出拳',
+        '- 最多进行 **7 轮**；仍未分出胜负则自动失效',
+        '- 赢家可在 30 秒内选择：败者 **禁言 3 分钟**或**改名 5 分钟**',
+        '- 赢家 30 秒未选择时，默认禁言败者 3 分钟',
+        '',
+        '**声明须知**',
+        '- 本游戏为自愿参加；点击接受即视为同意游戏规则并接受败者裁决',
+    ];
     if (requestedOpponentId) {
         return [
             '⚔️ **死斗邀请已发出**',
             '',
             `<@${initiatorId}> 向 <@${requestedOpponentId}> 发起了一场死斗。`,
             '',
-            '**游戏规则**',
-            '- 双人游戏',
-            '- 石头剪刀布',
-            '- 三局两胜',
-            '- 最多进行 **7 轮**；仍未分出胜负则自动失效',
-            '- 输家将被 **禁言 3 分钟**',
+            ...rules,
             '',
             `<@${requestedOpponentId}>，敢接吗？`,
         ].join('\n');
@@ -218,12 +223,7 @@ function invitationDescription(initiatorId, requestedOpponentId) {
         '',
         `<@${initiatorId}> 正在寻找一名对手。`,
         '',
-        '**游戏规则**',
-        '- 双人游戏',
-        '- 石头剪刀布',
-        '- 三局两胜',
-        '- 最多进行 **7 轮**；仍未分出胜负则自动失效',
-        '- 输家将被 **禁言 3 分钟**',
+        ...rules,
         '',
         '谁敢来？',
     ].join('\n');
@@ -294,7 +294,7 @@ function normalRoundDescription(game, snapshot) {
     ].join('\n');
 }
 
-function finalDescription(game, snapshot, timeoutFailed) {
+function finalDescription(game, snapshot) {
     const winnerScore = snapshot.scores[snapshot.winnerId];
     const loserScore = snapshot.scores[snapshot.loserId];
     const lines = [
@@ -305,9 +305,10 @@ function finalDescription(game, snapshot, timeoutFailed) {
         '',
         `最终比分：**${winnerScore} : ${loserScore}**`,
         '',
-        `<@${snapshot.loserId}> 将接受 **禁言 3 分钟**。`,
+        `<@${snapshot.loserId}> 将接受 **赢家裁决**：禁言 3 分钟或改名 5 分钟。`,
+        '',
+        '胜者可点击下方 **⚖️ 赢家裁决** 按钮选择；30 秒未选择将自动按 **禁言 3 分钟** 处理。',
     ];
-    if (timeoutFailed) lines.push('', SHIELD_LINE);
     return lines.join('\n');
 }
 
@@ -329,13 +330,20 @@ function clearTimer(game, timer) {
 
 async function disableInvitation(game) {
     if (game.componentsDisabled) return true;
-    const disabled = await safeEdit(
-        game.inviteMessage,
-        { components: [acceptRow(game.id, true)] },
-        game,
-        'disable-invitation'
-    );
-    if (disabled) game.componentsDisabled = true;
+    const disabled = game.panelRegistry
+        ? await game.panelRegistry.retire(game.inviteMessage, {
+            disablePayload: { components: [acceptRow(game.id, true)] },
+            context: { action: 'duel-invitation' },
+        })
+        : await safeEdit(
+            game.inviteMessage,
+            { components: [acceptRow(game.id, true)] },
+            game,
+            'disable-invitation'
+        );
+    if (disabled) {
+        game.componentsDisabled = true;
+    }
     return disabled;
 }
 
@@ -349,7 +357,9 @@ async function cleanupDuelGame(game) {
     game.cleanupStarted = true;
     game.cleanupPromise = (async () => {
         await disableInvitation(game);
+        await game.panelRegistry?.stageAll();
         await gameManager.cleanupGame(game);
+        game.panelRegistry?.armAll();
     })().catch(error => {
         logDiscordFailure(game, 'cleanup', error);
     });
@@ -451,27 +461,6 @@ function claimRoundResolution(game, round, mode) {
     };
 }
 
-async function applyLoserTimeout(game, snapshot, loser) {
-    if (!loser?.moderatable || typeof loser.timeout !== 'function') return false;
-    try {
-        await loser.timeout(DUEL_TIMEOUT_DURATION_MS, DUEL_TIMEOUT_REASON);
-        return true;
-    } catch (error) {
-        logDiscordFailure(game, 'timeout-loser', error, snapshot.loserId);
-        return false;
-    }
-}
-
-async function appendTimeoutFailure(game, snapshot, finalMessage) {
-    const payload = { embeds: [makeEmbed(finalDescription(game, snapshot, true))] };
-    if (await safeEdit(finalMessage, payload, game, 'append-timeout-shield')) return true;
-    return Boolean(await queuePublicWrite(game, () => safeSend(
-        game,
-        { embeds: [makeEmbed(SHIELD_LINE)] },
-        'supplement-timeout-shield'
-    )));
-}
-
 async function publishRoundResolution(game, snapshot) {
     if (!snapshot) return false;
     if (snapshot.outcome === 'cancel') {
@@ -501,6 +490,9 @@ async function publishRoundResolution(game, snapshot) {
         await cleanupDuelGame(game);
         return false;
     }
+    game.panelRegistry?.track(roundMessage, {
+        context: { action: 'duel-round-result', guildId: game.guildId, gameId: game.id },
+    });
 
     if (snapshot.final) {
         const finalMembers = new Map();
@@ -559,7 +551,10 @@ async function publishRoundResolution(game, snapshot) {
             ) return false;
             return safeSend(
                 game,
-                { embeds: [makeEmbed(finalDescription(game, snapshot, false))] },
+                {
+                    embeds: [makeEmbed(finalDescription(game, snapshot))],
+                    components: [duelPunishmentService.buildEntryRow(`duel-${game.id}`, snapshot.effectToken)],
+                },
                 'final-result'
             );
         });
@@ -581,7 +576,7 @@ async function publishRoundResolution(game, snapshot) {
             return false;
         }
 
-        let applyTimeout = false;
+        let startPunishment = false;
         await gameManager.runExclusive(game, () => {
             if (
                 game.ended
@@ -594,23 +589,26 @@ async function publishRoundResolution(game, snapshot) {
             ) return;
             game.state = 'ended';
             game.pendingFinal = null;
-            game.finalEffect.phase = 'applying-timeout';
-            applyTimeout = true;
+            game.finalEffect.phase = 'punishment-session';
+            startPunishment = true;
         });
-        if (!applyTimeout) {
+        if (!startPunishment) {
             await cleanupDuelGame(game);
             return false;
         }
 
-        const timeoutApplied = await applyLoserTimeout(
-            game,
-            snapshot,
-            finalMembers.get(snapshot.loserId)
-        );
-        if (game.finalEffect?.token === snapshot.effectToken) {
-            game.finalEffect.phase = timeoutApplied ? 'complete' : 'supplementing-result';
-        }
-        if (!timeoutApplied) await appendTimeoutFailure(game, snapshot, finalMessage);
+        // 惩罚会话独立于游戏 timer 与锁：先发布最终结果，再启动裁决会话，随后立即释放游戏锁。
+        game.punishmentSession = duelPunishmentService.start({
+            id: `duel-${game.id}`,
+            guildId: game.guildId,
+            winnerId: snapshot.winnerId,
+            loserId: snapshot.loserId,
+            effectToken: snapshot.effectToken,
+            finalMessage,
+            guild: game.guild,
+            client: game.guild?.client,
+            channelId: game.channelId,
+        });
         if (game.finalEffect?.token === snapshot.effectToken) game.finalEffect.phase = 'complete';
         await cleanupDuelGame(game);
         return true;
@@ -676,6 +674,7 @@ async function expireInvitation(game) {
         'invitation-timeout'
     );
     if (edited) game.componentsDisabled = true;
+    if (edited) game.panelRegistry?.preserve(game.inviteMessage);
     await cleanupDuelGame(game);
     return true;
 }
@@ -697,6 +696,7 @@ async function startDuel(interaction, requestedOpponent) {
         state: 'inviting',
         timers: new Set(),
         publicWriteQueue: Promise.resolve(),
+        panelRegistry: createPanelRegistry({ lifecycle: defaultPanelLifecycle }),
         originInteraction: interaction,
     };
 
@@ -803,6 +803,10 @@ async function startDuel(interaction, requestedOpponent) {
         await rejectDeferredStart(interaction, GENERIC_FAILURE_MESSAGE, game);
         return false;
     }
+    game.panelRegistry.track(game.inviteMessage, {
+        disablePayload: { components: [acceptRow(game.id, true)] },
+        context: { action: 'duel-invitation', guildId, gameId: game.id },
+    });
 
     game.invitationTimer = setTimeout(() => {
         return expireInvitation(game).catch(error => {
@@ -998,6 +1002,7 @@ async function handleDuelMemberInvalidated(game, userId, reason) {
             'initiator-invalidated-cancel'
         );
         if (edited) game.componentsDisabled = true;
+        if (edited) game.panelRegistry?.preserve(game.inviteMessage);
         return edited;
     });
     await cleanupDuelGame(game);
@@ -1005,6 +1010,7 @@ async function handleDuelMemberInvalidated(game, userId, reason) {
 }
 
 module.exports = {
+    invitationPayload,
     startDuel,
     handleDuelInteraction,
     resolveChoices,

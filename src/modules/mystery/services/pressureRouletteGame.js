@@ -9,6 +9,7 @@ const {
     cowardPenaltyMinutes,
     cowardPenaltyRemainingMs,
 } = require('./cowardPenalty');
+const { invalidatePanel } = require('./panelLifecycle');
 const {
     createPressureStats,
     recordShot,
@@ -333,15 +334,6 @@ function queuePanel(game, factory) {
     return operation;
 }
 
-async function deletePanelEntry(entry) {
-    if (typeof entry?.message?.delete !== 'function') return;
-    try {
-        await entry.message.delete();
-    } catch (error) {
-        // 面板可能已被别人删掉，忽略即可。
-    }
-}
-
 // 每次刷新都是「发新的」，保证面板永远停在频道最底部，不会被聊天顶上去；
 // 但旧面板不立刻删，留一个滚动窗口，免得中弹那一瞬间还没看清就没了。
 // 真正的清场放到游戏结束时做，只留最后一条结算消息。
@@ -376,9 +368,11 @@ function renderPanel(game, payload) {
         }
 
         // 测试调试模式（保留消息）不删旧面板，方便看整局回放。
-        if (!game.keepMessages) {
-            while (game.panels.length > PANEL_HISTORY_LIMIT) {
-                await deletePanelEntry(game.panels.shift());
+        // 超出历史窗口的旧面板：立即摘组件并调度 5 秒后异步删除，不阻塞本轮结算。
+        while (game.panels.length > PANEL_HISTORY_LIMIT) {
+            const entry = game.panels.shift();
+            if (!game.keepMessages) {
+                await invalidatePanel(entry?.message, { context: { action: 'pressure-history-trim' } });
             }
         }
         return next;
@@ -394,7 +388,7 @@ function pruneToFinalPanel(game) {
         const doomed = game.panels.slice(0, -1);
         game.panels = keep ? [keep] : [];
         for (const entry of doomed) {
-            await deletePanelEntry(entry);
+            await invalidatePanel(entry?.message, { context: { action: 'pressure-prune' } });
         }
     });
 }
@@ -539,7 +533,7 @@ async function settleGame(game, outcome) {
     await renderPanel(game, payload);
     // 游戏正式结束，清掉过程消息，频道里只留这条结算。
     await pruneToFinalPanel(game);
-    settleCowardPenalties(game.guildId, game.cowards);
+    await settleCowardPenalties(game.guildId, game.cowards);
     // 落库排在摘牌前面：摘牌要等 Discord 改昵称，慢的时候不该拖着这一局的数据。
     flushPressureStats(game, outcome, finalAliveIds);
     // 戴罪上桌的人只要把这局打完就摘牌，中弹倒下的也算。
@@ -1128,7 +1122,7 @@ function deleteRecruitmentPanel(game) {
         game.recruitmentEntry = null;
         const index = game.panels.indexOf(entry);
         if (index !== -1) game.panels.splice(index, 1);
-        await deletePanelEntry(entry);
+        await invalidatePanel(entry?.message, { context: { action: 'pressure-recruitment' } });
     });
 }
 
@@ -1518,4 +1512,7 @@ module.exports = {
     startPressureRoulette,
     handlePressureInteraction,
     parsePressureCustomId,
+    renderPanel,
+    pruneToFinalPanel,
+    deleteRecruitmentPanel,
 };

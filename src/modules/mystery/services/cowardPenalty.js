@@ -1,5 +1,5 @@
 const { PermissionFlagsBits } = require('discord.js');
-const store = require('../utils/cowardPenaltyStore');
+const nicknameLock = require('./mysteryNicknameLock');
 const panels = require('./pressureRoulettePanels');
 
 const COWARD_PREFIX = '🤡胆小鬼 ';
@@ -9,7 +9,6 @@ const MIN_AFTER_GAME_MINUTES = 5;
 const AFTER_GAME_MS = MIN_AFTER_GAME_MINUTES * 60 * 1000;
 const HARD_CAP_MS = 60 * 60 * 1000;
 const TAUNT_COOLDOWN_MS = 20 * 1000;
-const MAX_TIMER_MS = 2 ** 31 - 1;
 const APPLY_REASON = '神秘指令：加压俄罗斯轮盘 — 胆小鬼';
 const RESTORE_REASON = '神秘指令：加压俄罗斯轮盘 — 胆小鬼惩罚结束';
 const ENFORCE_REASON = '神秘指令：加压俄罗斯轮盘 — 胆小鬼试图改名';
@@ -41,7 +40,6 @@ const RENAME_TAUNTS = [
 ];
 
 let clientRef = null;
-const releaseTimers = new Map();
 const lastTauntAt = new Map();
 
 function logFailure(operation, context, error) {
@@ -123,32 +121,14 @@ function tauntAllowed(guildId, userId, now = Date.now()) {
     return true;
 }
 
-function clearReleaseTimer(guildId, userId) {
-    const key = penaltyKey(guildId, userId);
-    const timer = releaseTimers.get(key);
-    if (timer) {
-        clearTimeout(timer);
-        releaseTimers.delete(key);
-    }
-}
-
-function scheduleRelease(record) {
-    clearReleaseTimer(record.guildId, record.userId);
-    const delay = Math.max(0, Math.min(MAX_TIMER_MS, record.expiresAt - Date.now()));
-    const timer = setTimeout(() => {
-        releaseTimers.delete(penaltyKey(record.guildId, record.userId));
-        void releaseCowardPenalty(record.guildId, record.userId);
-    }, delay);
-    timer.unref?.();
-    releaseTimers.set(penaltyKey(record.guildId, record.userId), timer);
-}
-
 function canManageNickname(member) {
     const me = member?.guild?.members?.me;
     if (!me?.permissions?.has?.(PermissionFlagsBits.ManageNicknames)) return false;
     return member.manageable === true;
 }
 
+// 挂 🤡 名字：生命周期完全委托给 common nickname lock service（type: 'coward'）。
+// 已有任何 Mystery 昵称锁（含 duel）时拒绝并返回 reason: 'locked'，绝不覆盖赢家昵称。
 async function applyCowardPenalty({ member, channel, channelId }) {
     const guildId = member?.guild?.id;
     const userId = member?.id;
@@ -160,36 +140,30 @@ async function applyCowardPenalty({ member, channel, channelId }) {
     const originalNickname = member.nickname ?? null;
     const targetChannelId = channelId || channel?.id || null;
 
-    let applied = false;
-    if (canManageNickname(member)) {
-        try {
-            await member.setNickname(enforcedNickname, APPLY_REASON);
-            applied = true;
-        } catch (error) {
-            logFailure('挂胆小鬼前缀失败', `guild=${guildId} user=${userId}`, error);
-        }
-    }
-
-    if (applied) {
-        const record = {
-            guildId,
-            userId,
-            originalNickname,
-            enforcedNickname,
-            expiresAt: Date.now() + HARD_CAP_MS,
-            channelId: targetChannelId,
-        };
-        store.save(record);
-        scheduleRelease(record);
-    }
-
-    // 退出的嘲讽词交给游戏那边和局面一起播报成 embed，这里只负责挂名字。
-    // 也因此不占用改名嘲讽的冷却，否则玩家一退出就改名会被静默放过。
-    return {
-        applied,
+    const result = await nicknameLock.service.createLock({
+        member,
+        type: 'coward',
         enforcedNickname,
-        taunt: pickTaunt(QUIT_TAUNTS, userId),
-    };
+        expiresAt: Date.now() + HARD_CAP_MS,
+        originalNickname,
+        applyReason: APPLY_REASON,
+        restoreReason: RESTORE_REASON,
+        enforceReason: ENFORCE_REASON,
+        channelId: targetChannelId,
+    });
+
+    if (result.created) {
+        return {
+            applied: true,
+            enforcedNickname,
+            taunt: pickTaunt(QUIT_TAUNTS, userId),
+        };
+    }
+
+    if (result.reason === 'existing_lock') {
+        return { applied: false, reason: 'locked' };
+    }
+    return { applied: false, enforcedNickname, taunt: pickTaunt(QUIT_TAUNTS, userId) };
 }
 
 // 每个胆小鬼的 🤡 时长按他退出那一刻的赌注算，下限 5 分钟。
@@ -200,24 +174,26 @@ function cowardPenaltyMinutes(stakeMinutes) {
 }
 
 // cowards：[{ userId, stakeMinutes }]，逐个结算，各算各的时长。
-function settleCowardPenalties(guildId, cowards) {
+// 通过 common updateLock 在串行 + durable 边界内把 expiresAt 缩短到最终时长。
+async function settleCowardPenalties(guildId, cowards) {
     if (!guildId || !Array.isArray(cowards)) return;
     const now = Date.now();
-    for (const entry of cowards) {
+    await Promise.all(cowards.map(async entry => {
         const userId = entry?.userId;
-        if (!userId) continue;
-        const record = store.get(guildId, userId);
-        if (!record) continue;
-        // 挂上时给的是 HARD_CAP_MS 兜底，结算只会把它改短，绝不延长。
-        record.expiresAt = Math.min(
-            record.expiresAt,
-            now + (cowardPenaltyMinutes(entry.stakeMinutes) * 60 * 1000)
-        );
-        // 标记这条已经按最终时长算过了，重启恢复时不要再砍。
-        record.settled = true;
-        store.save(record);
-        scheduleRelease(record);
-    }
+        if (!userId) return;
+        if (!nicknameLock.store.get(guildId, userId)) return;
+
+        const expiresAt = now + (cowardPenaltyMinutes(entry.stakeMinutes) * 60 * 1000);
+        const result = await nicknameLock.service.updateLock(guildId, userId, draft => {
+            // 挂上时给的是 HARD_CAP_MS 兜底，结算只会把它改短，绝不延长。
+            draft.expiresAt = Math.min(draft.expiresAt, expiresAt);
+            draft.settled = true;
+            return draft;
+        });
+        if (!result.updated && result.reason === 'persistence_failed') {
+            logFailure('结算胆小鬼时长失败', `guild=${guildId} user=${userId}`, new Error(result.reason));
+        }
+    }));
 }
 
 // 戴罪上桌的人只要真正把这一局打完了，🤡 当场摘掉，不用等计时器走完。
@@ -235,117 +211,47 @@ async function redeemCowardPenalties(guildId, userIds) {
 }
 
 function cowardPenaltyRemainingMs(guildId, userId, now = Date.now()) {
-    if (!guildId || !userId || !store.isLoaded()) return 0;
-    const record = store.get(guildId, userId);
+    if (!guildId || !userId || !nicknameLock.store.isLoaded()) return 0;
+    const record = nicknameLock.store.get(guildId, userId);
     if (!record) return 0;
     return Math.max(0, record.expiresAt - now);
 }
 
 async function releaseCowardPenalty(guildId, userId) {
-    const record = store.get(guildId, userId);
-    clearReleaseTimer(guildId, userId);
     lastTauntAt.delete(penaltyKey(guildId, userId));
-    // 先摘记录再改昵称，避免还原动作触发自己的改名监听。
-    store.remove(guildId, userId);
-    if (!record) return false;
-
-    const member = await fetchMember(guildId, userId);
-    if (!member) return false;
-    if (member.nickname !== record.enforcedNickname) return false;
-    if (!canManageNickname(member)) return false;
-
-    try {
-        await member.setNickname(record.originalNickname ?? null, RESTORE_REASON);
-        return true;
-    } catch (error) {
-        logFailure('还原昵称失败', `guild=${guildId} user=${userId}`, error);
-        return false;
-    }
+    return nicknameLock.service.releaseLock(guildId, userId);
 }
 
+// 改名对抗：生命周期交给 common service（重新强制/到期释放），
+// 胆小鬼专属的嘲讽在这里补发（20 秒限流）。
 async function handleGuildMemberUpdate(oldMember, newMember) {
     const guildId = newMember?.guild?.id;
     const userId = newMember?.id;
-    if (!guildId || !userId || !store.isLoaded()) return;
-    if (oldMember?.nickname === newMember?.nickname) return;
+    if (!guildId || !userId) return false;
 
-    const record = store.get(guildId, userId);
-    if (!record) return;
+    const attemptedNickname = newMember.nickname;
+    const handled = await nicknameLock.service.handleGuildMemberUpdate(oldMember, newMember);
 
-    if (Date.now() >= record.expiresAt) {
-        await releaseCowardPenalty(guildId, userId);
-        return;
-    }
+    if (oldMember?.nickname === attemptedNickname) return handled;
+    const record = nicknameLock.store.get(guildId, userId);
+    if (!record || record.type !== 'coward') return handled;
+    if (Date.now() >= record.expiresAt) return handled;
+    if (!tauntAllowed(guildId, userId)) return handled;
 
-    // 这次更新就是我们自己写进去的，放行，否则会无限互改。
-    if (newMember.nickname === record.enforcedNickname) return;
-
-    rememberClient(newMember.client);
-    if (!canManageNickname(newMember)) return;
-
-    try {
-        await newMember.setNickname(record.enforcedNickname, ENFORCE_REASON);
-    } catch (error) {
-        logFailure('改回胆小鬼前缀失败', `guild=${guildId} user=${userId}`, error);
-        return;
-    }
-
-    if (!tauntAllowed(guildId, userId)) return;
     const channel = await fetchChannel(record.channelId);
     await sendTaunt(channel, pickTaunt(RENAME_TAUNTS, userId), { userId });
-}
-
-async function restoreRecord(record) {
-    // 已结算的记录，expiresAt 就是按赌注算出来的最终时间，照搬。
-    // 没结算的说明重启时那局还没打完，游戏已经随进程没了，最多再留 5 分钟。
-    const cappedExpiresAt = record.settled === true
-        ? record.expiresAt
-        : Math.min(record.expiresAt, Date.now() + AFTER_GAME_MS);
-    if (cappedExpiresAt <= Date.now()) {
-        await releaseCowardPenalty(record.guildId, record.userId);
-        return;
-    }
-
-    record.expiresAt = cappedExpiresAt;
-    store.save(record);
-    scheduleRelease(record);
-
-    const member = await fetchMember(record.guildId, record.userId);
-    if (!member) return;
-    if (member.nickname === record.enforcedNickname) return;
-    if (!canManageNickname(member)) return;
-    try {
-        await member.setNickname(record.enforcedNickname, ENFORCE_REASON);
-    } catch (error) {
-        logFailure('重启后补挂前缀失败', `guild=${record.guildId} user=${record.userId}`, error);
-    }
+    return handled;
 }
 
 async function startCowardPenaltyRestorer(client) {
     rememberClient(client);
-    let records = [];
-    try {
-        records = await store.load();
-    } catch (error) {
-        logFailure('加载胆小鬼记录失败', 'startup', error);
-        return;
-    }
-
-    for (const record of records) {
-        try {
-            await restoreRecord(record);
-        } catch (error) {
-            logFailure('恢复胆小鬼记录失败', `guild=${record.guildId} user=${record.userId}`, error);
-        }
-    }
+    await nicknameLock.initialize(client);
 }
 
 function resetForTests() {
-    for (const timer of releaseTimers.values()) clearTimeout(timer);
-    releaseTimers.clear();
     lastTauntAt.clear();
     clientRef = null;
-    store.resetForTests();
+    nicknameLock.resetForTests();
 }
 
 module.exports = {
