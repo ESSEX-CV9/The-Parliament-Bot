@@ -23,6 +23,7 @@ const ADDITIVE_COLUMNS = Object.freeze([
     'shots_fired',
     'hits_taken',
     'blanks',
+    'duds_fired',
     'loads',
     'bullets_loaded',
     'peaceful_games',
@@ -60,6 +61,7 @@ function initializeMysteryStatsDatabase() {
             shots_fired       INTEGER NOT NULL DEFAULT 0,
             hits_taken        INTEGER NOT NULL DEFAULT 0,
             blanks            INTEGER NOT NULL DEFAULT 0,
+            duds_fired        INTEGER NOT NULL DEFAULT 0,
             loads             INTEGER NOT NULL DEFAULT 0,
             bullets_loaded    INTEGER NOT NULL DEFAULT 0,
             peaceful_games    INTEGER NOT NULL DEFAULT 0,
@@ -95,6 +97,7 @@ function initializeMysteryStatsDatabase() {
         riposte_kills: 'INTEGER',
         riposted_count: 'INTEGER',
         peaceful_games: 'INTEGER',
+        duds_fired: 'INTEGER',
     };
     for (const [column, type] of Object.entries(newColumns)) {
         if (existingColumns.has(column)) continue;

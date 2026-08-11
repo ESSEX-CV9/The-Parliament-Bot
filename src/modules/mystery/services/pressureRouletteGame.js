@@ -33,13 +33,28 @@ const TURN_DURATION_MS = 60 * 1000;
 const HIT_PAUSE_MS = 3 * 1000;
 const BASE_TIMEOUT_MINUTES = 3;
 const MINUTES_PER_PRESSURE = 1;
-// 🔧 抽弹开枪的最低门槛：枪里至少 3 发才拆得有意义（拆完还保得住 2 发的悬念）。
-const UNLOAD_MIN_BULLETS = 3;
-// 全局第一枪单独掷判定，不走弹巢的 1/6。压得比 1/6 低是为了让开局别太容易
-// 一枪结束，但保留「真的可能中」的悬念。改这个值会直接影响运气值的期望计算，
-// performShot 里那次 recordShot 用的就是它。
-const FIRST_SHOT_HIT_CHANCE = 0.05;
 const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
+
+// ---------- 待发子弹池 ----------
+// 每一轮准备一池 12 发，其中随机 1~4 发是哑弹。枪里的每一发都是从这里抽的，
+// 池子没空之前游戏不会因为「子弹打光」而收场：枪打空就自动补 1 发接着打。
+//
+// 公开的只有「池里还剩几发」和「本轮一共几发哑弹」。哪一发是哑弹、
+// 枪里当前这几发的真假构成，全场都不知道（包括加压的人自己）。
+// 打出去的哑弹会当众播报，想推构成就自己数——面板不替玩家记账。
+const POOL_SIZE = 12;
+const POOL_DUD_MIN = 1;
+const POOL_DUD_MAX = 4;
+// 枪打空且池里还有弹时，系统自动补进去的发数。系统补的不算加压，不抬赌注。
+const AUTO_RELOAD_BULLETS = 1;
+// 池子也空了之后的和局判定：存活的人投票，超时算同意，一人反对就重开一轮。
+const DRAW_VOTE_DURATION_MS = 35 * 1000;
+
+// 弹巢格子的三种内容：实弹 / 哑弹 / null（空巢）。
+// 哑弹和实弹在弹巢里完全同构 —— 占一格、被击发就消耗掉、弹数 -1，
+// 唯一的区别是它不淘汰人。
+const LIVE = 'live';
+const DUD = 'dud';
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 // 游戏进行中保留的消息数（含当前这条）。超出窗口的旧消息才删。
@@ -58,6 +73,9 @@ const TURN_ACTIONS = Object.freeze({
     load: 'choice',
     riposte: 'choice',
 });
+// 和局判定的两个按钮。它们不看「枪在谁手里」，只要还活着就能点，
+// 所以不走 TURN_ACTIONS 那套当前持枪者校验。
+const VOTE_ACTIONS = Object.freeze({ agree: 'agree', object: 'object' });
 
 const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
 const CHANNEL_BUSY_MESSAGE = '🎮 **这里已经有一场游戏在进行了。**\n等当前游戏结束后再开新的吧。';
@@ -75,6 +93,10 @@ const DUPLICATE_MESSAGE = '👀 **你已经报过名了。**\n再点也不会多
 const JOINED_MESSAGE = '🔫 **报名成功。**\n\n枪里有一发子弹，位置没人知道。';
 const NOT_YOUR_TURN_MESSAGE = '✋ **枪不在你手里。**\n等轮到你再说。';
 const STALE_ACTION_MESSAGE = '⌛ **这个操作已经过时了。**\n请看频道里最新的那条面板。';
+const VOTE_OUTSIDER_MESSAGE = '🪑 **你不在这场投票里。**\n只有还活着的人才有资格决定要不要收场。';
+const VOTE_DUPLICATE_MESSAGE = '🗳️ **你已经投过了。**\n改不了主意，这一票算数。';
+const VOTE_AGREE_ACK = '🤝 **你同意就此收场。**\n只要有一个人不同意，枪就会重新装满。';
+const VOTE_OBJECT_ACK = '🔫 **你不同意。**\n新的一池子弹马上就来，这是你自己要的。';
 const PANEL_FAILURE_MESSAGE = '❌ **开局失败了。**\n我没能在这个频道发出游戏面板，请检查我的发言权限。';
 const START_ACK_MESSAGE = '🔫 **加压俄罗斯轮盘已开启。**\n招募面板已发在频道里。';
 const START_TEST_ACK_MESSAGE = '🧪 **测试局已开启。**\n测试机器人会自动行动，真人也可以点「参加」加入。';
@@ -127,18 +149,53 @@ function shuffleInPlace(items, game) {
     return items;
 }
 
+// 把枪里现有的 bullets 发（其中 gunDuds 发是哑弹）重新随机撒进 6 个弹巢。
+// positions 是均匀洗牌，所以「前 gunDuds 个位置放哑弹」就是均匀分配，
+// 玩家看到的弹巢视图（全部未验）不会泄露任何真假信息。
 function spinCylinder(game) {
     const positions = shuffleInPlace(
         Array.from({ length: CHAMBER_COUNT }, (_, index) => index),
         game
     );
-    game.chambers = new Array(CHAMBER_COUNT).fill(false);
-    for (let index = 0; index < game.bullets && index < CHAMBER_COUNT; index += 1) {
-        game.chambers[positions[index]] = true;
+    game.chambers = new Array(CHAMBER_COUNT).fill(null);
+    const total = Math.min(game.bullets, CHAMBER_COUNT);
+    const duds = Math.min(game.gunDuds || 0, total);
+    for (let index = 0; index < total; index += 1) {
+        game.chambers[positions[index]] = index < duds ? DUD : LIVE;
     }
     game.revealed = new Array(CHAMBER_COUNT).fill(false);
     game.hitChambers = new Array(CHAMBER_COUNT).fill(false);
+    game.dudChambers = new Array(CHAMBER_COUNT).fill(false);
     game.pointer = 0;
+}
+
+// 备一轮新的待发子弹池：12 发，其中随机 3~6 发哑弹，洗匀。
+// 哑弹总数本轮固定且公开，具体是哪几发不公开。
+function preparePool(game) {
+    const span = POOL_DUD_MAX - POOL_DUD_MIN + 1;
+    const dudCount = POOL_DUD_MIN + Math.floor(randomFor(game) * span);
+    const pool = [];
+    for (let index = 0; index < POOL_SIZE; index += 1) {
+        pool.push(index < dudCount ? DUD : LIVE);
+    }
+    shuffleInPlace(pool, game);
+    game.pool = pool;
+    game.poolDudTotal = dudCount;
+    game.wave = (game.wave || 0) + 1;
+}
+
+// 从池顶抽 count 发装进枪。池不够就有多少抽多少。
+// 池已经洗过了，所以从头抽和随机抽是一回事。
+function drawIntoGun(game, count) {
+    const drawn = { total: 0, duds: 0 };
+    for (let index = 0; index < count && game.pool.length > 0; index += 1) {
+        const round = game.pool.shift();
+        drawn.total += 1;
+        if (round === DUD) drawn.duds += 1;
+    }
+    game.bullets += drawn.total;
+    game.gunDuds += drawn.duds;
+    return drawn;
 }
 
 // 存活名单按接下来的行动顺序排：当前持枪的人排第一，后面依次是排在他之后的人。
@@ -160,30 +217,6 @@ function turnOrderIds(game) {
     }
     const start = ((game.turnIndex % alive.length) + alive.length) % alive.length;
     return [...alive.slice(start), ...alive.slice(0, start)];
-}
-
-// 把弹巢摆成「枪口那一格是否有子弹」的指定结果，用于第一枪的独立判定。
-// 只是搬动子弹的位置，总弹数不变，玩家看到的弹巢视图（全部未验）也不变。
-//
-// 概率上是干净的：转轮本身让子弹均匀落在 6 格里，判定为空枪时若它恰好在枪口，
-// 就均匀地挪到其余 5 格中的一格 —— 条件分布仍然是那 5 格均匀，
-// 所以第二枪之后照常用 剩余子弹/未验巢数 算期望不会有偏差。
-function placeFirstShotBullet(game, shouldHit) {
-    const pointer = game.pointer;
-    if (game.chambers[pointer] === shouldHit) return;
-
-    const candidates = [];
-    for (let index = 0; index < CHAMBER_COUNT; index += 1) {
-        if (index !== pointer && game.chambers[index] === shouldHit) {
-            candidates.push(index);
-        }
-    }
-    // 满弹巢想要空枪、或空弹巢想要中弹时无处可搬。开局固定 1 发，走不到这里。
-    if (candidates.length === 0) return;
-
-    const target = candidates[Math.floor(randomFor(game) * candidates.length)];
-    game.chambers[pointer] = shouldHit;
-    game.chambers[target] = !shouldHit;
 }
 
 function unknownChamberCount(game) {
@@ -230,15 +263,24 @@ function setCharge(game, userId, value) {
     game.chargeOwnerId = next > 0 ? userId : null;
 }
 
-// 这次加压实际能塞进去几发：基础 1 发 + 蓄力层数，塞不下就按弹巢剩余空位截断。
+// 这次加压实际能塞进去几发：基础 1 发 + 蓄力层数，
+// 塞不下就按弹巢剩余空位截断，池里不够就按池余量截断。
 function loadBulletsFor(game, userId) {
-    return Math.min(1 + chargeFor(game, userId), CHAMBER_COUNT - game.bullets);
+    return Math.min(
+        1 + chargeFor(game, userId),
+        CHAMBER_COUNT - game.bullets,
+        (game.pool || []).length
+    );
 }
 
 function chamberView(game) {
     return game.revealed.map((revealed, index) => {
         if (game.state === 'playing' && index === game.pointer && !revealed) return 'next';
-        if (revealed) return game.hitChambers?.[index] ? 'hit' : 'spent';
+        if (revealed) {
+            if (game.hitChambers?.[index]) return 'hit';
+            if (game.dudChambers?.[index]) return 'dud';
+            return 'spent';
+        }
         return 'unknown';
     });
 }
@@ -252,6 +294,14 @@ function buildView(game) {
         chambers: chamberView(game),
         chamberCount: CHAMBER_COUNT,
         bullets: game.bullets,
+        // 待发子弹池的公开口径：还剩几发、本轮一共几发哑弹、这是第几轮。
+        // 打出去几发哑弹不给数，玩家自己记。
+        poolRemaining: (game.pool || []).length,
+        poolDudTotal: game.poolDudTotal || 0,
+        poolSize: POOL_SIZE,
+        poolDudMin: POOL_DUD_MIN,
+        poolDudMax: POOL_DUD_MAX,
+        wave: game.wave || 1,
         pressure: game.pressure,
         pressureBullets: game.pressureBullets || 0,
         charge: chargeFor(game, game.alive[game.turnIndex]),
@@ -268,16 +318,14 @@ function buildView(game) {
         // 戴罪上桌的人没有逃生按钮：逃生机会他已经用掉一次了。
         // 反手序列中的强制开枪同样不能逃，由 performShot 按阶段驱动。
         canQuit: !game.riposte && !isRedeemer(game, shooterId),
-        // 🔧 抽弹开枪：fire 阶段、枪里 ≥3 发、本局没用过、且不在反手序列里。
+        // 🔧 抽弹开枪：fire 阶段、本局没用过、且不在反手序列里。
+        // 弹数门槛已经取消 —— 任何时候都能抽，包括枪里只剩 1 发的时候。
         canUnload: !game.riposte
             && game.phase === 'fire'
-            && game.bullets >= UNLOAD_MIN_BULLETS
             && !(game.unloadUsed || []).includes(shooterId),
         unloadUsed: [...(game.unloadUsed || [])],
-        // 抽弹后立刻重转弹巢再开枪，中弹率按「卸掉 1 发后的满巢」算。
-        unloadChance: game.bullets >= UNLOAD_MIN_BULLETS
-            ? (game.bullets - 1) / CHAMBER_COUNT
-            : 0,
+        // 抽弹后立刻重转弹巢再开枪，打到子弹的概率按「卸掉 1 发后的满巢」算。
+        unloadChance: Math.max(0, game.bullets - 1) / CHAMBER_COUNT,
         // 反手序列上下文：fire 面板要用它标注「这是被反手逼出来的一枪」。
         riposte: game.riposte
             ? {
@@ -300,7 +348,8 @@ function buildChoiceView(game) {
     const loadBullets = loadBulletsFor(game, shooterId);
     view.passUnknownCount = view.unknownCount;
     view.passChance = view.unknownCount > 0 ? game.bullets / view.unknownCount : 0;
-    view.canLoad = game.bullets < CHAMBER_COUNT;
+    // 弹巢塞满、或者待发池已经见底，都没法再加压。
+    view.canLoad = game.bullets < CHAMBER_COUNT && (game.pool || []).length > 0;
     view.loadBullets = loadBullets;
     view.loadChance = (game.bullets + loadBullets) / CHAMBER_COUNT;
     view.loadStakeMinutes = currentStakeMinutes(game) + (loadBullets * MINUTES_PER_PRESSURE);
@@ -545,26 +594,32 @@ async function settleGame(game, outcome) {
 function evaluateOutcome(game) {
     if (game.alive.length === 0) return 'aborted';
     if (game.alive.length === 1) return 'champion';
-    if (game.bullets <= 0) return 'draw';
+    // 子弹打光不再直接判平局：先自动补弹，等待发池也空了才由所有人投票决定收不收场。
     return null;
 }
 
 async function continueOrSettle(game) {
     let outcome = null;
-    let advance = false;
     await gameManager.runExclusive(game, () => {
         if (game.ended || game.state !== 'playing') return;
         outcome = evaluateOutcome(game);
-        if (outcome) return;
-        game.phase = 'fire';
-        game.turnToken += 1;
-        advance = true;
     });
 
     if (outcome) {
         await settleGame(game, outcome);
         return;
     }
+
+    // 枪空了先补弹 / 进和局判定，补完才轮到下一个人。
+    if (game.bullets === 0 && await resolveEmptyGun(game, 'fire') !== 'continue') return;
+
+    let advance = false;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'playing') return;
+        game.phase = 'fire';
+        game.turnToken += 1;
+        advance = true;
+    });
     if (advance) await startTurn(game);
 }
 
@@ -667,20 +722,25 @@ async function performShot(game, expectedToken) {
         if (!shooterId) return;
 
         const index = game.pointer;
-        const hit = game.chambers[index] === true;
+        const round = game.chambers[index];
+        const hit = round === LIVE;
+        const dud = round === DUD;
         // 统计要的是「扣扳机那一刻」的局面，所以必须在验巢、扣子弹之前取。
         const bulletsBefore = game.bullets;
         const unknownBefore = unknownChamberCount(game);
-        // 全局第一枪的中弹率是 beginGame 单独掷的，不是弹巢算出来的，
-        // 运气值必须按那个概率记，否则第一个开枪的人会被系统性算错。
-        const firstShot = game.shotNumber === 0;
         game.revealed[index] = true;
-        if (hit) {
-            game.chambers[index] = false;
-            game.hitChambers[index] = true;
+        // 哑弹和实弹一样被消耗掉：弹巢清空、弹数 -1。唯一的区别是不淘汰人。
+        if (hit || dud) {
+            game.chambers[index] = null;
             game.bullets = Math.max(0, game.bullets - 1);
-            // 人没了，攒下的蓄力跟着一起没。
-            setCharge(game, shooterId, 0);
+            if (dud) {
+                game.gunDuds = Math.max(0, game.gunDuds - 1);
+                game.dudChambers[index] = true;
+            } else {
+                game.hitChambers[index] = true;
+                // 人没了，攒下的蓄力跟着一起没。
+                setCharge(game, shooterId, 0);
+            }
         }
         game.pointer = (index + 1) % CHAMBER_COUNT;
         game.shotNumber += 1;
@@ -723,13 +783,8 @@ async function performShot(game, expectedToken) {
             game.phase = hit ? 'resolving' : 'choice';
         }
 
-        recordShot(game.stats, shooterId, {
-            hit,
-            bulletsBefore,
-            unknownBefore,
-            hitChance: firstShot ? FIRST_SHOT_HIT_CHANCE : undefined,
-        });
-        result = { shooterId, hit, unloadShot, riposteStage };
+        recordShot(game.stats, shooterId, { hit, dud, bulletsBefore, unknownBefore });
+        result = { shooterId, hit, dud, unloadShot, riposteStage };
     });
 
     if (!result) return;
@@ -740,15 +795,25 @@ async function performShot(game, expectedToken) {
         return;
     }
 
-    // 先播报空枪，再决定下一步，让全场都看清刚才发生了什么。
-    await renderPanel(game, panels.missAnnouncement({
+    // 先播报刚才那一枪的结果，再决定下一步，让全场都看清发生了什么。
+    // 哑弹必须当众说出来：否则弹数凭空少一发，全场只会以为有人中弹了。
+    const shotView = {
         ...buildView(game),
         shooterId: result.shooterId,
         shooterName: nameFor(game, result.shooterId),
-    }));
+    };
+    await renderPanel(game, result.dud
+        ? panels.dudAnnouncement(shotView)
+        : panels.missAnnouncement(shotView));
+
+    // 这一枪把哑弹也算进去地打空了枪 —— 先补弹或进和局判定，再谈接下来怎么走。
+    const resumeMode = result.riposteStage === 'target'
+        ? 'fire'
+        : (result.unloadShot ? 'forcedPass' : 'choice');
+    if (game.bullets === 0 && await resolveEmptyGun(game, resumeMode) !== 'continue') return;
 
     if (result.riposteStage === 'target') {
-        // 加压者空枪：不进 choice，发起人补枪（反手 return 阶段）。
+        // 加压者没倒下：不进 choice，发起人补枪（反手 return 阶段）。
         await startTurn(game);
         return;
     }
@@ -759,6 +824,211 @@ async function performShot(game, expectedToken) {
         return;
     }
     await renderChoice(game);
+}
+
+// ---------- 弹药耗尽：自动补弹 / 和局判定 ----------
+
+// 枪打空时的分岔。返回 'continue' 表示调用方照常往下走，
+// 'halted' 表示后续流程已经被接管（进了投票，或者这一局已经结束）。
+//
+// resumeMode 记的是「投票通过继续打之后，本来该发生什么」：
+//   choice     — 开枪的人活下来了，该轮到他选传枪 / 再来一枪 / 加压
+//   forcedPass — 抽弹活下来后的强制传枪
+//   fire       — 直接进下一枪（反手补枪，或上一枪淘汰了人之后轮到下一个人）
+async function resolveEmptyGun(game, resumeMode = 'fire') {
+    let mode = 'halted';
+    let outcome = null;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'playing') return;
+        if (game.bullets > 0) {
+            mode = 'continue';
+            return;
+        }
+        // 只剩一个人 / 没人了，轮不到补弹，直接收场。
+        // 正常流程里 continueOrSettle 已经先结算过了，这里是兜底：
+        // 少了这一手，调用方会静默停住，整局挂在半路。
+        if (game.alive.length <= 1) {
+            outcome = evaluateOutcome(game);
+            return;
+        }
+
+        if (game.pool.length > 0) {
+            drawIntoGun(game, AUTO_RELOAD_BULLETS);
+            spinCylinder(game);
+            mode = 'reload';
+            return;
+        }
+
+        // 池子也空了：停下来问所有还活着的人愿不愿意就此收场。
+        game.phase = 'vote';
+        game.votes = new Map();
+        game.resumeAfterVote = resumeMode;
+        game.turnToken += 1;
+        mode = 'vote';
+    });
+
+    if (outcome) {
+        await settleGame(game, outcome);
+        return 'halted';
+    }
+    if (mode === 'reload') {
+        await renderPanel(game, panels.reloadAnnouncement(buildView(game)));
+        return 'continue';
+    }
+    if (mode === 'vote') {
+        await startDrawVote(game);
+        return 'halted';
+    }
+    return mode === 'continue' ? 'continue' : 'halted';
+}
+
+// 一人反对就立刻掀桌，不等剩下的人；全员同意才收场。没投够就返回 null。
+function tallyVotes(game) {
+    const votes = game.votes || new Map();
+    for (const userId of game.alive) {
+        if (votes.get(userId) === 'object') return { outcome: 'object', objectorId: userId };
+    }
+    if (game.alive.every(userId => votes.get(userId) === 'agree')) return { outcome: 'agreed' };
+    return null;
+}
+
+function buildVoteView(game) {
+    const view = buildView(game);
+    const votes = game.votes || new Map();
+    view.votedIds = game.alive.filter(userId => votes.has(userId));
+    view.pendingIds = game.alive.filter(userId => !votes.has(userId));
+    view.voteSeconds = Math.round(DRAW_VOTE_DURATION_MS / 1000);
+    return view;
+}
+
+async function startDrawVote(game) {
+    // 虚拟玩家没有按钮可点，开票时就替它们投掉。一半概率掀桌，
+    // 否则测试局永远覆盖不到「重开一轮」那条路径。
+    let settled = null;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.phase !== 'vote') return;
+        for (const userId of game.alive) {
+            if (!isVirtualPlayer(userId) || game.votes.has(userId)) continue;
+            game.votes.set(userId, randomFor(game) < 0.5 ? 'object' : 'agree');
+        }
+        settled = tallyVotes(game);
+    });
+
+    if (settled) {
+        await concludeDrawVote(game, settled);
+        return;
+    }
+
+    const view = buildVoteView(game);
+    await renderPanel(game, panels.drawVotePanel(view));
+    armTurnTimer(
+        game,
+        view.turnToken,
+        () => finishDrawVoteByTimeout(game, view.turnToken),
+        DRAW_VOTE_DURATION_MS
+    );
+}
+
+// 每一票只给投票的人一条私密回执，不重新渲染面板 —— 否则 5 个人投票就要刷 5 条。
+async function handleVote(game, interaction, choice, expectedToken) {
+    const userId = interaction.user?.id;
+    let rejection = null;
+    let settled = null;
+
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'playing') {
+            rejection = EXPIRED_MESSAGE;
+            return;
+        }
+        if (game.phase !== 'vote' || game.turnToken !== expectedToken) {
+            rejection = STALE_ACTION_MESSAGE;
+            return;
+        }
+        if (!game.alive.includes(userId)) {
+            rejection = VOTE_OUTSIDER_MESSAGE;
+            return;
+        }
+        if (game.votes.has(userId)) {
+            rejection = VOTE_DUPLICATE_MESSAGE;
+            return;
+        }
+        game.votes.set(userId, choice);
+        settled = tallyVotes(game);
+    });
+
+    if (rejection) {
+        await replyEphemeral(interaction, rejection);
+        return;
+    }
+    await replyEphemeral(interaction, choice === 'object' ? VOTE_OBJECT_ACK : VOTE_AGREE_ACK);
+    if (settled) await concludeDrawVote(game, settled);
+}
+
+// 35 秒到点：没点的人一律算同意。
+async function finishDrawVoteByTimeout(game, expectedToken) {
+    let settled = null;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'playing') return;
+        if (game.phase !== 'vote' || game.turnToken !== expectedToken) return;
+        for (const userId of game.alive) {
+            if (!game.votes.has(userId)) game.votes.set(userId, 'agree');
+        }
+        settled = tallyVotes(game);
+    });
+    if (settled) await concludeDrawVote(game, settled);
+}
+
+async function concludeDrawVote(game, settled) {
+    clearTurnTimer(game);
+
+    if (settled.outcome === 'agreed') {
+        await settleGame(game, 'draw');
+        return;
+    }
+
+    // 有人不同意收场：重新备一池 12 发（依旧 3~6 发哑弹），补 1 发进枪，接着打。
+    let ready = false;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'playing' || game.phase !== 'vote') return;
+        game.votes = null;
+        // 先挪出 vote 阶段，免得投票按钮在重开的这一瞬间还能点。
+        game.phase = 'resolving';
+        preparePool(game);
+        drawIntoGun(game, AUTO_RELOAD_BULLETS);
+        spinCylinder(game);
+        game.turnToken += 1;
+        ready = true;
+    });
+    if (!ready) return;
+
+    await renderPanel(game, panels.newWaveAnnouncement({
+        ...buildView(game),
+        objectorName: nameFor(game, settled.objectorId),
+    }));
+    await resumeAfterVote(game);
+}
+
+// 投票之前被打断的那一步，现在接着走完。
+async function resumeAfterVote(game) {
+    let mode = null;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'playing') return;
+        mode = game.resumeAfterVote || 'fire';
+        game.resumeAfterVote = null;
+        game.phase = mode === 'fire' ? 'fire' : 'choice';
+        game.turnToken += 1;
+    });
+
+    if (!mode) return;
+    if (mode === 'choice') {
+        await renderChoice(game);
+        return;
+    }
+    if (mode === 'forcedPass') {
+        await handleChoice(game, 'pass', game.turnToken);
+        return;
+    }
+    await startTurn(game);
 }
 
 async function handleChoice(game, action, expectedToken) {
@@ -774,16 +1044,18 @@ async function handleChoice(game, action, expectedToken) {
 
         actorId = game.alive[game.turnIndex];
         let effectiveAction = action;
-        if (effectiveAction === 'load' && game.bullets >= CHAMBER_COUNT) {
+        // 弹巢塞满、或者待发池已经见底，加压就退化成传枪。
+        if (effectiveAction === 'load' && loadBulletsFor(game, actorId) <= 0) {
             effectiveAction = 'pass';
         }
         resolvedAction = effectiveAction;
 
         const charge = chargeFor(game, actorId);
         if (effectiveAction === 'load') {
-            // 走到这里 bullets 一定小于 CHAMBER_COUNT，至少能塞进 1 发。
-            loadedBullets = loadBulletsFor(game, actorId);
-            game.bullets += loadedBullets;
+            // 子弹从待发池里抽，抽到什么算什么 —— 加压的人自己也不知道
+            // 塞进去的是实弹还是哑弹。
+            const drawn = drawIntoGun(game, loadBulletsFor(game, actorId));
+            loadedBullets = drawn.total;
             game.pressure += 1;
             game.pressureBullets = (game.pressureBullets || 0) + loadedBullets;
             spinCylinder(game);
@@ -895,12 +1167,17 @@ async function handleUnload(game, expectedToken) {
         if (!shooterId) return;
         // 反手序列中的强制开枪不能抽弹（设计：加压者与发起人的那两枪都不给选项）。
         if (game.riposte) return;
-        if (game.bullets < UNLOAD_MIN_BULLETS) return;
         if ((game.unloadUsed || []).includes(shooterId)) return;
 
         actorId = shooterId;
-        unloadedBullets = 1;
-        game.bullets = Math.max(0, game.bullets - unloadedBullets);
+        // 从枪里随便抓一发出来扔掉，抓到什么是什么，谁也不知道扔掉的是实弹还是哑弹。
+        // 抽出来的弹直接销毁，不回待发池。
+        if (game.bullets > 0) {
+            const removedDud = randomFor(game) < ((game.gunDuds || 0) / game.bullets);
+            unloadedBullets = 1;
+            game.bullets -= 1;
+            if (removedDud) game.gunDuds = Math.max(0, game.gunDuds - 1);
+        }
         spinCylinder(game);
         game.unloadUsed = [...(game.unloadUsed || []), actorId];
         // 蓄力清零：枪马上要离手。
@@ -1047,6 +1324,19 @@ async function handleMemberInvalidated(game, userId) {
     if (!removed) return;
     if (game.state === 'recruiting') return;
 
+    // 和局判定进行中：少一个人只是少一张票，不能去推轮次。
+    // 走的人可能正好是最后一个没投的，所以要重新点一次票。
+    if (game.phase === 'vote') {
+        let settled = null;
+        await gameManager.runExclusive(game, () => {
+            if (game.ended || game.phase !== 'vote') return;
+            game.votes?.delete(userId);
+            settled = tallyVotes(game);
+        });
+        if (settled) await concludeDrawVote(game, settled);
+        return;
+    }
+
     if (wasCurrent) {
         clearTurnTimer(game);
         await continueOrSettle(game);
@@ -1159,33 +1449,30 @@ async function beginGame(game) {
         // 测试局（含虚拟机器人，且真人可以混进来一起玩）整局跳过，避免污染正式数据。
         game.stats = game.testConfig ? null : createPressureStats(validIds);
         game.turnIndex = 0;
-        game.bullets = 1;
+        game.bullets = 0;
+        game.gunDuds = 0;
         game.pressure = 0;
         game.pressureBullets = 0;
         game.shotNumber = 0;
         setCharge(game, null, 0);
+        // 备第一轮的待发池，再从里面抽 1 发装进枪。开局那一发也可能是哑弹 ——
+        // 打掉之后枪空了会自动补，所以不会出现「一枪没人倒就收场」的死局。
+        preparePool(game);
+        drawIntoGun(game, AUTO_RELOAD_BULLETS);
         spinCylinder(game);
 
-        // 测试模式可以把第一发子弹钉在指定弹巢，方便复现"第 N 枪必中"
+        // 测试模式可以把开局那发子弹钉在指定弹巢，方便复现「第 N 枪必中」。
+        // 钉的是实弹，否则这个工具就失去意义了。
         const forcedChamber = game.testConfig?.bulletChamber;
         if (forcedChamber >= 1 && forcedChamber <= CHAMBER_COUNT) {
-            game.chambers = new Array(CHAMBER_COUNT).fill(false);
-            game.chambers[forcedChamber - 1] = true;
+            game.chambers = new Array(CHAMBER_COUNT).fill(null);
+            game.chambers[forcedChamber - 1] = LIVE;
+            game.bullets = 1;
+            game.gunDuds = 0;
             game.revealed = new Array(CHAMBER_COUNT).fill(false);
             game.hitChambers = new Array(CHAMBER_COUNT).fill(false);
+            game.dudChambers = new Array(CHAMBER_COUNT).fill(false);
             game.pointer = 0;
-        }
-
-        // 隐藏规则：全局第一枪（第一轮第一枪）单独掷一次 FIRST_SHOT_HIT_CHANCE 的判定，
-        // 跟弹巢里那 1 发的 1/6 无关。掷完之后把子弹摆到和结果一致的位置，
-        // 从第二枪起一切照常走弹巢概率。
-        // 这条规则原本是「第一枪必定空枪」，但那样开局第一个开枪的人稳赚一枪，
-        // 运气值会被系统性拉高；改成低概率真的可能中，既保留开局悬念也不失公平。
-        // 测试工具把子弹钉死在某个弹巢时整段跳过，否则「第 N 枪必中」无法复现。
-        // 没有 testConfig 时 forcedChamber 是 undefined，比较结果自然为 false。
-        const bulletPinned = forcedChamber >= 1 && forcedChamber <= CHAMBER_COUNT;
-        if (!bulletPinned) {
-            placeFirstShotBullet(game, randomFor(game) < FIRST_SHOT_HIT_CHANCE);
         }
 
         game.phase = 'fire';
@@ -1324,7 +1611,7 @@ function parsePressureCustomId(customId) {
     if (action === 'join') {
         return parts.length === 2 ? { action, gameId } : null;
     }
-    if (!Object.hasOwn(TURN_ACTIONS, action)) return null;
+    if (!Object.hasOwn(TURN_ACTIONS, action) && !Object.hasOwn(VOTE_ACTIONS, action)) return null;
     if (parts.length !== 3 || !/^\d+$/.test(parts[2])) return null;
 
     return { action, gameId, turnToken: Number(parts[2]) };
@@ -1343,6 +1630,8 @@ async function handlePressureInteraction(interaction) {
     try {
         if (parsed.action === 'join') {
             await handleJoin(game, interaction);
+        } else if (Object.hasOwn(VOTE_ACTIONS, parsed.action)) {
+            await handleVote(game, interaction, parsed.action, parsed.turnToken);
         } else {
             await handleTurnInteraction(game, interaction, parsed);
         }
@@ -1402,11 +1691,21 @@ async function startPressureRoulette(interaction, options = {}) {
         turnDurationMs: Number(options.turnDurationMs) || TURN_DURATION_MS,
         state: 'recruiting',
         settled: false,
-        chambers: new Array(CHAMBER_COUNT).fill(false),
+        chambers: new Array(CHAMBER_COUNT).fill(null),
         revealed: new Array(CHAMBER_COUNT).fill(false),
         hitChambers: new Array(CHAMBER_COUNT).fill(false),
+        dudChambers: new Array(CHAMBER_COUNT).fill(false),
         pointer: 0,
         bullets: 0,
+        // 枪里这几发中有几发是哑弹。全场都不知道这个数，只有系统知道。
+        gunDuds: 0,
+        // 待发子弹池。beginGame 才真正备池，招募阶段恒为空。
+        pool: [],
+        poolDudTotal: 0,
+        wave: 0,
+        // 和局判定期间的投票记录（userId -> 'agree' | 'object'），平时为 null。
+        votes: null,
+        resumeAfterVote: null,
         pressure: 0,
         pressureBullets: 0,
         charge: 0,
@@ -1508,7 +1807,11 @@ module.exports = {
     MAX_PARTICIPANTS,
     BASE_TIMEOUT_MINUTES,
     MINUTES_PER_PRESSURE,
-    FIRST_SHOT_HIT_CHANCE,
+    POOL_SIZE,
+    POOL_DUD_MIN,
+    POOL_DUD_MAX,
+    AUTO_RELOAD_BULLETS,
+    DRAW_VOTE_DURATION_MS,
     startPressureRoulette,
     handlePressureInteraction,
     parsePressureCustomId,

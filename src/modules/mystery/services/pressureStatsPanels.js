@@ -77,7 +77,7 @@ function profilePanel({ row, rows, userId, totalPlayers }) {
         `${mention(userId)} 的加压轮盘战绩`,
         '',
         `🎮 参与 **${row.games_played}** 场　│　👑 冠军 **${row.wins}** 次　│　🛡️ 存活收场 **${row.survived}** 次`,
-        `🔫 开枪 **${row.shots_fired}** 次　│　💨 空枪 **${row.blanks}** 次　│　🎯 中弹 **${row.hits_taken}** 次（${percent(row.hits_taken, row.shots_fired)}）`,
+        `🔫 开枪 **${row.shots_fired}** 次　│　💨 空枪 **${row.blanks}** 次　│　😶 哑弹 **${row.duds_fired || 0}** 次　│　🎯 中弹 **${row.hits_taken}** 次（${percent(row.hits_taken, row.shots_fired)}）`,
         `💣 加压 **${row.loads}** 次 / 塞入 **${row.bullets_loaded}** 发　│　🕊️ 无加压 **${row.peaceful_games}** 场　│　🤝 传枪 **${row.pass_count}** 次　│　🤡 逃跑 **${row.quits}** 次`,
         `🔁 累计连开 **${row.again_count}** 次　│　🔥 单局最多连开 **${row.max_charge}** 连　│　😤 最高直面 **${row.max_bullets_faced}** 发`,
         `🔧 抽弹 **${row.unloads}** 次　│　🔙 反手 **${row.ripostes}** 次 / 送走 **${row.riposte_kills}** 人`,

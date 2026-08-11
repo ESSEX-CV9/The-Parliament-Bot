@@ -17,6 +17,7 @@ function createPlayerRow(userId) {
         shots_fired: 0,
         hits_taken: 0,
         blanks: 0,
+        duds_fired: 0,
         loads: 0,
         bullets_loaded: 0,
         peaceful_games: 0, // 终局时按本局 loads 是否为 0 填，见 finalizePressureStats
@@ -60,36 +61,36 @@ function rowFor(stats, userId) {
  * @param {object} stats
  * @param {string} userId
  * @param {object} shot
- * @param {boolean} shot.hit 是否中弹
- * @param {number} shot.bulletsBefore 开枪前枪里有几发
+ * @param {boolean} shot.hit 是否中弹（只有实弹才算）
+ * @param {boolean} [shot.dud] 这一枪打到的是哑弹
+ * @param {number} shot.bulletsBefore 开枪前枪里有几发（实弹 + 哑弹）
  * @param {number} shot.unknownBefore 开枪前还有几个弹巢没验过
- * @param {number} [shot.hitChance] 这一枪的真实中弹概率。只有不走弹巢概率的枪
- *   （目前是全局第一枪）才需要传，传了就用它算期望，不再用弹巢推。
  */
-function recordShot(stats, userId, { hit, bulletsBefore, unknownBefore, hitChance }) {
+function recordShot(stats, userId, { hit, dud = false, bulletsBefore, unknownBefore }) {
     const row = rowFor(stats, userId);
     if (!row) return;
 
+    // 三种互斥结局：中弹 / 哑弹 / 空枪。shots_fired 恒等于三者之和。
     row.shots_fired += 1;
     if (hit) {
         row.hits_taken += 1;
+    } else if (dud) {
+        row.duds_fired += 1;
     } else {
         row.blanks += 1;
     }
 
     // 敢在枪里有几发子弹的情况下扣扳机，取历史最高。用于「不怕死之人」。
+    // 这里的弹数是公开口径（含哑弹）—— 他扣扳机时看到的就是这个数。
     row.max_bullets_faced = Math.max(row.max_bullets_faced, Number(bulletsBefore) || 0);
 
-    // 开枪那一刻的真实中弹概率累加起来，就是这个人「理论上该中几枪」。
+    // 打到哑弹的那一枪不计入运气值：它压根不可能淘汰你，
+    // 既没躲过什么也没吃亏，记成「走运活下来」是不对的。
+    if (dud) return;
+
+    // 开枪那一刻打到子弹的概率累加起来，就是这个人「理论上该中几枪」。
     // expected_hits - hits_taken 即运气值：正数是欧皇，负数是非酋。
     // 这比单纯数空枪次数靠谱得多——后者只会选出玩得最多的人。
-    //
-    // 调用方显式给了概率就用它（全局第一枪不走弹巢概率），否则按
-    // 剩余子弹 / 未验弹巢 推算。
-    if (Number.isFinite(hitChance)) {
-        row.expected_hits += hitChance;
-        return;
-    }
     const unknown = Number(unknownBefore) || 0;
     if (unknown > 0) {
         row.expected_hits += (Number(bulletsBefore) || 0) / unknown;
