@@ -9,7 +9,7 @@ const {
     cowardPenaltyMinutes,
     cowardPenaltyRemainingMs,
 } = require('./cowardPenalty');
-const { invalidatePanel } = require('./panelLifecycle');
+const { invalidatePanel, deleteMessageAfter } = require('./panelLifecycle');
 const {
     createPressureStats,
     recordShot,
@@ -420,11 +420,18 @@ function renderPanel(game, payload) {
         }
 
         // 测试调试模式（保留消息）不删旧面板，方便看整局回放。
-        // 超出历史窗口的旧面板：立即摘组件并调度 5 秒后异步删除，不阻塞本轮结算。
+        //
+        // 超出历史窗口的旧面板立刻删掉，不走 invalidatePanel 的默认 5 秒延迟：
+        // 这是个滚动窗口，延迟删除会让「频道里最多 3 条」的约束直接失效 ——
+        // 玩家手快的时候一个回合能连发 4 张面板，5 秒内挤出去的那些还没消失，
+        // 于是同时可见 6、7 条。别的游戏用 invalidatePanel 是删一次性面板，没这个问题。
+        //
+        // 也不需要先 edit 摘按钮：上面那个 stale 循环已经摘过了，
+        // 删之前再 edit 一遍纯属多跑一次 API，还会把删除串成串行。
         while (game.panels.length > PANEL_HISTORY_LIMIT) {
             const entry = game.panels.shift();
             if (!game.keepMessages) {
-                await invalidatePanel(entry?.message, { context: { action: 'pressure-history-trim' } });
+                deleteMessageAfter(entry?.message, 0, { action: 'pressure-history-trim' });
             }
         }
         return next;
@@ -989,6 +996,18 @@ async function finishDrawVoteByTimeout(game, expectedToken) {
 
 async function concludeDrawVote(game, settled) {
     clearTurnTimer(game);
+
+    // 投票期间可能有人退服 / 被管理员禁言而出局，胜负也许已经分出来了。
+    // 少了这一步，两人局里对手中途掉线会把本该到手的冠军判成平局。
+    let outcome = null;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'playing') return;
+        outcome = evaluateOutcome(game);
+    });
+    if (outcome) {
+        await settleGame(game, outcome);
+        return;
+    }
 
     if (settled.outcome === 'agreed') {
         await settleGame(game, 'draw');

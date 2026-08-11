@@ -411,7 +411,10 @@ function choicePanel(view) {
             + (charge > 0 ? `（基础 1 + 蓄力 ${charge}）` : '')
             + `并滚动弹巢，下一个人面对 ${formatOdds(view.bullets + view.loadBullets, view.chamberCount)}`
             + ` ≈ ${formatPercent(view.loadChance)}，赌注升到 **💤 ${view.loadStakeMinutes} 分钟**`
-        : `💥 **加压** — 枪里已经塞满 ${view.chamberCount} 发，再塞就该炸膛了`;
+        // 加压不了有两种原因，得说对是哪一种：弹巢满了，还是箱子空了。
+        : (view.bullets >= view.chamberCount
+            ? `💥 **加压** — 枪里已经塞满 ${view.chamberCount} 发，再塞就该炸膛了`
+            : '💥 **加压** — 箱子已经空了，没有子弹可以往里塞');
     const tail = view.autoPlay
         ? '🤖 **它正在思考人生……**'
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒不选，默认传枪。`;
