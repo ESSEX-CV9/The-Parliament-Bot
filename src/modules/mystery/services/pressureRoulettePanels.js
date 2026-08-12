@@ -189,9 +189,13 @@ function gunLine(view) {
 }
 
 // 蓄力是这局最容易被忽略的信息，攒着的时候每张面板都提一句。
+// 攒够档位之后加压还能逼下家连开两枪，这一句比子弹数更能吓住人，一并写上。
 function chargeLine(view) {
     if (!view.charge) return null;
-    return `🔁 **连开蓄力 ×${view.charge}**　│　下次加压能塞 **${view.charge + 1} 发**`;
+    const forced = (view.chargeForcedShots || 1) > 1
+        ? '，并逼下家**连开两枪**'
+        : '';
+    return `🔁 **连开蓄力 ×${view.charge}**　│　下次加压能塞 **${view.charge + 1} 发**${forced}`;
 }
 
 function rosterLines(view) {
@@ -215,11 +219,12 @@ function joinRow(gameId, disabled = false) {
 // canQuit 为 false 时整个逃生按钮不渲染，而不是置灰：戴罪上桌的人
 // 不该看到一个自己永远点不了的出口。
 // canUnload 为 true 时中间插一个「🔧 退弹开枪」。
-function fireRow(gameId, turnToken, { canQuit = true, canUnload = false } = {}) {
+// fireLabel 用来区分「这一枪是自己的回合」还是「这一枪是加压欠下的」。
+function fireRow(gameId, turnToken, { canQuit = true, canUnload = false, fireLabel = '🔫 开枪' } = {}) {
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`mystery_pressure_fire:${gameId}:${turnToken}`)
-            .setLabel('🔫 开枪')
+            .setLabel(fireLabel)
             .setStyle(ButtonStyle.Danger)
     );
     if (canUnload) {
@@ -306,8 +311,11 @@ function recruitmentPanel(view) {
         '- 活下来后三选一：',
         '　🔫 **传枪** 交给下家　│　🔁 **再开一枪** 攒 1 层蓄力',
         `　💥 **加压** 塞 **1 + 蓄力层数** 发并滚动弹巢，每发赌注 **+${view.minutesPerPressure} 分钟**`,
+        '- 💥 **连开 3 次以上再加压**，下家这一回合要**连开两枪**',
+        '　债还完之前他不能传枪、不能加压、也不能反手；他倒下则债一笔勾销，不传给别人',
         '- 🔧 **退弹开枪**（每人每局 1 次）：扔掉一发再打，赌注一分不降，活下来强制传枪',
-        '- 🔙 **反手还击**：被加压的人活过自己那一枪后，可以把枪扔回给加压者',
+        '　被压着连开两枪时，退弹还能抵掉一枪：第一枪就退＝照开但第二枪作废，撑到第二枪再退＝这枪直接跳过',
+        '- 🔙 **反手还击**：被加压的人把该开的枪全开完并活下来后，可以把枪扔回给加压者',
         '- 🤡 **胆小鬼**：轮到你时可以退出，不禁言，但名字会被挂上 🤡 至少 **5 分钟**',
         '- 枪空了自动补 1 发；盒子也空了 → 投票收场，**一人反对就再来一盒**',
         `- 最后一个还站着的人是冠军。基础赌注 **${view.baseMinutes} 分钟**`,
@@ -342,6 +350,15 @@ function firePanel(view) {
         ? '🤖 **它正在思考人生……**'
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒内不动手，枪会自己响。`;
 
+    // 加压逼出来的连开：欠着债的这几枪没有传枪 / 加压 / 反手，只能开、退弹或者认怂。
+    const forced = view.forcedShots;
+    const forcedDebtLine = forced
+        ? `💥 **${forced.sourceName || '上家'} 加压压过来的第 ${forced.index}/${forced.total} 枪。**`
+            + (forced.remaining > 1
+                ? `开完还欠 **${forced.remaining - 1} 枪** —— 债没还完之前不能传枪、不能加压、也不能反手。`
+                : '这是最后一枪，撑过去枪才算真正回到他手里。')
+        : null;
+
     // 反手序列中的强制开枪：不能逃、不能加压、不能退弹。要把原因说清楚。
     let forcedLine = null;
     if (view.riposte) {
@@ -351,12 +368,19 @@ function firePanel(view) {
         forcedLine = '🤡 **他是戴罪上桌的，这局没有退路。**逃生的机会他上一局已经用掉了。';
     }
 
-    const unloadLine = view.canUnload
-        ? `🔧 **退弹开枪** — 随手抓一发扔掉并重转弹巢，然后立刻扣扳机。打到子弹的概率降到 **${formatPercent(view.unloadChance)}**，但**赌注一分不降**；抓到的是实弹还是哑弹没人知道，活下来直接传枪，这一轮不能再开 / 加压 / 反手。`
-        : null;
+    // 欠着最后一枪时退弹连扳机都不用扣，这跟平时的退弹是两码事，得分开写。
+    let unloadLine = null;
+    if (view.canUnload && view.unloadSkipsShot) {
+        unloadLine = '🔧 **退弹开枪** — 随手抓一发扔掉并重转弹巢，'
+            + '**这一枪直接抵消掉，扳机都不用扣**。代价是枪随后必须传走，不能加压、也没法反手。';
+    } else if (view.canUnload) {
+        unloadLine = `🔧 **退弹开枪** — 随手抓一发扔掉并重转弹巢，然后立刻扣扳机。打到子弹的概率降到 **${formatPercent(view.unloadChance)}**，但**赌注一分不降**；抓到的是实弹还是哑弹没人知道，活下来直接传枪，这一轮不能再开 / 加压 / 反手。`
+            + (forced ? `另外，**后面欠的 ${forced.remaining - 1} 枪一并抵消**。` : '');
+    }
 
     const description = [
         `**轮到 ${view.shooterName} 了。**`,
+        ...(forcedDebtLine ? ['', forcedDebtLine] : []),
         ...(forcedLine ? ['', forcedLine] : []),
         '',
         gunLine(view),
@@ -372,13 +396,17 @@ function firePanel(view) {
 
     return message(
         baseEmbed(view, {
-            title: `🔫 第 ${view.shotNumber} 枪`,
+            title: forced
+                ? `💥 第 ${view.shotNumber} 枪（欠 ${forced.remaining} 枪）`
+                : `🔫 第 ${view.shotNumber} 枪`,
             description,
             color: COLORS.turn,
         }),
         view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken, {
             canQuit: view.canQuit !== false,
             canUnload: view.canUnload === true,
+            // 第二枪开始换个说法：他不是在开自己的回合，是在还债。
+            fireLabel: forced && forced.index > 1 ? '🔁 再开一枪' : '🔫 开枪',
         })]
     );
 }
@@ -390,13 +418,21 @@ function choicePanel(view) {
     const passLine = charge > 0
         ? `🔫 **传枪** — 下一个人面对 ${sameOdds}。**攒的 ${charge} 层蓄力作废。**`
         : `🔫 **传枪** — 下一个人面对 ${sameOdds}`;
+    // 蓄力攒到档位就能逼下家连开两枪 —— 这是「再开」除了多塞子弹之外的另一半价值，
+    // 差一层就到档位的时候尤其要提醒，否则没人会为了它多冒一次险。
+    const againUpgrade = (view.againForcedShots || 1) > (view.chargeForcedShots || 1)
+        ? `，**加压时就能逼下家连开两枪**`
+        : '';
     const againLine = `🔁 **再开一枪** — 同样是 ${sameOdds}，但枪口对着**自己**。`
-        + `撑过去，蓄力涨到 **${charge + 1} 层**`;
+        + `撑过去，蓄力涨到 **${charge + 1} 层**${againUpgrade}`;
     const loadLine = view.canLoad
         ? `💥 **加压** — 一口气装 **${view.loadBullets} 发**`
             + (charge > 0 ? `（基础 1 + 蓄力 ${charge}）` : '')
             + `并滚动弹巢，下一个人面对 ${formatOdds(view.bullets + view.loadBullets, view.chamberCount)}`
             + ` ≈ ${formatPercent(view.loadChance)}，赌注升到 **💤 ${view.loadStakeMinutes} 分钟**`
+            + ((view.chargeForcedShots || 1) > 1
+                ? `。**而且他得连开两枪**，两枪都活下来才轮得到他选怎么处理这把枪`
+                : '')
         // 加压不了有两种原因，得说对是哪一种：弹巢满了，还是盒子空了。
         : (view.bullets >= view.chamberCount
             ? `💥 **加压** — 枪里已经塞满 ${view.chamberCount} 发，再塞就该炸膛了`
@@ -563,7 +599,11 @@ function unloadAnnouncement(view) {
         '',
         '**扔掉的那发是实弹还是哑弹，连他自己都不知道。** 反正是不回盒子了。',
         '枪里少了一发，但**赌注一分不降** —— 他只买命，不省钱。',
-        '这一枪要是活下来，枪会直接传走，不能再开、不能加压、也没法反手。',
+        // 债还剩最后一枪时退弹，那一枪直接被抵掉，扳机根本不响 —— 不说清楚，
+        // 全场会以为面板卡住了：明明点了退弹，却没有任何开枪播报。
+        view.skippedShot
+            ? '**这一发退下去，欠的那一枪也跟着一笔勾销 —— 扳机没响。**枪现在直接传走，不能加压、也没法反手。'
+            : '这一枪要是活下来，枪会直接传走，不能再开、不能加压、也没法反手。',
         '',
         gunLine(view),
         ...rosterLines(view),
@@ -638,6 +678,13 @@ const ACTION_STYLES = Object.freeze({
             lines.push(
                 `赌注涨到 **💤 ${view.stakeMinutes} 分钟**。下一个是 ${view.nextShooterName}，他面对 ${odds(view)}。`
             );
+            // 连开攒到档位再加压，下家不是开一枪就完事 —— 这一句是全场最该看见的信息。
+            if ((view.forcedShots || 1) > 1) {
+                lines.push(
+                    `💥 **他连开了这么多枪，${view.nextShooterName} 得连开两枪。**`
+                        + '两枪之间没有传枪、没有加压、也没有反手，只能继续开、退弹，或者当胆小鬼。'
+                );
+            }
             return lines.join('\n');
         },
     },

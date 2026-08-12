@@ -43,6 +43,14 @@ const BASE_TIMEOUT_MINUTES = 3;
 const MINUTES_PER_PRESSURE = 0.5;
 const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 
+// ---------- 加压的强制开枪档位 ----------
+// 加压塞几发子弹由蓄力决定（1 + 蓄力），但「下家这个回合要连开几枪」是另一套账：
+// 上家再开 0~2 次 → 下家只开 1 枪（就是普通回合）；
+// 上家再开 3 次以上 → 下家要连开 2 枪，封顶两枪，再怎么连开也不会更多。
+// 欠着枪的人拿不到传枪 / 加压 / 反手，只能继续开、退弹或者当胆小鬼。
+const FORCED_SHOTS_TIER2_CHARGE = 3;
+const FORCED_SHOTS_TIER2 = 2;
+
 // ---------- 待发子弹池 ----------
 // 每一轮准备一池 POOL_SIZE 发，其中随机 POOL_DUD_MIN~POOL_DUD_MAX 发是哑弹。
 // 枪里的每一发都是从这里抽的，
@@ -316,6 +324,43 @@ function setCharge(game, userId, value) {
     game.chargeOwnerId = next > 0 ? userId : null;
 }
 
+// ---------- 加压逼出来的强制开枪债 ----------
+// 债跟着欠债的人记（和蓄力同一个思路）：中途有人出局导致轮次错位时，
+// 别人不会替他背这笔债，欠债的人一走债就跟着消失。
+// 只有第二档（连开 3 次以上再加压）才会真正记债，第一档就是普通回合，不记。
+
+function forcedShotsForCharge(charge) {
+    return charge >= FORCED_SHOTS_TIER2_CHARGE ? FORCED_SHOTS_TIER2 : 1;
+}
+
+// 这个人这个回合还欠几枪（含即将开的这一枪）。0 = 没欠债，走普通回合。
+function debtFor(game, userId) {
+    const debt = game?.pressureDebt;
+    if (!userId || !debt || debt.ownerId !== userId) return 0;
+    return Math.max(0, debt.remaining || 0);
+}
+
+// sourceId 是把这笔债压过来的加压者，面板上要指名道姓，不然没人知道该恨谁。
+function setPressureDebt(game, userId, shots, sourceId) {
+    game.pressureDebt = userId && shots > 1
+        ? { ownerId: userId, remaining: shots, total: shots, sourceId: sourceId || null }
+        : null;
+}
+
+function clearPressureDebt(game, userId) {
+    if (game?.pressureDebt?.ownerId === userId) game.pressureDebt = null;
+}
+
+// 扣掉一枪，返回扣完还欠几枪。还欠着就继续留在 fire 阶段接着开。
+function consumePressureDebt(game, userId) {
+    const debt = game.pressureDebt;
+    if (!debt || debt.ownerId !== userId) return 0;
+    const remaining = Math.max(0, (debt.remaining || 0) - 1);
+    if (remaining === 0) game.pressureDebt = null;
+    else debt.remaining = remaining;
+    return remaining;
+}
+
 // 这次加压实际能塞进去几发：基础 1 发 + 蓄力层数，
 // 塞不下就按弹巢剩余空位截断，池里不够就按池余量截断。
 function loadBulletsFor(game, userId) {
@@ -351,6 +396,9 @@ function chamberView(game) {
 function buildView(game) {
     const unknownCount = unknownChamberCount(game);
     const shooterId = game.alive[game.turnIndex];
+    // 强制开枪债：remaining 含即将开的这一枪，所以「这是第几枪」= total - remaining + 1。
+    const debtRemaining = debtFor(game, shooterId);
+    const debtTotal = debtRemaining > 0 ? (game.pressureDebt?.total || debtRemaining) : 0;
     return {
         gameId: game.id,
         turnToken: game.turnToken,
@@ -368,6 +416,8 @@ function buildView(game) {
         pressure: game.pressure,
         pressureBullets: game.pressureBullets || 0,
         charge: chargeFor(game, game.alive[game.turnIndex]),
+        // 现在这个蓄力层数去加压，能逼下家连开几枪（1 或 2）。
+        chargeForcedShots: forcedShotsForCharge(chargeFor(game, game.alive[game.turnIndex])),
         unknownCount,
         hitChance: unknownCount > 0 ? game.bullets / unknownCount : 0,
         stakeMinutes: currentStakeMinutes(game),
@@ -389,6 +439,19 @@ function buildView(game) {
         unloadUsed: [...(game.unloadUsed || [])],
         // 退弹后立刻重转弹巢再开枪，打到子弹的概率按「卸掉 1 发后的满巢」算。
         unloadChance: Math.max(0, game.bullets - 1) / CHAMBER_COUNT,
+        // 加压逼出的强制开枪：这个回合总共要开几枪、还剩几枪（含当前这枪）。
+        forcedShots: debtRemaining > 0
+            ? {
+                remaining: debtRemaining,
+                total: debtTotal,
+                index: debtTotal - debtRemaining + 1,
+                sourceName: game.pressureDebt?.sourceId
+                    ? panels.nameOf({ labels: game.labels || {} }, game.pressureDebt.sourceId)
+                    : null,
+            }
+            : null,
+        // 撑过第 1 枪后才退弹的话，这一枪直接抵消掉，连扳机都不用扣。
+        unloadSkipsShot: debtRemaining === 1 && debtTotal > 1,
         // 反手序列上下文：fire 面板要用它标注「这是被反手逼出来的一枪」。
         riposte: game.riposte
             ? {
@@ -419,6 +482,9 @@ function buildChoiceView(game) {
     view.loadBullets = loadBullets;
     view.loadChance = (game.bullets + loadBullets) / CHAMBER_COUNT;
     view.loadStakeMinutes = currentStakeMinutes(game) + (loadBullets * MINUTES_PER_PRESSURE);
+    // 再撑一枪之后加压能逼到几枪 ——「再开到第 3 层就能压两枪」这件事必须写在面板上，
+    // 否则没人看得出档位（现在这层能压几枪由 chargeForcedShots 给）。
+    view.againForcedShots = forcedShotsForCharge((view.charge || 0) + 1);
     view.shotNumber = game.shotNumber;
     // 🔙 反手还击：当前持枪者持有反手权，且加压者还活着、没有进行中的反手序列。
     view.canRiposte = !game.riposte
@@ -777,8 +843,8 @@ async function resolveHit(game, victimId) {
         gameManager.removePlayer(game, victimId);
         game.eliminated.push({ userId: victimId, minutes, timeoutFailed: false, virtual });
         recordElimination(game.stats, victimId, minutes);
-        // 出局会对反手权造成连锁影响（顺延 / 作废 / 中止序列），统一在这里收尾。
-        releaseRiposte(game, victimId);
+        // 出局会连带作废他身上的反手权和强制开枪债，统一在这里收尾。
+        releaseOnExit(game, victimId);
     });
 
     let timeoutFailed = !virtual;
@@ -859,6 +925,10 @@ async function performShot(game, expectedToken, options = {}) {
         // 反手序列的驱动：加压者被迫开的那一枪落到这里，开完序列即止。
         const riposteStage = game.riposte?.stage || null;
         let riposteKeptGun = false;
+        // 加压逼出来的强制开枪：这一枪扣掉一笔债，还欠着就继续留在 fire 阶段接着开，
+        // 债清完（或者中弹）才轮得到他选怎么处理这把枪。
+        // 反手序列里加压者那一枪不碰这套账 —— 债记在发起人身上，跟他无关。
+        let debtLeft = 0;
         if (riposteStage === 'target') {
             const initiatorId = game.riposte.initiatorId;
             if (hit) {
@@ -889,11 +959,17 @@ async function performShot(game, expectedToken, options = {}) {
                 game.phase = hit ? 'resolving' : (riposteKeptGun ? 'choice' : 'fire');
             }
         } else {
-            game.phase = hit ? 'resolving' : 'choice';
+            debtLeft = consumePressureDebt(game, shooterId);
+            if (hit) {
+                // 人没了，欠的枪跟着一笔勾销，下家不用替他补。
+                clearPressureDebt(game, shooterId);
+                debtLeft = 0;
+            }
+            game.phase = hit ? 'resolving' : (debtLeft > 0 ? 'fire' : 'choice');
         }
 
         recordShot(game.stats, shooterId, { hit, dud, bulletsBefore, liveBefore, unknownBefore });
-        result = { shooterId, hit, dud, unloadShot, riposteStage, riposteKeptGun };
+        result = { shooterId, hit, dud, unloadShot, riposteStage, riposteKeptGun, debtLeft };
     });
 
     if (!result) return;
@@ -918,7 +994,8 @@ async function performShot(game, expectedToken, options = {}) {
     // 这一枪把哑弹也算进去地打空了枪 —— 先补弹或进和局判定，再谈接下来怎么走。
     const resumeMode = result.riposteStage === 'target'
         ? (result.riposteKeptGun ? 'choice' : 'fire')
-        : (result.unloadShot ? 'forcedPass' : 'choice');
+        // 还欠着强制开枪的话，投票结束后要接着让同一个人开下一枪，而不是让他选。
+        : (result.debtLeft > 0 ? 'fire' : (result.unloadShot ? 'forcedPass' : 'choice'));
     if (game.bullets === 0 && await resolveEmptyGun(game, resumeMode) !== 'continue') return;
 
     if (result.riposteStage === 'target') {
@@ -927,6 +1004,11 @@ async function performShot(game, expectedToken, options = {}) {
         // 否则直接进下一个人（发起人后面的人）的回合。
         if (result.riposteKeptGun) await renderChoice(game);
         else await startTurn(game);
+        return;
+    }
+    if (result.debtLeft > 0) {
+        // 加压欠的枪还没还完：枪不离手，同一个人接着开下一枪。
+        await startTurn(game);
         return;
     }
     if (result.unloadShot) {
@@ -1178,6 +1260,7 @@ async function handleChoice(game, action, expectedToken, options = {}) {
     let resolvedAction = action;
     let loadedBullets = 0;
     let clearedCharge = 0;
+    let forcedShots = 1;
     await gameManager.runExclusive(game, () => {
         if (game.ended || game.state !== 'playing') return;
         if (game.phase !== 'choice' || game.turnToken !== expectedToken) return;
@@ -1230,6 +1313,9 @@ async function handleChoice(game, action, expectedToken, options = {}) {
         if (effectiveAction === 'load') {
             game.riposteTargetId = actorId;
             game.riposteHolderId = game.alive[game.turnIndex];
+            // 强制开枪债一并挂到下家头上：连开攒到 3 层再加压，他这个回合要连开两枪。
+            forcedShots = forcedShotsForCharge(charge);
+            setPressureDebt(game, game.alive[game.turnIndex], forcedShots, actorId);
         } else if (effectiveAction === 'pass' && game.riposteHolderId === actorId) {
             game.riposteHolderId = null;
             game.riposteTargetId = null;
@@ -1252,6 +1338,7 @@ async function handleChoice(game, action, expectedToken, options = {}) {
         nextShooterName: view.shooterName,
         loadedBullets,
         clearedCharge,
+        forcedShots,
     }));
 
     await startTurn(game);
@@ -1259,13 +1346,14 @@ async function handleChoice(game, action, expectedToken, options = {}) {
 
 // ---------- 反制机制：🔧 退弹开枪 / 🔙 反手还击 ----------
 
-// 出局 / 退出 / 退服时统一收尾反手权：
+// 出局 / 退出 / 退服时，统一收尾这个人身上挂着的两样东西：反手权和强制开枪债。
 // - 进行中的反手序列：发起人消失，或加压者在被迫开枪前消失 → 序列作废。
 //   加压者在 target 阶段中弹的情况由 performShot 先把序列清空再 resolveHit，
 //   所以这里不会误伤那条本要顺延给发起人后面玩家的序列。
-// - 待命的反手权：持有者出局（且没用过反手）→ 顺延给下一个接枪的人；
-//   加压者本人出局 → 反手权整体作废（没有目标了）。
-function releaseRiposte(game, userId) {
+// - 待命的反手权：持有者或加压者任意一方消失 → 整体作废，**不再顺延**给别人。
+//   反手是「谁被压谁还手」，被压的人自己都不在了，这笔账没有理由转给下一个人。
+// - 强制开枪债：欠债的人一走，债跟着一笔勾销，他的下家不用替他补枪。
+function releaseOnExit(game, userId) {
     if (!game || !userId) return;
 
     const rip = game.riposte;
@@ -1277,30 +1365,29 @@ function releaseRiposte(game, userId) {
         }
     }
 
-    if (game.riposteHolderId === userId) {
-        // 出局时 turnIndex 已经被挪到下一个接枪的人身上。
-        game.riposteHolderId = game.alive[game.turnIndex] || null;
-        if (!game.riposteHolderId) game.riposteTargetId = null;
-        // 极端的 2 人局：顺延一圈后只剩加压者本人时，反手没有对象，作废。
-        if (game.riposteHolderId === game.riposteTargetId) {
-            game.riposteHolderId = null;
-            game.riposteTargetId = null;
-        }
-    }
-
-    if (game.riposteTargetId === userId) {
+    if (game.riposteHolderId === userId || game.riposteTargetId === userId) {
         game.riposteHolderId = null;
         game.riposteTargetId = null;
     }
+
+    clearPressureDebt(game, userId);
 }
 
 // 🔧 退弹开枪：fire 阶段的纯防守动作。
 // 卸掉 1 发子弹 → 重转弹巢 → 立刻扣扳机。赌注一分不降。
 // 活下来就强制传枪（走 handleChoice('pass')），这轮不能再开 / 加压 / 反手。
+//
+// 被加压逼着连开两枪时，退弹额外抵掉一枪，抵在哪一枪由玩家自己挑：
+//   · 第 1 枪就退（debtBefore ≥ 2）：退一发 + 重转 + 照常扣扳机，第 2 枪一笔勾销。
+//     等于把两枪压缩成一枪，代价是这一枪还是得开。
+//   · 撑过第 1 枪再退（debtBefore === 1）：退一发 + 重转，这一枪直接跳过，扳机都不用扣。
+//     代价是第 1 枪得硬扛。
+// 两种都还是「退弹后强制传枪」，拿不到加压和反手。
 async function handleUnload(game, expectedToken) {
     let accepted = false;
     let actorId = null;
     let unloadedBullets = 0;
+    let skipShot = false;
     await gameManager.runExclusive(game, () => {
         if (game.ended || game.state !== 'playing') return;
         if (game.phase !== 'fire' || game.turnToken !== expectedToken) return;
@@ -1313,6 +1400,10 @@ async function handleUnload(game, expectedToken) {
         if ((game.unloadUsed || []).includes(shooterId)) return;
 
         actorId = shooterId;
+        // 抵哪一枪：还欠 1 枪 = 已经硬扛过第 1 枪，这次跳过不开；
+        // 还欠 2 枪 = 抵掉后面那一枪，这一枪照开。没欠债就是普通退弹。
+        skipShot = debtFor(game, shooterId) === 1;
+        clearPressureDebt(game, shooterId);
         // 从枪里随便抓一发出来扔掉，抓到什么是什么，谁也不知道扔掉的是实弹还是哑弹。
         // 抽出来的弹直接销毁，不回待发池。
         if (game.bullets > 0) {
@@ -1325,9 +1416,14 @@ async function handleUnload(game, expectedToken) {
         game.unloadUsed = [...(game.unloadUsed || []), actorId];
         // 蓄力清零：枪马上要离手。
         setCharge(game, actorId, 0);
-        // 标记这一枪是退弹枪：performShot 里消费掉，空枪存活 → 强制传枪。
-        game.unloadShotOwner = actorId;
-        game.phase = 'fire';
+        if (skipShot) {
+            // 这一枪被抵消掉了，不扣扳机，直接跳到「开枪后」的强制传枪。
+            game.phase = 'choice';
+        } else {
+            // 标记这一枪是退弹枪：performShot 里消费掉，空枪存活 → 强制传枪。
+            game.unloadShotOwner = actorId;
+            game.phase = 'fire';
+        }
         game.turnToken += 1;
         recordUnload(game.stats, actorId);
         accepted = true;
@@ -1341,9 +1437,18 @@ async function handleUnload(game, expectedToken) {
         ...view,
         actorName: nameFor(game, actorId),
         unloadedBullets,
+        skippedShot: skipShot,
     }));
 
-    await performShot(game, game.turnToken);
+    if (!skipShot) {
+        await performShot(game, game.turnToken);
+        return;
+    }
+
+    // 跳过开枪的这条路没有 performShot 兜底，扔掉的要是最后一发，
+    // 得自己先把「枪空了」处理掉（补弹 / 和局判定），再走强制传枪。
+    if (game.bullets === 0 && await resolveEmptyGun(game, 'forcedPass') !== 'continue') return;
+    await handleChoice(game, 'pass', game.turnToken);
 }
 
 // 🔙 反手还击：choice 阶段的复仇 / 威慑。
@@ -1419,7 +1524,7 @@ async function handleQuit(game, userId, expectedToken) {
         game.cowards.push({ userId, stakeMinutes, penaltyMinutes });
         recordQuit(game.stats, userId, penaltyMinutes);
         game.turnToken += 1;
-        releaseRiposte(game, userId);
+        releaseOnExit(game, userId);
         accepted = true;
     });
 
@@ -1464,7 +1569,7 @@ async function handleMemberInvalidated(game, userId) {
         dropRedeemer(game, userId);
         removed = true;
         if (wasCurrent) game.turnToken += 1;
-        releaseRiposte(game, userId);
+        releaseOnExit(game, userId);
     });
 
     if (!removed) return;
@@ -1884,6 +1989,8 @@ function serializeGame(game) {
         riposteHolderId: game.riposteHolderId || null,
         riposteTargetId: game.riposteTargetId || null,
         riposte: game.riposte ? { ...game.riposte } : null,
+        // 欠着的强制开枪要跟着走，否则重启一次就能白赖掉加压压过来的那一枪。
+        pressureDebt: game.pressureDebt ? { ...game.pressureDebt } : null,
         alive: [...game.alive],
         eliminated: game.eliminated.map(entry => ({ ...entry })),
         cowards: game.cowards.map(entry => ({ ...entry })),
@@ -1943,6 +2050,8 @@ function deserializeGame(snapshot, { guild, channel }) {
         riposteHolderId: snapshot.riposteHolderId || null,
         riposteTargetId: snapshot.riposteTargetId || null,
         riposte: snapshot.riposte ? { ...snapshot.riposte } : null,
+        // 旧快照没有这个字段时当没欠债处理。
+        pressureDebt: snapshot.pressureDebt ? { ...snapshot.pressureDebt } : null,
         // 退弹枪标记不恢复：那一枪早就打完或者被回退了，留着只会误伤下一轮。
         unloadShotOwner: null,
         alive: [...snapshot.alive],
@@ -2084,7 +2193,7 @@ async function reconcileAliveMembers(game) {
         // 没打完这一局，🤡 摘牌资格取消，和中途退服一个待遇。
         dropRedeemer(game, userId);
         gameManager.removePlayer(game, userId);
-        releaseRiposte(game, userId);
+        releaseOnExit(game, userId);
     }
     game.alive = survivors;
     if (game.turnIndex >= game.alive.length) game.turnIndex = 0;
@@ -2190,6 +2299,8 @@ async function startPressureRoulette(interaction, options = {}) {
         riposteHolderId: null,
         riposteTargetId: null,
         riposte: null,
+        // 加压逼出来的强制开枪债：{ ownerId, remaining, total }，没欠债时为 null。
+        pressureDebt: null,
         // 退弹枪的一次性标记：扣完这一枪立刻消费掉。
         unloadShotOwner: null,
         alive: [],
