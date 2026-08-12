@@ -30,12 +30,12 @@ const CHAMBER_COUNT = 6;
 const MIN_PARTICIPANTS = 3;
 const MAX_PARTICIPANTS = 6;
 const RECRUITMENT_DURATION_MS = 3 * 60 * 1000;
-const TURN_DURATION_MS = 60 * 1000;
+const TURN_DURATION_MS = 45 * 1000;
 // 挂机超时阶梯（方案 B：整局累计、只增不减）：
 // 同一局里第一次挂满等 TURN_DURATION_MS（默认 60 秒），
 // 第二次挂满只等 30 秒，第三次起只等 15 秒。
-const SHORT_TURN_DURATION_MS = 30 * 1000;
-const MIN_TURN_DURATION_MS = 15 * 1000;
+const SHORT_TURN_DURATION_MS = 25 * 1000;
+const MIN_TURN_DURATION_MS = 10 * 1000;
 const HIT_PAUSE_MS = 3 * 1000;
 const BASE_TIMEOUT_MINUTES = 3;
 // 每加压一发赌注涨 0.5 分钟（Discord 禁言最短 1 分钟，基础赌注 3 分钟起，
