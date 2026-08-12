@@ -10,6 +10,11 @@ const { getSelfModerationVoteEndTime, DELETE_THRESHOLD, MUTE_DURATIONS, getCurre
 const { getRecentSeriousMuteCount } = require('./seriousMuteHistory');
 const { formatDuration } = require('../utils/timeCalculator');
 
+// 右键「禁言此极端不适发言用户」弹窗的 customId 前缀。
+// 必须以 selfmod_modal_ 开头，才能命中 interactionCreate 中已有的模态窗口路由分支。
+// 完整格式：selfmod_modal_seriousctx_<channelId>_<messageId>
+const SERIOUS_MUTE_CONTEXT_MODAL_PREFIX = 'selfmod_modal_seriousctx_';
+
 /**
  * 处理所有来自自助管理模块的交互（按钮点击和嵌入窗口的提交）。
  * @param {import('discord.js').Interaction} interaction - Discord交互对象。
@@ -59,12 +64,104 @@ async function handleSelfModerationModal(interaction) {
     await interaction.deferReply({ ephemeral: true });
     
     const customId = interaction.customId;
-    
+
+    // 右键严肃禁言的弹窗：目标消息来自 customId，而不是用户填写的链接
+    if (customId.startsWith(SERIOUS_MUTE_CONTEXT_MODAL_PREFIX)) {
+        await handleSeriousMuteContextModal(interaction);
+        return;
+    }
+
     if (customId.startsWith('selfmod_modal_')) {
         const type = customId.replace('selfmod_modal_', '');
         const messageUrl = interaction.fields.getTextInputValue('message_url');
-        
+
         await processMessageUrlSubmission(interaction, type, messageUrl);
+    }
+}
+
+/**
+ * 解析「是否提前删除消息」的自由文本输入。
+ * @param {string} raw - 用户填写的内容
+ * @returns {boolean|null} true/false，无法识别时返回 null
+ */
+function parseEarlyDeleteInput(raw) {
+    const value = (raw || '').trim().toLowerCase();
+    if (value === '') return true; // 留空时保持与斜杠指令一致的默认行为
+
+    if (['是', '是的', '要', 'y', 'yes', 'true', '1'].includes(value)) return true;
+    if (['否', '不', '不要', 'n', 'no', 'false', '0'].includes(value)) return false;
+
+    return null;
+}
+
+/**
+ * 处理右键「禁言此极端不适发言用户」的弹窗提交。
+ * 调用方已完成 deferReply。
+ * @param {import('discord.js').ModalSubmitInteraction} interaction - 弹窗交互
+ */
+async function handleSeriousMuteContextModal(interaction) {
+    const { runSelfModerationPreChecks } = require('../utils/entryGuard');
+    const { updateUserLastUsage } = require('../../../core/utils/database');
+
+    if (!interaction.guild) {
+        await interaction.editReply({
+            content: '❌ 此指令只能在服务器中使用，不能在私信中使用。'
+        });
+        return;
+    }
+
+    // 从 customId 还原目标消息位置
+    const payload = interaction.customId.slice(SERIOUS_MUTE_CONTEXT_MODAL_PREFIX.length);
+    const [targetChannelId, targetMessageId] = payload.split('_');
+
+    if (!targetChannelId || !targetMessageId) {
+        console.error('右键严肃禁言弹窗的 customId 无法解析:', interaction.customId);
+        await interaction.editReply({
+            content: '❌ 无法定位目标消息，请重试。'
+        });
+        return;
+    }
+
+    // 填表期间冷却/黑名单/权限都可能变化，这里重新校验一次
+    const preCheck = await runSelfModerationPreChecks(interaction, 'serious_mute');
+    if (!preCheck.ok) {
+        await interaction.editReply({ content: preCheck.message });
+        return;
+    }
+
+    const originalDesc = interaction.fields.getTextInputValue('original_description');
+    const earlyDeleteRaw = interaction.fields.getTextInputValue('early_delete');
+    const earlyDelete = parseEarlyDeleteInput(earlyDeleteRaw);
+
+    if (earlyDelete === null) {
+        await interaction.editReply({
+            content: `❌ 「是否提前删除消息」填写的内容无法识别（${earlyDeleteRaw}），请填「是」或「否」，或留空使用默认值「是」。`
+        });
+        return;
+    }
+
+    // 校验：选择提前删除但未提供描述（与斜杠指令一致）
+    if (earlyDelete === true && (!originalDesc || originalDesc.trim().length === 0)) {
+        await interaction.editReply({
+            content: '❌ 选择了提前删除，需要提供原消息的简单描述。'
+        });
+        return;
+    }
+
+    const messageUrl = `https://discord.com/channels/${interaction.guild.id}/${targetChannelId}/${targetMessageId}`;
+
+    console.log(`用户 ${interaction.user.tag} 在频道 ${interaction.channel?.name} 通过右键发起严肃禁言投票`);
+    console.log(`目标消息链接: ${messageUrl}`);
+
+    const result = await processMessageUrlSubmission(interaction, 'serious_mute', messageUrl, {
+        severity: 'serious',
+        earlyDelete,
+        originalDescription: originalDesc
+    });
+
+    // 仅在成功创建新投票时消耗冷却时间
+    if (result?.isNewVote === true) {
+        await updateUserLastUsage(interaction.guild.id, interaction.user.id, 'serious_mute');
     }
 }
 
@@ -452,5 +549,6 @@ async function sendVoteStartNotification(interaction, voteResult, messageInfo) {
 module.exports = {
     processSelfModerationInteraction,
     validateTargetMessage,
-    processMessageUrlSubmission
+    processMessageUrlSubmission,
+    SERIOUS_MUTE_CONTEXT_MODAL_PREFIX
 };

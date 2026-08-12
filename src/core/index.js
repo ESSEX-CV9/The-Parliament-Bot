@@ -71,6 +71,10 @@ const applyToCourtCommand = require('../modules/court/commands/applyToCourt');
 const deleteShitMessageCommand = require('../modules/selfModeration/commands/deleteShitMessage');
 const muteShitUserCommand = require('../modules/selfModeration/commands/muteShitUser');
 const seriousMuteCommand = require('../modules/selfModeration/commands/seriousMute');
+// 右键（消息上下文菜单）入口，免去手动复制消息链接
+const deleteShitMessageContextCommand = require('../modules/selfModeration/commands/deleteShitMessageContext');
+const muteShitUserContextCommand = require('../modules/selfModeration/commands/muteShitUserContext');
+const seriousMuteContextCommand = require('../modules/selfModeration/commands/seriousMuteContext');
 // 8 个配置指令已合并为 /搬石公投配置
 const selfModerationConfigCommand = require('../modules/selfModeration/commands/selfModerationConfig');
 const checkMyCooldownCommand = require('../modules/selfModeration/commands/checkMyCooldown');
@@ -257,6 +261,9 @@ client.commands.set(applyToCourtCommand.data.name, applyToCourtCommand);
 client.commands.set(deleteShitMessageCommand.data.name, deleteShitMessageCommand);
 client.commands.set(muteShitUserCommand.data.name, muteShitUserCommand);
 client.commands.set(seriousMuteCommand.data.name, seriousMuteCommand);
+client.commands.set(deleteShitMessageContextCommand.data.name, deleteShitMessageContextCommand);
+client.commands.set(muteShitUserContextCommand.data.name, muteShitUserContextCommand);
+client.commands.set(seriousMuteContextCommand.data.name, seriousMuteContextCommand);
 client.commands.set(selfModerationConfigCommand.data.name, selfModerationConfigCommand);
 client.commands.set(checkMyCooldownCommand.data.name, checkMyCooldownCommand);
 client.commands.set(getArchiveViewPermissionCommand.data.name, getArchiveViewPermissionCommand);
