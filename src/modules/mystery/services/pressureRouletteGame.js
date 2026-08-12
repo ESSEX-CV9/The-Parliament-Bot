@@ -48,8 +48,8 @@ const TIMEOUT_REASON = '神秘指令：加压俄罗斯轮盘';
 // 上家再开 0~2 次 → 下家只开 1 枪（就是普通回合）；
 // 上家再开 3 次以上 → 下家要连开 2 枪，封顶两枪，再怎么连开也不会更多。
 // 欠着枪的人拿不到传枪 / 加压 / 反手，只能继续开、退弹或者当胆小鬼。
-const FORCED_SHOTS_TIER2_CHARGE = 3;
-const FORCED_SHOTS_TIER2 = 2;
+const FORCED_SHOTS_TIER2_CHARGE = 2;
+const FORCED_SHOTS_TIER2 = 1;
 
 // ---------- 待发子弹池 ----------
 // 每一轮准备一池 POOL_SIZE 发，其中随机 POOL_DUD_MIN~POOL_DUD_MAX 发是哑弹。
