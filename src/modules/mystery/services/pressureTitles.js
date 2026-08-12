@@ -369,7 +369,7 @@ const ACHIEVEMENTS = Object.freeze([
         id: 'bomb_squad',
         emoji: '🔧',
         name: '拆弹专家',
-        rule: '累计抽弹 10 次',
+        rule: '累计退弹 10 次',
         test: row => row.unloads >= 10,
     },
     {

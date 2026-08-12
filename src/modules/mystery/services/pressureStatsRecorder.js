@@ -143,7 +143,7 @@ function recordQuit(stats, userId, penaltyMinutes = 0) {
     row.coward_minutes += Number(penaltyMinutes) || 0;
 }
 
-/** 记一次抽弹开枪（fire 阶段卸弹自救）。 */
+/** 记一次退弹开枪（fire 阶段卸弹自救）。 */
 function recordUnload(stats, userId) {
     const row = rowFor(stats, userId);
     if (!row) return;
