@@ -396,7 +396,11 @@ function choicePanel(view) {
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒不选，默认传枪。`;
 
     const riposteLine = view.canRiposte
-        ? `🔙 **反手还击** — 把枪扔回给 ${view.riposteTargetName}。他必须开一枪（**${formatOdds(view.bullets, view.unknownCount)} ≈ ${formatPercent(view.riposteTargetChance)}**），无论他中没中，这一枪打完枪会直接顺延到你后面的人，你不用再补枪。`
+        ? `🔙 **反手还击** — 把枪扔回给 ${view.riposteTargetName}。他必须开一枪（**${formatOdds(view.bullets, view.unknownCount)} ≈ ${formatPercent(view.riposteTargetChance)}**），不能逃、不能加压、不能抽弹。`
+            + (view.riposteKeepsGun
+                // 轮次绕一圈又回到他自己，枪不会再经过你手上，得说清楚。
+                ? `打完这一枪轮次正好又转回他自己，枪留在他手里由他接着选，你不用再补枪。`
+                : `无论他中没中，这一枪打完枪会直接顺延到你后面的人，你不用再补枪。`)
         : null;
 
     const description = [
@@ -566,7 +570,9 @@ function riposteAnnouncement(view) {
         `${view.actorName} 没有把枪传下去，而是朝着 ${view.targetName} 扔了回去。`,
         '',
         `**${view.targetName} 必须开这一枪** —— 不能逃、不能加压、不能抽弹。`,
-        '无论他中没中，这一枪打完反手就到此为止，枪会直接顺延到发起人后面的人。',
+        view.keepsGun
+            ? '这一枪打完反手就到此为止。轮次正好又转回他自己，枪留在他手里，由他接着选怎么处理。'
+            : '无论他中没中，这一枪打完反手就到此为止，枪会直接顺延到发起人后面的人。',
         '',
         gunLine(view),
         ...rosterLines(view),

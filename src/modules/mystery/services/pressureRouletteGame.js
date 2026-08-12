@@ -302,6 +302,16 @@ function loadBulletsFor(game, userId) {
     );
 }
 
+// 反手打完之后枪会不会留在加压者自己手里：跳过发起人绕一圈，下一个接枪的
+// 正好又是加压者本人（2 人残局，或反手权顺延到队尾之后）。面板要按这个说清楚
+// 枪的去向 —— 这种局面下反手等于「传枪 + 剥夺他这一枪的逃跑 / 抽弹权」。
+function riposteKeepsGun(game, initiatorId, targetId) {
+    const alive = game.alive || [];
+    const index = alive.indexOf(initiatorId);
+    if (index === -1 || !targetId) return false;
+    return alive[(index + 1) % alive.length] === targetId;
+}
+
 function chamberView(game) {
     return game.revealed.map((revealed, index) => {
         if (game.state === 'playing' && index === game.pointer && !revealed) return 'next';
@@ -394,6 +404,8 @@ function buildChoiceView(game) {
         : null;
     // 反手不开新枪也不重转：加压者面对的正是当前这个弹巢。
     view.riposteTargetChance = view.unknownCount > 0 ? game.bullets / view.unknownCount : 0;
+    view.riposteKeepsGun = view.canRiposte
+        && riposteKeepsGun(game, shooterId, game.riposteTargetId);
     return view;
 }
 
@@ -799,6 +811,7 @@ async function performShot(game, expectedToken) {
 
         // 反手序列的驱动：加压者被迫开的那一枪落到这里，开完序列即止。
         const riposteStage = game.riposte?.stage || null;
+        let riposteKeptGun = false;
         if (riposteStage === 'target') {
             const initiatorId = game.riposte.initiatorId;
             if (hit) {
@@ -822,14 +835,18 @@ async function performShot(game, expectedToken) {
                     nextIndex -= 1;
                 }
                 game.turnIndex = nextIndex;
-                game.phase = hit ? 'resolving' : 'fire';
+                // 跳过发起人绕一圈，下一个接枪的正好又是刚开完这枪的加压者自己
+                // （2 人残局，或反手权顺延到队尾之后）。这时不能再逼他连开第二枪 ——
+                // 那一枪就算作他这个回合的枪，直接让他选传枪 / 再来一枪 / 加压。
+                riposteKeptGun = !hit && game.alive[nextIndex] === shooterId;
+                game.phase = hit ? 'resolving' : (riposteKeptGun ? 'choice' : 'fire');
             }
         } else {
             game.phase = hit ? 'resolving' : 'choice';
         }
 
         recordShot(game.stats, shooterId, { hit, dud, bulletsBefore, liveBefore, unknownBefore });
-        result = { shooterId, hit, dud, unloadShot, riposteStage };
+        result = { shooterId, hit, dud, unloadShot, riposteStage, riposteKeptGun };
     });
 
     if (!result) return;
@@ -853,13 +870,16 @@ async function performShot(game, expectedToken) {
 
     // 这一枪把哑弹也算进去地打空了枪 —— 先补弹或进和局判定，再谈接下来怎么走。
     const resumeMode = result.riposteStage === 'target'
-        ? 'fire'
+        ? (result.riposteKeptGun ? 'choice' : 'fire')
         : (result.unloadShot ? 'forcedPass' : 'choice');
     if (game.bullets === 0 && await resolveEmptyGun(game, resumeMode) !== 'continue') return;
 
     if (result.riposteStage === 'target') {
-        // 加压者没倒下：反手序列已结束，直接进下一个人（发起人后面的人）的回合。
-        await startTurn(game);
+        // 加压者没倒下：反手序列已结束。
+        // 轮次顺延回他自己时，这一枪就是他的回合枪，接着让他选怎么处理；
+        // 否则直接进下一个人（发起人后面的人）的回合。
+        if (result.riposteKeptGun) await renderChoice(game);
+        else await startTurn(game);
         return;
     }
     if (result.unloadShot) {
@@ -1320,6 +1340,8 @@ async function handleRiposte(game, expectedToken) {
         ...view,
         actorName: nameFor(game, actorId),
         targetName: nameFor(game, targetId),
+        // alive 在上面那个临界区里没动过，所以这里算出来的去向和开枪后一致。
+        keepsGun: riposteKeepsGun(game, actorId, targetId),
     }));
 
     await startTurn(game);
