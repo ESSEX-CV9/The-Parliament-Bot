@@ -1,5 +1,8 @@
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
+// 普通 Mystery 赢家改名锁集合：互相可覆盖；coward（胆小鬼）优先级最高，不在此集合中。
+const ORDINARY_LOCK_TYPES = Object.freeze(['duel_rename', 'devil_roulette_rename']);
+
 function lockKey(guildId, userId) {
     return `${guildId}:${userId}`;
 }
@@ -212,6 +215,127 @@ function createMysteryNicknameLockService({
         return winningRecord;
     }
 
+    // 受限 replacement：当前无锁时直接创建；有锁时仅当 current.type ∈ expectedTypes
+    // 才允许替换。覆盖时 originalNickname 沿用旧锁的值（保持进入惩罚链之前的 root 昵称）。
+    // - 普通锁（duel_rename / devil_roulette_rename）互覆：expectedTypes = 普通锁集合。
+    // - coward 覆盖普通锁：expectedTypes = 普通锁集合。
+    // - 普通锁不能覆盖 coward：expectedTypes 不含 coward → existing_lock。
+    // Discord 失败或 persistence 失败均保持旧锁完整。
+    async function replaceLock({
+        member,
+        type,
+        enforcedNickname,
+        expiresAt,
+        originalNickname,
+        applyReason,
+        restoreReason,
+        enforceReason,
+        channelId,
+        expectedTypes = ORDINARY_LOCK_TYPES,
+    }) {
+        const guildId = member?.guild?.id;
+        const userId = member?.id;
+        if (
+            !guildId || !userId
+            || typeof type !== 'string' || !type
+            || typeof enforcedNickname !== 'string' || !enforcedNickname
+            || !Number.isFinite(expiresAt)
+            || !Array.isArray(expectedTypes)
+        ) {
+            return { created: false, reason: 'invalid_lock' };
+        }
+
+        return serializeMutation(guildId, userId, async () => {
+            const current = store.get(guildId, userId);
+            if (current && !expectedTypes.includes(current.type)) {
+                return { created: false, reason: 'existing_lock' };
+            }
+
+            const failure = managementFailure(member);
+            if (failure) return { created: false, reason: failure };
+
+            // 必须在 setNickname 之前捕获：Discord API 成功后 member.nickname 会变成新名字。
+            const previousNickname = member.nickname ?? null;
+            try {
+                await member.setNickname(enforcedNickname, applyReason);
+            } catch (error) {
+                logFailure('applying replacement nickname lock', error);
+                return { created: false, reason: 'nickname_update_failed' };
+            }
+
+            // 覆盖时保留 root originalNickname：真实昵称链的起点绝不能变成上一层惩罚名。
+            const rootNickname = current
+                ? current.originalNickname
+                : (originalNickname ?? previousNickname);
+
+            const newRecord = {
+                guildId,
+                userId,
+                type,
+                originalNickname: rootNickname,
+                enforcedNickname,
+                expiresAt,
+                applyReason: applyReason ?? current?.applyReason,
+                restoreReason: restoreReason ?? current?.restoreReason,
+                enforceReason: enforceReason ?? current?.enforceReason,
+                ...(channelId ? { channelId } : {}),
+            };
+
+            let replaced;
+            try {
+                replaced = await store.replaceLock(guildId, userId, newRecord, expectedTypes);
+            } catch (error) {
+                logFailure('persisting replacement nickname lock', error);
+                await compensateReplacement({ member, previous: current, previousNickname });
+                return { created: false, reason: 'persistence_failed' };
+            }
+            if (!replaced) {
+                // Store 拒绝替换 —— 并发下类型已变化，把 Discord 昵称退回旧状态。
+                await compensateReplacement({ member, previous: current, previousNickname });
+                return { created: false, reason: 'existing_lock' };
+            }
+
+            // 取消旧 timer，按新 expiresAt 重新调度。
+            clearTimer(guildId, userId);
+            schedule(replaced);
+            return { created: true, record: { ...replaced } };
+        });
+    }
+
+    async function compensateReplacement({ member, previous, previousNickname }) {
+        const nickname = previous?.enforcedNickname ?? previousNickname ?? null;
+        if (member.nickname === nickname) return;
+        try {
+            await member.setNickname(nickname, previous?.enforceReason);
+        } catch (error) {
+            logFailure('compensating failed replacement lock', error);
+        }
+    }
+
+    // 兼容旧调用：同类型替换（duel 连续赐名）——普通锁集合内同型互覆天然覆盖此语义。
+    async function replaceSameTypeLock({
+        member,
+        type,
+        enforcedNickname,
+        expiresAt,
+        applyReason,
+        restoreReason,
+        enforceReason,
+        channelId,
+    }) {
+        return replaceLock({
+            member,
+            type,
+            enforcedNickname,
+            expiresAt,
+            applyReason,
+            restoreReason,
+            enforceReason,
+            channelId,
+            expectedTypes: [type],
+        });
+    }
+
     async function releaseLock(guildId, userId, member) {
         if (typeof guildId === 'object') {
             member = guildId.member;
@@ -323,6 +447,8 @@ function createMysteryNicknameLockService({
         initialize,
         hasLock,
         createLock,
+        replaceLock,
+        replaceSameTypeLock,
         releaseLock,
         updateLock,
         handleGuildMemberUpdate,
@@ -331,4 +457,7 @@ function createMysteryNicknameLockService({
     };
 }
 
-module.exports = { createMysteryNicknameLockService };
+module.exports = {
+    createMysteryNicknameLockService,
+    ORDINARY_LOCK_TYPES,
+};

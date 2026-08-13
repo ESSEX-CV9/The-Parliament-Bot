@@ -34,7 +34,7 @@ function buildData() {
             .setRequired(false))
         .addIntegerOption(option => option
             .setName('子弹巢位')
-            .setDescription(`把开局那发实弹钉在第几个弹巢（1-${CHAMBER_COUNT}，不填则从待发池随机抽）`)
+            .setDescription(`把第一发子弹钉在第几个弹巢（1-${CHAMBER_COUNT}，不填则随机）`)
             .setMinValue(1)
             .setMaxValue(CHAMBER_COUNT)
             .setRequired(false))

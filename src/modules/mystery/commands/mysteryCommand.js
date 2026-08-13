@@ -9,8 +9,8 @@ const gameManager = require('../services/mysteryGameManager');
 const { startRoulette } = require('../services/rouletteGame');
 const { startBomb } = require('../services/bombGame');
 const { startDuel } = require('../services/duelGame');
+const { startDevilRoulette } = require('../services/devilRouletteGame');
 const { startPressureRoulette } = require('../services/pressureRouletteGame');
-const { startBlackBox } = require('../services/blackBoxGame');
 const { getNames } = require('../services/namePoolStore');
 const { resolveMysterySettings } = require('../services/channelAccessService');
 const { defaultChannelAccessStore } = require('../utils/channelAccessStore');
@@ -22,14 +22,20 @@ const SUBCOMMAND_RANDOM_NICKNAME = MYSTERY_GAMES.RANDOM_NICKNAME;
 const SUBCOMMAND_ROULETTE = MYSTERY_GAMES.ROULETTE;
 const SUBCOMMAND_BOMB = MYSTERY_GAMES.BOMB;
 const SUBCOMMAND_DUEL = MYSTERY_GAMES.DUEL;
+const SUBCOMMAND_DEVIL_ROULETTE = MYSTERY_GAMES.DEVIL_ROULETTE;
 const SUBCOMMAND_PRESSURE = MYSTERY_GAMES.PRESSURE;
-const SUBCOMMAND_BLACKBOX = MYSTERY_GAMES.BLACKBOX;
 const VALID_SUBCOMMANDS = MYSTERY_GAME_NAMES;
 // 传炸弹用的是跨重启持久化的独立冷却存储，其余游戏走内存冷却。
 const IN_MEMORY_COOLDOWN_SUBCOMMANDS = new Set(
     MYSTERY_GAME_NAMES.filter(name => name !== SUBCOMMAND_BOMB)
 );
 const MULTIPLAYER_SUBCOMMANDS = new Set(MULTIPLAYER_GAME_NAMES);
+// 这些多人游戏的冷却推迟到正式开局（拒绝/取消/超时不扣）。
+const DEFERRED_COOLDOWN_SUBCOMMANDS = new Set([
+    SUBCOMMAND_DUEL,
+    SUBCOMMAND_DEVIL_ROULETTE,
+    SUBCOMMAND_PRESSURE,
+]);
 const SELF_TIMEOUT_DURATION_MS = 5 * 60 * 1000;
 const SELF_TIMEOUT_REASON = '神秘指令：自刎归天';
 const PROCESSING_MESSAGE = '⏳ **上一条神秘指令正在处理中。**\n请等上一条处理完成后再试。';
@@ -63,11 +69,15 @@ const data = new SlashCommandBuilder()
             .setDescription('指定要挑战的对手（留空则公开招募）')
             .setRequired(false)))
     .addSubcommand(subcommand => subcommand
-        .setName(SUBCOMMAND_PRESSURE)
-        .setDescription('参加一场加压俄罗斯轮盘，自己往枪里加子弹'))
+        .setName(SUBCOMMAND_DEVIL_ROULETTE)
+        .setDescription('拿起霰弹枪，和一名成员来一场恶魔轮盘')
+        .addUserOption(option => option
+            .setName('对手')
+            .setDescription('指定要挑战的对手（留空则公开招募）')
+            .setRequired(false)))
     .addSubcommand(subcommand => subcommand
-        .setName(SUBCOMMAND_BLACKBOX)
-        .setDescription('参加一场 4-8 人的黑箱交易游戏'));
+        .setName(SUBCOMMAND_PRESSURE)
+        .setDescription('参加一场加压俄罗斯轮盘，自己往枪里加子弹'));
 
 function botHasPermission(interaction, permission) {
     return interaction.guild.members.me?.permissions?.has(permission) === true;
@@ -185,7 +195,7 @@ async function sendSuccessPanels(interaction, result, panelLifecycle) {
 }
 
 function cooldownMessage(expiresAt) {
-    return `⏳ **这个神秘指令在本频道还在冷却中。**\n可再次使用：<t:${Math.floor(expiresAt / 1000)}:R>`;
+    return `⏳ **这个神秘指令还在冷却中。**\n可再次使用：<t:${Math.floor(expiresAt / 1000)}:R>`;
 }
 
 async function startMultiplayerGame(interaction, subcommand, onGameStarted, cooldownMs, services) {
@@ -198,10 +208,10 @@ async function startMultiplayerGame(interaction, subcommand, onGameStarted, cool
     if (subcommand === SUBCOMMAND_PRESSURE) {
         return services.startPressureRoulette(interaction, { onGameStarted });
     }
-    if (subcommand === SUBCOMMAND_BLACKBOX) {
-        return services.startBlackBox(interaction, { onGameStarted });
+    if (subcommand === SUBCOMMAND_DEVIL_ROULETTE) {
+        return services.startDevilRoulette(interaction, interaction.options.getUser('对手'), { onGameStarted });
     }
-    return services.startDuel(interaction, interaction.options.getUser('对手'));
+    return services.startDuel(interaction, interaction.options.getUser('对手'), { onGameStarted });
 }
 
 async function acquireInitiationLock(guildId, userId) {
@@ -232,16 +242,16 @@ function createMysteryCommand({
     startRoulette: startRouletteGame = startRoulette,
     startBomb: startBombGame = startBomb,
     startDuel: startDuelGame = startDuel,
+    startDevilRoulette: startDevilRouletteGame = startDevilRoulette,
     startPressureRoulette: startPressureRouletteGame = startPressureRoulette,
-    startBlackBox: startBlackBoxGame = startBlackBox,
     panelLifecycle = defaultPanelLifecycle,
 } = {}) {
     const services = {
         startRoulette: startRouletteGame,
         startBomb: startBombGame,
         startDuel: startDuelGame,
+        startDevilRoulette: startDevilRouletteGame,
         startPressureRoulette: startPressureRouletteGame,
-        startBlackBox: startBlackBoxGame,
     };
 
     async function execute(interaction) {
@@ -290,7 +300,7 @@ function createMysteryCommand({
             }
             const usesInMemoryCooldown = cooldownEnabled && IN_MEMORY_COOLDOWN_SUBCOMMANDS.has(subcommand);
             const expiresAt = usesInMemoryCooldown
-                ? cooldownUtils.getCooldownExpiresAt(guildId, userId, channelId, subcommand)
+                ? cooldownUtils.getCooldownExpiresAt(guildId, userId, subcommand)
                 : null;
             if (expiresAt !== null) {
                 await interaction.reply({ content: cooldownMessage(expiresAt), flags: MessageFlags.Ephemeral });
@@ -298,22 +308,28 @@ function createMysteryCommand({
             }
             const isMultiplayer = MULTIPLAYER_SUBCOMMANDS.has(subcommand);
             if (isMultiplayer) {
-                // 加压轮盘和黑箱交易的冷却推迟到真正开局时才扣：招募人数不足被取消的话不消耗冷却。
-                const deferCooldown = subcommand === SUBCOMMAND_PRESSURE || subcommand === SUBCOMMAND_BLACKBOX;
-                const beginCooldown = () => {
-                    if (usesInMemoryCooldown) {
-                        cooldownUtils.startCooldown(guildId, userId, channelId, subcommand, cooldownMs);
+                // 死斗/恶魔轮盘/加压轮盘的冷却推迟到正式开局：拒绝/取消/超时/人数不足不扣。
+                // 死斗与恶魔轮盘正式开局时双方都进冷却；冷却按 guild+user+game 全服生效。
+                const deferCooldown = DEFERRED_COOLDOWN_SUBCOMMANDS.has(subcommand);
+                const beginCooldownFor = userIds => {
+                    if (!usesInMemoryCooldown) return;
+                    for (const targetId of userIds || []) {
+                        if (!targetId) continue;
+                        cooldownUtils.startCooldown(guildId, targetId, subcommand, cooldownMs);
                     }
                 };
+                const onGameStarted = deferCooldown && usesInMemoryCooldown
+                    ? userIds => beginCooldownFor(userIds?.length ? userIds : [userId])
+                    : undefined;
                 const started = await startMultiplayerGame(
                     interaction,
                     subcommand,
-                    deferCooldown && usesInMemoryCooldown ? beginCooldown : undefined,
+                    onGameStarted,
                     cooldownEnabled ? cooldownMs : 0,
                     services,
                 );
                 if (started && usesInMemoryCooldown && !deferCooldown) {
-                    cooldownUtils.startCooldown(guildId, userId, channelId, subcommand, cooldownMs);
+                    cooldownUtils.startCooldown(guildId, userId, subcommand, cooldownMs);
                 }
                 return;
             }
@@ -334,7 +350,7 @@ function createMysteryCommand({
                 return;
             }
             if (usesInMemoryCooldown) {
-                cooldownUtils.startCooldown(guildId, userId, channelId, subcommand, cooldownMs);
+                cooldownUtils.startCooldown(guildId, userId, subcommand, cooldownMs);
             }
             await sendSuccessPanels(interaction, result, panelLifecycle);
         } catch (error) {

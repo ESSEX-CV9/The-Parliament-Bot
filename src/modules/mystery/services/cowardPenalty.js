@@ -1,5 +1,6 @@
 const { PermissionFlagsBits } = require('discord.js');
 const nicknameLock = require('./mysteryNicknameLock');
+const { ORDINARY_LOCK_TYPES } = require('./mysteryNicknameLockService');
 const panels = require('./pressureRoulettePanels');
 
 const COWARD_PREFIX = '🤡胆小鬼 ';
@@ -128,7 +129,8 @@ function canManageNickname(member) {
 }
 
 // 挂 🤡 名字：生命周期完全委托给 common nickname lock service（type: 'coward'）。
-// 已有任何 Mystery 昵称锁（含 duel）时拒绝并返回 reason: 'locked'，绝不覆盖赢家昵称。
+// coward 优先级最高：可强制覆盖普通 Mystery 昵称锁（duel_rename / devil_roulette_rename），
+// 覆盖后普通锁彻底作废；已有 coward 时拒绝（返回 'locked'）。
 async function applyCowardPenalty({ member, channel, channelId }) {
     const guildId = member?.guild?.id;
     const userId = member?.id;
@@ -136,11 +138,15 @@ async function applyCowardPenalty({ member, channel, channelId }) {
 
     rememberClient(member.client);
 
-    const enforcedNickname = buildCowardNickname(member.displayName);
+    // 胆小鬼名字基于 root 昵称（进入惩罚链之前的真实昵称），
+    // 而不是当前被普通锁改过、可能即将作废的名字。
+    const existing = nicknameLock.store.get(guildId, userId);
+    const baseName = existing?.originalNickname ?? member.displayName;
+    const enforcedNickname = buildCowardNickname(baseName);
     const originalNickname = member.nickname ?? null;
     const targetChannelId = channelId || channel?.id || null;
 
-    const result = await nicknameLock.service.createLock({
+    const result = await nicknameLock.service.replaceLock({
         member,
         type: 'coward',
         enforcedNickname,
@@ -150,6 +156,7 @@ async function applyCowardPenalty({ member, channel, channelId }) {
         restoreReason: RESTORE_REASON,
         enforceReason: ENFORCE_REASON,
         channelId: targetChannelId,
+        expectedTypes: ORDINARY_LOCK_TYPES,
     });
 
     if (result.created) {
@@ -181,7 +188,9 @@ async function settleCowardPenalties(guildId, cowards) {
     await Promise.all(cowards.map(async entry => {
         const userId = entry?.userId;
         if (!userId) return;
-        if (!nicknameLock.store.get(guildId, userId)) return;
+        const existing = nicknameLock.store.get(guildId, userId);
+        // 结算只缩短胆小鬼锁：duel_rename 等其他类型的锁绝不能被动到。
+        if (!existing || existing.type !== 'coward') return;
 
         const expiresAt = now + (cowardPenaltyMinutes(entry.stakeMinutes) * 60 * 1000);
         const result = await nicknameLock.service.updateLock(guildId, userId, draft => {
@@ -213,11 +222,15 @@ async function redeemCowardPenalties(guildId, userIds) {
 function cowardPenaltyRemainingMs(guildId, userId, now = Date.now()) {
     if (!guildId || !userId || !nicknameLock.store.isLoaded()) return 0;
     const record = nicknameLock.store.get(guildId, userId);
-    if (!record) return 0;
+    // 只认胆小鬼锁：死斗改名（duel_rename）等其他昵称锁绝不能算作懦夫惩罚。
+    if (!record || record.type !== 'coward') return 0;
     return Math.max(0, record.expiresAt - now);
 }
 
 async function releaseCowardPenalty(guildId, userId) {
+    // 只释放胆小鬼锁：绝不提前解除死斗改名等其他类型的昵称锁。
+    const record = nicknameLock.store.get(guildId, userId);
+    if (!record || record.type !== 'coward') return false;
     lastTauntAt.delete(penaltyKey(guildId, userId));
     return nicknameLock.service.releaseLock(guildId, userId);
 }

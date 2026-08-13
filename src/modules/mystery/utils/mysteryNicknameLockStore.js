@@ -210,6 +210,32 @@ function createMysteryNicknameLockStore({ filePath, fsImpl = fs, now = Date.now 
         return true;
     }
 
+    // 受限的 replacement：当前记录不存在时直接创建；
+    // 存在时仅当当前记录的 type ∈ expectedTypes 才允许原子替换为新记录。
+    // 用于普通锁互覆（duel_rename / devil_roulette_rename）与 coward 覆盖普通锁。
+    function replaceLock(guildId, userId, record, expectedTypes) {
+        return queueMutation(async () => {
+            const key = buildMysteryNicknameLockKey(guildId, userId);
+            const current = locks[key];
+            if (current && !expectedTypes.includes(current.type)) return null;
+
+            const normalized = normalizeRecord(record);
+            if (!normalized) return null;
+
+            const previous = current ? copyRecord(current) : null;
+
+            locks[key] = normalized;
+            try {
+                await queueWrite();
+                return copyRecord(normalized);
+            } catch (error) {
+                if (previous) locks[key] = previous;
+                else delete locks[key];
+                throw error;
+            }
+        });
+    }
+
     // 受限的 durable 更新：只在串行 mutation 内读取当前记录、应用 updater、
     // 校验身份字段不可变、durable write 成功后才提交内存；失败回滚并抛错。
     function update(guildId, userId, updater) {
@@ -273,6 +299,7 @@ function createMysteryNicknameLockStore({ filePath, fsImpl = fs, now = Date.now 
         save,
         remove,
         removeLegacy,
+        replaceLock,
         update,
         listExpired,
         flush,
