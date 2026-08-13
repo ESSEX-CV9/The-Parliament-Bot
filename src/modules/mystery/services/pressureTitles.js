@@ -23,17 +23,12 @@ function isCursed(row) {
     return luckOf(row) <= -LUCK_EPSILON;
 }
 
-// 加压现在是半分钟一步，累计时长也可能是 .5 结尾，显示精度对齐到 0.5（3.5 → "3.5"）。
 function formatMinutes(minutes) {
-    const total = Math.max(0, Number(minutes) || 0);
-    const roundHalf = value => {
-        const half = Math.round(value * 2) / 2;
-        return Number.isInteger(half) ? String(half) : half.toFixed(1);
-    };
-    if (total < 60) return `${roundHalf(total)} 分钟`;
+    const total = Math.max(0, Math.round(Number(minutes) || 0));
+    if (total < 60) return `${total} 分钟`;
     const hours = Math.floor(total / 60);
     const rest = total % 60;
-    return rest === 0 ? `${hours} 小时` : `${hours} 小时 ${roundHalf(rest)} 分钟`;
+    return rest === 0 ? `${hours} 小时` : `${hours} 小时 ${rest} 分钟`;
 }
 
 function formatLuck(value) {
@@ -59,8 +54,7 @@ const METRICS = Object.freeze([
     {
         key: 'luck',
         label: '🍀 运气值',
-        hint: '理论该中的枪数减去实际中弹数，正数是欧皇。'
-            + `按扣扳机那一刻的实弹概率算，哑弹不计入分子。需累计开枪 ${MIN_LUCK_SHOTS} 次以上才上榜。`,
+        hint: `理论该中的枪数减去实际中弹数，正数是欧皇。需累计开枪 ${MIN_LUCK_SHOTS} 次以上才上榜。`,
         value: luckOf,
         format: formatLuck,
         eligible: row => row.shots_fired >= MIN_LUCK_SHOTS,
@@ -115,14 +109,6 @@ const METRICS = Object.freeze([
         value: row => row.hits_taken,
         format: value => `${value} 次`,
         eligible: row => row.hits_taken >= 1,
-    },
-    {
-        key: 'duds',
-        label: '😶 哑弹次数',
-        hint: '扣下扳机、击针砸了下去，子弹却没响。摸到次品的次数最多的人。',
-        value: row => row.duds_fired || 0,
-        format: value => `${value} 发`,
-        eligible: row => (row.duds_fired || 0) >= 1,
     },
     {
         key: 'quits',
@@ -240,17 +226,6 @@ const THRONES = Object.freeze([
         higherIsBetter: true,
     },
     {
-        id: 'dud_king',
-        emoji: '😶',
-        name: '哑弹之神',
-        blurb: '这箱子里的次品好像都归他打，运气都用在这上面了。',
-        rule: '打出哑弹次数最多（至少 1 次）',
-        value: row => row.duds_fired || 0,
-        format: value => `${value} 发`,
-        eligible: row => (row.duds_fired || 0) >= 1,
-        higherIsBetter: true,
-    },
-    {
         id: 'jailbird',
         emoji: '⛓️',
         name: '牢底坐穿',
@@ -359,17 +334,10 @@ const ACHIEVEMENTS = Object.freeze([
         test: row => row.timeout_minutes >= 60,
     },
     {
-        id: 'dud_collector',
-        emoji: '🫧',
-        name: '次品鉴定师',
-        rule: '累计打出 10 发哑弹',
-        test: row => (row.duds_fired || 0) >= 10,
-    },
-    {
         id: 'bomb_squad',
         emoji: '🔧',
         name: '拆弹专家',
-        rule: '累计退弹 10 次',
+        rule: '累计抽弹 10 次',
         test: row => row.unloads >= 10,
     },
     {

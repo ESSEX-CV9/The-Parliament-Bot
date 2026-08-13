@@ -7,38 +7,47 @@ const {
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
+    PermissionFlagsBits,
 } = require('discord.js');
 const nicknameLock = require('./mysteryNicknameLock');
 const { ORDINARY_LOCK_TYPES } = require('./mysteryNicknameLockService');
 
-const PUNISHMENT_CUSTOM_ID_PREFIX = 'mystery_duel_punishment';
-const RENAME_MODAL_CUSTOM_ID_PREFIX = 'mystery_duel_rename';
-const RENAME_INPUT_ID = 'duel_rename_input';
+const PUNISHMENT_CUSTOM_ID_PREFIX = 'mystery_devil_punishment';
+const RENAME_MODAL_CUSTOM_ID_PREFIX = 'mystery_devil_rename';
+const RENAME_INPUT_ID = 'devil_rename_input';
 
 const DECISION_DURATION_MS = 30_000;
 const RENAME_WINDOW_MS = 60_000;
-const RENAME_LOCK_DURATION_MS = 5 * 60_000;
-const MUTE_DURATION_MS = 3 * 60_000;
+const RENAME_LOCK_DURATION_MS = 10 * 60_000;
+const MUTE_DURATION_MS = 5 * 60_000;
 
-const MUTE_REASON = '神秘指令：死斗';
-const RENAME_APPLY_REASON = '神秘指令：死斗 — 赢家裁决改名';
-const RENAME_RESTORE_REASON = '神秘指令：死斗 — 赢家裁决改名结束';
-const RENAME_ENFORCE_REASON = '神秘指令：死斗 — 赢家裁决改名';
+const MUTE_REASON = '神秘指令：恶魔轮盘';
+const RENAME_APPLY_REASON = '神秘指令：恶魔轮盘 — 赢家裁决改名';
+const RENAME_RESTORE_REASON = '神秘指令：恶魔轮盘 — 赢家裁决改名结束';
+const RENAME_ENFORCE_REASON = '神秘指令：恶魔轮盘 — 赢家裁决改名';
 
-const SHIELD_LINE = '🛡️ **但禁言被神秘力量阻挡，未能生效。**';
 const NOT_YOUR_RULING_MESSAGE = '🚫 **这不是你的裁决。**';
 const RULING_CLOSED_MESSAGE = '⌛ **裁决窗口已经关闭。**';
 const RULING_EXPIRED_MESSAGE = '⌛ **裁决已经过期或失效。**';
-const GENERIC_FAILURE_MESSAGE = '❌ **处理这次操作时出了点问题，请稍后再试。**';
-const EMPTY_NAME_MESSAGE = '✏️ **不能改名为空。**';
-const NAME_TOO_LONG_MESSAGE = '✏️ **昵称不能超过 32 个字符（emoji 按 1 个计算）。**';
-const RENAME_LOCKED_MESSAGE = '🚫 **对方当前已有其他神秘昵称锁，无法改名。**';
-const RENAME_FAILED_MESSAGE = '✏️ **改名未能生效，请稍后重试或选择禁言。**';
-const RENAME_PERSISTENCE_FAILED_MESSAGE = '✏️ **改名保存失败，请稍后重试或选择禁言。**';
-const LOSER_UNAVAILABLE_MESSAGE = '✏️ **对方已不在服务器或无法被改名。**';
+const EMPTY_NAME_MESSAGE = '✏️ **总得写点什么。**\n纯空格不算名字，再想一个。';
+const NAME_TOO_LONG_MESSAGE = '✏️ **名字太长了。**\nDiscord 昵称最多 **32 个字符**。\n削短一点再来。';
+const RENAME_LOCKED_MESSAGE = '🤡 **这名字暂时动不了。**\n对方当前还挂着**胆小鬼昵称锁**，这个牌子的优先级比你的改名裁决高。';
+const RENAME_FAILED_MESSAGE = '❌ **改名失败。**\nBot 当前无法修改对方的服务器昵称。\n本局处罚不会自动切换成其他选项。';
+const RENAME_PERSISTENCE_FAILED_MESSAGE = '❌ **改名保存失败。**\n本局处罚不会自动切换成其他选项。';
+const LOSER_UNAVAILABLE_MESSAGE = '❌ **对方已不在服务器或无法被改名。**';
+const COWARD_LOCKED_PROMPT = [
+    '## 🤡 这名字暂时动不了',
+    '',
+    '对方当前还挂着**胆小鬼昵称锁**。',
+    '这个牌子的优先级比你的改名裁决高。',
+    '',
+    '本局只能选择：',
+    '**🔇 禁言 5 分钟**',
+].join('\n');
 
-function createDuelPunishmentService({
+function createDevilRoulettePunishmentService({
     nicknameLockService = nicknameLock.service,
+    nicknameLockStore = nicknameLock.store,
     now = Date.now,
     setTimeoutImpl = setTimeout,
     clearTimeoutImpl = clearTimeout,
@@ -47,7 +56,7 @@ function createDuelPunishmentService({
 
     function logFailure(operation, session, error) {
         console.error(
-            `[DuelPunishment] ${operation} (session=${session?.id || 'unknown'}, guild=${session?.guildId || 'unknown'}):`,
+            `[DevilRoulettePunishment] ${operation} (session=${session?.id || 'unknown'}, guild=${session?.guildId || 'unknown'}):`,
             error
         );
     }
@@ -84,9 +93,8 @@ function createDuelPunishmentService({
             session.timers.renameExpiry = null;
             return enqueue(session, async () => {
                 if (session.state !== 'rename_chosen') return false;
-                session.state = 'expired';
-                await updateFinalMessage(session, renameExpiredDescription());
-                return true;
+                // 60 秒未成功提交：自动切换为禁言 5 分钟。
+                return claimRenameFallback(session);
             }).catch(error => {
                 logFailure('rename-window timer', session, error);
             });
@@ -110,89 +118,143 @@ function createDuelPunishmentService({
 
     function buildDecisionRow(session) {
         const base = `${PUNISHMENT_CUSTOM_ID_PREFIX}:${session.id}:${session.effectToken}`;
-        return new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId(`${base}:mute`)
-                .setLabel('🔇 禁言 3 分钟')
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId(`${base}:rename`)
-                .setLabel('✏️ 改名 5 分钟')
-                .setStyle(ButtonStyle.Secondary)
-        );
+        const row = new ActionRowBuilder();
+        if (session.canMute) {
+            row.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`${base}:mute`)
+                    .setLabel('🔇 禁言 5 分钟')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        }
+        if (session.canRename) {
+            row.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`${base}:rename`)
+                    .setLabel('✏️ 改名 10 分钟')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        }
+        return row;
     }
 
     function buildRenameModal(session) {
         const input = new TextInputBuilder()
             .setCustomId(RENAME_INPUT_ID)
-            .setLabel('新的昵称（最多 32 字符）')
+            .setLabel('新的服务器昵称')
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
-            .setMaxLength(32);
+            .setMaxLength(32)
+            .setPlaceholder('1～32个字符');
         return new ModalBuilder()
             .setCustomId(`${RENAME_MODAL_CUSTOM_ID_PREFIX}:${session.id}:${session.effectToken}`)
-            .setTitle('赢家裁决 — 赐名')
+            .setTitle('给败者留个名字')
             .addComponents(new ActionRowBuilder().addComponents(input));
     }
 
     function decisionPrompt(session) {
-        return [
-            '⚖️ **赢家裁决**',
+        const lines = [
+            '## 👿 赌桌已经分出胜负',
             '',
-            `胜者 <@${session.winnerId}>，请选择对 <@${session.loserId}> 的处罚：`,
+            `<@${session.loserId}> 输了。`,
             '',
-            '🔇 **禁言 3 分钟** 或 ✏️ **改名 5 分钟**。',
+            '现在轮到你决定，他要从这里带走什么。',
             '',
-            '不选择的话，30 秒后自动按 **禁言 3 分钟** 处理。',
-        ].join('\n');
+            '**你有 30 秒。**',
+        ];
+        if (session.cowardLocked) {
+            lines.push('', COWARD_LOCKED_PROMPT);
+        } else if (session.canMute && session.canRename) {
+            lines.push('', '🔇 **禁言 5 分钟** 或 ✏️ **改名 10 分钟**。');
+        } else if (session.canMute) {
+            lines.push('', '⚠️ Bot 当前无法修改对方昵称，只能：🔇 **禁言 5 分钟**。');
+        } else if (session.canRename) {
+            lines.push('', '⚠️ Bot 当前无法禁言对方，只能：✏️ **改名 10 分钟**。');
+        }
+        return lines.join('\n');
     }
 
     function muteAppliedDescription(mode) {
         const prefix = mode === 'auto'
-            ? '🔇 **赢家未在 30 秒内选择，败者自动被禁言 3 分钟。**'
-            : '🔇 **赢家裁决：败者禁言 3 分钟。**';
-        return [prefix, '', '败者 3 分钟后自动解禁。'].join('\n');
+            ? '⏳ 赢家迟迟没有下决定。\n\n🔇 **恶魔替他做了选择：败者禁言 5 分钟。**'
+            : '🔇 **赢家裁决：败者禁言 5 分钟。**';
+        return [prefix, '', '败者 5 分钟后自动解禁。'].join('\n');
     }
 
     function muteTimeoutFailedDescription(mode) {
         const prefix = mode === 'auto'
-            ? '🔇 **赢家未在 30 秒内选择，败者应被禁言 3 分钟。**'
-            : '🔇 **赢家裁决：败者应禁言 3 分钟。**';
-        return [prefix, '', SHIELD_LINE].join('\n');
+            ? '⏳ 赢家迟迟没有下决定，本应自动禁言败者 5 分钟。'
+            : '🔇 **赢家裁决：败者应禁言 5 分钟。**';
+        return [prefix, '', '⚠️ **禁言处罚执行失败。**\n本局胜负仍然有效。'].join('\n');
     }
 
     function renameAppliedDescription(name, winnerId, loserId) {
         return [
-            '✏️ **赢家裁决：赐名成功**',
+            '✏️ **赢家将败者改名为：**',
             '',
-            `<@${winnerId}> 将 <@${loserId}> 赐名为：`,
+            `## 「${name}」`,
             '',
-            `「${name}」`,
+            '**持续 10 分钟。**',
             '',
-            '**5 分钟后自动恢复原昵称。**',
+            `—— <@${winnerId}> 的裁决，<@${loserId}> 的新名字。`,
         ].join('\n');
     }
 
     function renameExpiredDescription() {
         return [
-            '⌛ **赢家未在限时内完成改名，裁决窗口已关闭。**',
+            '⌛ 赢家想了太久，名字最终没写下来。',
             '',
-            '不再自动禁言。',
+            '🔇 **自动改为禁言 5 分钟。**',
         ].join('\n');
+    }
+
+    function renameTimeoutFailedDescription() {
+        return [
+            '⌛ 赢家想了太久，名字最终没写下来。',
+            '',
+            '本应自动改为禁言 5 分钟，但：',
+            '⚠️ **禁言处罚执行失败。**\n本局胜负仍然有效。',
+        ].join('\n');
+    }
+
+    function noPunishmentPossibleDescription() {
+        return [
+            '⚠️ Bot 当前无法对败者执行处罚。',
+            '',
+            '**本局仅结算胜负。**',
+        ].join('\n');
+    }
+
+    // 私密裁决面板/回执 2 分钟后自动删除，避免堆积。
+    const PRIVATE_TTL_MS = 2 * 60 * 1000;
+    const privateDeleteTimers = new Set();
+
+    function schedulePrivateCleanup(message) {
+        if (!message || typeof message.delete !== 'function') return;
+        const timer = setTimeoutImpl(() => {
+            privateDeleteTimers.delete(timer);
+            message.delete().catch(() => {});
+        }, PRIVATE_TTL_MS);
+        timer?.unref?.();
+        privateDeleteTimers.add(timer);
     }
 
     async function safeReply(interaction, payload, fallbackContent) {
         if (!interaction) return false;
         try {
+            let message = null;
             if (interaction.deferred && !interaction.replied && typeof interaction.editReply === 'function') {
                 await interaction.editReply(payload);
+                message = await interaction.fetchReply?.() || null;
             } else if (interaction.replied && typeof interaction.followUp === 'function') {
-                await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral });
+                message = await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral }) || null;
             } else if (!interaction.replied && typeof interaction.reply === 'function') {
                 await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+                message = await interaction.fetchReply?.() || null;
             } else {
                 return false;
             }
+            schedulePrivateCleanup(message);
             return true;
         } catch (error) {
             logFailure('ephemeral reply', null, error);
@@ -240,13 +302,19 @@ function createDuelPunishmentService({
         }
     }
 
+    // 只延长、绝不缩短：最终 = max(现有到期, now + 5min)。
     async function applyMute(session) {
         const member = await fetchLoser(session);
         if (!member || typeof member.timeout !== 'function') {
             return { ok: false, reason: 'member_missing' };
         }
         try {
-            await member.timeout(MUTE_DURATION_MS, MUTE_REASON);
+            const existingUntil = Number(member.communicationDisabledUntilTimestamp) || 0;
+            const until = Math.max(existingUntil, now() + MUTE_DURATION_MS);
+            if (until === existingUntil && existingUntil > now()) {
+                return { ok: true, already: true };
+            }
+            await member.timeout(until - now(), MUTE_REASON);
             return { ok: true };
         } catch (error) {
             logFailure('apply mute', session, error);
@@ -257,7 +325,7 @@ function createDuelPunishmentService({
     function describeMuteOutcome(session, outcome, mode) {
         if (outcome.ok) return muteAppliedDescription(mode);
         if (outcome.reason === 'timeout_failed') return muteTimeoutFailedDescription(mode);
-        return '🔇 **裁决：禁言 3 分钟。**\n\n败者已离开服务器或无法执行禁言。';
+        return '🔇 **裁决：禁言 5 分钟。**\n\n败者已离开服务器或无法执行禁言。';
     }
 
     async function claimNoChoice(session) {
@@ -341,6 +409,10 @@ function createDuelPunishmentService({
             await safeReply(interaction, { content: RULING_CLOSED_MESSAGE });
             return true;
         }
+        if (!session.canRename) {
+            await safeReply(interaction, { content: session.cowardLocked ? RENAME_LOCKED_MESSAGE : LOSER_UNAVAILABLE_MESSAGE });
+            return true;
+        }
         try {
             await interaction.showModal?.(buildRenameModal(session));
         } catch (error) {
@@ -357,6 +429,18 @@ function createDuelPunishmentService({
         });
     }
 
+    // 改名 60 秒窗口到期：自动切换为禁言 5 分钟。
+    async function claimRenameFallback(session) {
+        session.state = 'mute_chosen';
+        const outcome = await applyMute(session);
+        session.state = 'applied';
+        const description = outcome.ok
+            ? renameExpiredDescription()
+            : renameTimeoutFailedDescription();
+        await updateFinalMessage(session, description);
+        return true;
+    }
+
     async function handleRenameSubmit(interaction, session) {
         const rawName = interaction.fields?.getTextInputValue?.(RENAME_INPUT_ID);
         const name = String(rawName ?? '').trim();
@@ -371,7 +455,15 @@ function createDuelPunishmentService({
         if (!await deferEphemeral(interaction)) return true;
 
         return enqueue(session, async () => {
-            if (session.state !== 'rename_chosen' || now() > session.renameExpiresAt) {
+            // 60 秒 deadline 不因非法输入刷新；超时自动落到禁言。
+            if (session.state !== 'rename_chosen') {
+                await safeReply(interaction, { content: RULING_EXPIRED_MESSAGE });
+                return true;
+            }
+            if (now() > session.renameExpiresAt) {
+                session.state = 'mute_chosen';
+                clearTimer(session, 'renameExpiry');
+                await claimRenameFallback(session);
                 await safeReply(interaction, { content: RULING_EXPIRED_MESSAGE });
                 return true;
             }
@@ -382,11 +474,9 @@ function createDuelPunishmentService({
                 return true;
             }
 
-            // 普通锁互覆：duel_rename 可覆盖 duel_rename / devil_roulette_rename，
-            // coward 最高级不可被覆盖（返回 existing_lock）。
             const result = await nicknameLockService.replaceLock({
                 member: loser,
-                type: 'duel_rename',
+                type: 'devil_roulette_rename',
                 enforcedNickname: name,
                 expiresAt: now() + RENAME_LOCK_DURATION_MS,
                 applyReason: RENAME_APPLY_REASON,
@@ -405,6 +495,11 @@ function createDuelPunishmentService({
                     await safeReply(interaction, { content: LOSER_UNAVAILABLE_MESSAGE });
                 } else {
                     await safeReply(interaction, { content: RENAME_FAILED_MESSAGE });
+                }
+                // 改名失败不自动换禁言：裁决窗口直接关闭。
+                if (session.state === 'rename_chosen') {
+                    session.state = 'applied';
+                    clearTimer(session, 'renameExpiry');
                 }
                 return true;
             }
@@ -463,6 +558,23 @@ function createDuelPunishmentService({
         return false;
     }
 
+    // 结算时评估 Bot 自身权限与 loser 锁状态（参考死斗机制：成员级 moderatable/
+    // manageable 不在面板层预检——成员 fetch 可能因网络波动失败，误伤赐名按钮；
+    // 真正的成员级失败在执行时自然暴露并给出对应文案）。
+    function evaluateCapabilities({ guild, loserId }) {
+        const me = guild?.members?.me || null;
+        const canMute = me?.permissions?.has?.(PermissionFlagsBits.ModerateMembers) === true;
+        const canRenameBase = me?.permissions?.has?.(PermissionFlagsBits.ManageNicknames) === true;
+        const record = nicknameLockStore.get(guild?.id, loserId);
+        const cowardLocked = record?.type === 'coward';
+        return {
+            canMute,
+            canRename: canRenameBase && !cowardLocked,
+            cowardLocked,
+            anyPossible: canMute || (canRenameBase && !cowardLocked),
+        };
+    }
+
     function start({
         id,
         guildId,
@@ -474,12 +586,13 @@ function createDuelPunishmentService({
         client,
         channelId,
     }) {
+        const capabilities = evaluateCapabilities({ guild, loserId });
         const session = {
             id,
             guildId,
             winnerId,
             loserId,
-            state: 'pending',
+            state: capabilities.anyPossible ? 'pending' : 'none',
             effectToken,
             decisionExpiresAt: now() + DECISION_DURATION_MS,
             renameExpiresAt: null,
@@ -487,11 +600,21 @@ function createDuelPunishmentService({
             guild,
             client,
             channelId,
+            canMute: capabilities.canMute,
+            canRename: capabilities.canRename,
+            cowardLocked: capabilities.cowardLocked,
             queue: Promise.resolve(),
             timers: { autoMute: null, renameExpiry: null },
         };
         sessions.set(id, session);
-        scheduleAutoMute(session);
+        if (session.state === 'pending') {
+            scheduleAutoMute(session);
+        } else {
+            // 两种处罚都无法执行：只结算胜负。
+            void enqueue(session, async () => {
+                await updateFinalMessage(session, noPunishmentPossibleDescription());
+            });
+        }
         return session;
     }
 
@@ -505,6 +628,10 @@ function createDuelPunishmentService({
             clearTimer(session, 'renameExpiry');
         }
         sessions.clear();
+        for (const timer of privateDeleteTimers) {
+            clearTimeoutImpl(timer);
+        }
+        privateDeleteTimers.clear();
     }
 
     return {
@@ -519,14 +646,15 @@ function createDuelPunishmentService({
         handleInteraction,
         expire,
         buildEntryRow,
+        evaluateCapabilities,
         resetForTests,
     };
 }
 
-const defaultService = createDuelPunishmentService();
+const defaultService = createDevilRoulettePunishmentService();
 
 module.exports = {
-    createDuelPunishmentService,
+    createDevilRoulettePunishmentService,
     defaultService,
     PUNISHMENT_CUSTOM_ID_PREFIX,
     RENAME_MODAL_CUSTOM_ID_PREFIX,

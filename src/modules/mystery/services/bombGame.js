@@ -74,8 +74,13 @@ function randomIndex(length, randomValue) {
     return Math.min(length - 1, Math.max(0, Math.floor(randomValue * length)));
 }
 
-function randomExplosionDelayMs(randomInteger = randomInt) {
-    return randomInteger(1, 121) * 1000;
+function randomExplosionDelayMs(randomValue = Math.random(), randomIntValue) {
+    const intFn = typeof randomIntValue === 'function' ? randomIntValue : randomInt;
+    let minSec, maxSec;
+    if (randomValue < 0.15) { minSec = 1; maxSec = 50; }
+    else if (randomValue < 0.50) { minSec = 51; maxSec = 100; }
+    else { minSec = 101; maxSec = 150; }
+    return (minSec + intFn(0, maxSec - minSec)) * 1000;
 }
 
 function makeEmbed(description) {
@@ -95,10 +100,12 @@ function recruitmentDescription(game, participantCount = game.participantIds.len
         '- 满 **8 人**立即开始',
         '- 未满 8 人将在 **3 分钟后**尝试开始',
         '- 开局后炸弹会随机出现在一名玩家手中',
+        '- 炸弹最多撑 **150 秒**；爆炸时持有炸弹的人将被 **禁言 5 分钟**',
+        '- 面板上的 🟢🟡🔴 是危险等级提示，不会显示准确剩余时间',
         '- 拿到炸弹的人可以把它传给其他参与者',
-        '- 炸弹什么时候爆炸，没人知道',
-        '- 爆炸时持有炸弹的人将被 **禁言 5 分钟**',
-        '- 当前持有者也可以尝试拆弹，成功率 **50%**',
+        '- 但不能把炸弹原路传回上一位持有者',
+        '- 本局第一次拿到炸弹时拆弹尚未解锁',
+        '- 第二次及以后拿到，永久解锁拆弹（成功率 **50%**）',
         '- 拆弹失败会当场爆炸，拆弹者被 **禁言 10 分钟**',
         '- 拆弹成功可在 30 秒内指定其他参与者；目标会立刻爆炸并被 **禁言 5 分钟**',
         '- 超时未指定则随机选择目标；没有其他有效目标时由拆弹者承担',
@@ -124,7 +131,7 @@ function recruitmentClosedDescription(count) {
     ].join('\n');
 }
 
-function firstHolderDescription(snapshot) {
+function firstHolderDescription(game, snapshot) {
     return [
         `💣 **恭喜 <@${snapshot.currentHolderId}> 成为第一位倒霉蛋。**`,
         '',
@@ -135,12 +142,23 @@ function firstHolderDescription(snapshot) {
         '',
         `**当前持有者：<@${snapshot.currentHolderId}>**`,
         '**已传递：0 次**',
+        '',
+        dangerDescription(game),
+        holdCountDescription(game, snapshot.currentHolderId),
     ].join('\n');
 }
 
-function passDescription(fromId, toId, count, randomValue) {
+function passDescription(game, fromId, toId, count, randomValue) {
     const copy = PASS_COPY_BUILDERS[randomIndex(PASS_COPY_BUILDERS.length, randomValue)](fromId, toId);
-    return `${copy}\n\n**当前持有者：<@${toId}>**\n**已传递：${count} 次**`;
+    return [
+        copy,
+        '',
+        dangerDescription(game),
+        holdCountDescription(game, toId),
+        '',
+        `**当前持有者：<@${toId}>**`,
+        `**已传递：${count} 次**`,
+    ].join('\n');
 }
 
 function explosionDescription(game, timeoutFailed) {
@@ -176,22 +194,27 @@ function cancellationAfterInvalidationDescription() {
     ].join('\n');
 }
 
-function reassignmentDescription(userId, holderId, reason) {
-    if (reason === 'timeout' || reason === 'member-timeout') {
-        return [
+function reassignmentDescription(game, userId, holderId, reason) {
+    const baseLines = reason === 'timeout' || reason === 'member-timeout'
+        ? [
             `🔇 **<@${userId}> 突然失去了说话的资格。**`,
             '',
             '他已从本局游戏中移除。',
             '',
             `💣 炸弹随机落到了 **<@${holderId}>** 手里。`,
-        ].join('\n');
-    }
+        ]
+        : [
+            `🚪 **<@${userId}> 带着跑路的想法离开了服务器。**`,
+            '',
+            '可惜炸弹不能就这么消失。',
+            '',
+            `💣 炸弹随机落到了 **<@${holderId}>** 手里。`,
+        ];
     return [
-        `🚪 **<@${userId}> 带着跑路的想法离开了服务器。**`,
+        ...baseLines,
         '',
-        '可惜炸弹不能就这么消失。',
-        '',
-        `💣 炸弹随机落到了 **<@${holderId}>** 手里。`,
+        dangerDescription(game),
+        holdCountDescription(game, holderId),
     ].join('\n');
 }
 
@@ -205,7 +228,46 @@ function joinRow(gameId, disabled = false) {
     );
 }
 
-function passRow(gameId, messageToken, disabled = false) {
+const DEFUSE_LOCKED_MESSAGE = '🔒 **你还没摸熟这东西。**\n\n这是你本局第一次拿到炸弹。\n至少活着再接到一次，才能尝试拆弹。';
+const IMMEDIATE_RETURN_MESSAGE = '↩️ **这锅不能原路退回。**\n\n炸弹刚从对方手里过来，\n至少先祸害一下别人。';
+
+function dangerLevel(game) {
+    const elapsed = Math.max(0, Math.floor((nowFor(game) - game.startedAt) / 1000));
+    if (elapsed <= 50) return 'green';
+    if (elapsed <= 100) return 'yellow';
+    return 'red';
+}
+
+function dangerDescription(game) {
+    const level = dangerLevel(game);
+    if (level === 'green') {
+        return '🟢 **炸弹状态：暂时还算安分**\n滴答声听起来还没那么着急。';
+    }
+    if (level === 'yellow') {
+        return '🟡 **炸弹状态：开始不太对劲了**\n滴答声明显快了不少，建议别拿太久。';
+    }
+    return '🔴 **炸弹状态：非常危险**\n这东西现在在谁手里，谁最好别想太久。';
+}
+
+function holdCountDescription(game, userId) {
+    const count = game.holdCount?.get(userId) || 0;
+    const canDefuse = count >= 2;
+    const lines = [
+        '',
+        `这是你本局第 **${count} 次**拿到炸弹。`,
+    ];
+    if (!canDefuse) {
+        lines.push('');
+        lines.push('🔒 **拆弹尚未解锁**');
+        lines.push('活着再接到一次，才能尝试拆弹。');
+    } else {
+        lines.push('');
+        lines.push('🛡️ **拆弹已解锁**');
+    }
+    return lines.join('\n');
+}
+
+function passRow(gameId, messageToken, { disabled = false, defuseLocked = false } = {}) {
     return new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`mystery_bomb_pass:${gameId}:${messageToken}`)
@@ -214,9 +276,9 @@ function passRow(gameId, messageToken, disabled = false) {
             .setDisabled(disabled),
         new ButtonBuilder()
             .setCustomId(`mystery_bomb_defuse:${gameId}:${messageToken}`)
-            .setLabel('🛡️ 拆弹')
+            .setLabel(disabled ? '🛡️ 拆弹' : (defuseLocked ? '🔒 拆弹未解锁' : '🛡️ 拆弹'))
             .setStyle(ButtonStyle.Success)
-            .setDisabled(disabled)
+            .setDisabled(disabled || defuseLocked)
     );
 }
 
@@ -293,10 +355,10 @@ function recruitmentPayload(game, disabled = false, description = recruitmentDes
     };
 }
 
-function bombPayload(gameId, messageToken, description, disabled = false) {
+function bombPayload(gameId, messageToken, description, { disabled = false, defuseLocked = false } = {}) {
     return {
         embeds: [makeEmbed(description)],
-        components: [passRow(gameId, messageToken, disabled)],
+        components: [passRow(gameId, messageToken, { disabled, defuseLocked })],
     };
 }
 
@@ -459,7 +521,7 @@ function invalidateBombMessage(game, message, token, action, keepMessage = false
     if (!message) return Promise.resolve(false);
     return lifecycleFor(game).invalidatePanel(message, {
         keepMessage,
-        disablePayload: { components: [passRow(game.id, token, true)] },
+        disablePayload: { components: [passRow(game.id, token, { disabled: true })] },
         context: panelContext(game, action),
     });
 }
@@ -864,11 +926,13 @@ async function finishRecruitment(game) {
         const currentTime = nowFor(game);
         game.state = 'active';
         game.startedAt = currentTime;
-        game.explodeAt = currentTime + randomExplosionDelayMs();
+        game.explodeAt = currentTime + randomExplosionDelayMs(randomFor(game), game.randomInt);
         game.currentHolderId = game.participantIds[randomIndex(game.participantIds.length, randomFor(game))];
+        game.previousHolderId = null;
         game.holderSince = currentTime;
         game.passCount = 0;
         game.messageToken = 1;
+        game.holdCount = new Map([[game.currentHolderId, 1]]);
         installExplosionTimer(game);
         activationSnapshot = {
             participantIds: [...game.participantIds],
@@ -887,7 +951,8 @@ async function finishRecruitment(game) {
     const firstPayload = bombPayload(
         game.id,
         activationSnapshot.messageToken,
-        firstHolderDescription(activationSnapshot)
+        firstHolderDescription(game, activationSnapshot),
+        { defuseLocked: true }
     );
     const firstMessage = await queuePublicWrite(game, async () => {
         if (
@@ -917,6 +982,18 @@ async function finishRecruitment(game) {
                 recruitmentClosedDescription(activationSnapshot.participantIds.length)
             ),
         });
+
+        // 开局真实 Ping 一次
+        try {
+            await game.channel?.send({
+                content: '💣 **「传炸弹」开始了！**\n'
+                    + activationSnapshot.participantIds.map(id => `<@${id}>`).join(' ')
+                    + '\n\n别聊忘了，炸弹可不等人。',
+                allowedMentions: { parse: [], users: activationSnapshot.participantIds },
+            });
+        } catch (error) {
+            logDiscordFailure(game, 'start-ping', error);
+        }
     }
     return firstMessage !== PANEL_SKIPPED;
 }
@@ -1225,6 +1302,7 @@ async function handlePassButton(interaction, game, messageToken) {
     const options = [];
     for (const userId of participantIds) {
         if (userId === actorId) continue;
+        if (userId === game.previousHolderId) continue;
         const member = await safeFetchMember(game, userId);
         if (!isValidHumanMember(member)) continue;
         const label = member.displayName || member.user.globalName || member.user.username || userId;
@@ -1294,6 +1372,11 @@ async function submitBombMutation(game, input = {}) {
         }
 
         if (input.kind === 'defuse') {
+            const holderCount = game.holdCount?.get(input.userId) || 0;
+            if (holderCount < 2) {
+                result = { accepted: false, outcome: 'rejected', reason: 'defuse_locked' };
+                return;
+            }
             const outcome = defuseSucceeds(game) ? 'defuse_success' : 'defuse_failure';
             game.state = outcome === 'defuse_success' ? 'defuse_targeting' : 'defusing';
             game.finalHolderId = game.currentHolderId;
@@ -1308,6 +1391,10 @@ async function submitBombMutation(game, input = {}) {
             result = { accepted: false, outcome: 'rejected', reason: 'kind' };
             return;
         }
+        if (input.targetId === game.previousHolderId) {
+            result = { accepted: false, outcome: 'rejected', reason: 'immediate_return' };
+            return;
+        }
         if (
             input.targetId === input.userId
             || !game.participantIds.includes(input.targetId)
@@ -1320,12 +1407,16 @@ async function submitBombMutation(game, input = {}) {
         const oldMessage = game.currentMessage;
         const oldToken = game.messageToken;
         const randomValue = randomFor(game);
+        const fromId = game.currentHolderId;
+        game.previousHolderId = fromId;
         game.currentHolderId = input.targetId;
         game.holderSince = currentTime;
         game.passCount += 1;
         game.messageToken += 1;
+        game.holdCount ||= new Map();
+        game.holdCount.set(input.targetId, (game.holdCount.get(input.targetId) || 0) + 1);
         passCommit = {
-            fromId: input.userId,
+            fromId,
             toId: input.targetId,
             oldMessage,
             oldToken,
@@ -1357,14 +1448,16 @@ async function submitBombMutation(game, input = {}) {
             || game.messageToken !== passCommit.newToken
             || game.currentHolderId !== passCommit.toId
         ) return PANEL_SKIPPED;
+        const newHolderCount = game.holdCount?.get(passCommit.toId) || 0;
         const payload = {
             embeds: [makeEmbed(passDescription(
+                game,
                 passCommit.fromId,
                 passCommit.toId,
                 passCommit.passCount,
                 passCommit.randomValue
             ))],
-            components: [passRow(game.id, passCommit.newToken)],
+            components: [passRow(game.id, passCommit.newToken, { defuseLocked: newHolderCount < 2 })],
         };
         const message = await safeSend(game, payload, 'pass-message');
         if (message) {
@@ -1418,7 +1511,9 @@ async function handleTargetSelect(interaction, game, messageToken) {
         ? TARGET_INVALID_MESSAGE
         : result.reason === 'holder'
             ? NOT_HOLDER_MESSAGE
-            : EXPIRED_MESSAGE;
+            : result.reason === 'immediate_return'
+                ? IMMEDIATE_RETURN_MESSAGE
+                : EXPIRED_MESSAGE;
     await safeEphemeralReply(interaction, content, game);
     return false;
 }
@@ -1429,6 +1524,10 @@ async function handleDefuseButton(interaction, game, messageToken) {
         userId: interaction.user?.id,
         messageToken,
     });
+    if (!result.accepted && result.reason === 'defuse_locked') {
+        await safeEphemeralReply(interaction, DEFUSE_LOCKED_MESSAGE, game);
+        return false;
+    }
     if (result.accepted && result.outcome === 'defuse_success') {
         const options = [];
         for (const userId of game.participantIds || []) {
@@ -1554,9 +1653,12 @@ async function handleBombMemberInvalidated(game, userId, reason) {
         const oldMessage = game.currentMessage;
         const oldToken = game.messageToken;
         const newHolderId = game.participantIds[randomIndex(game.participantIds.length, randomFor(game))];
+        game.previousHolderId = null;
         game.currentHolderId = newHolderId;
         game.holderSince = currentTime;
         game.messageToken += 1;
+        game.holdCount ||= new Map();
+        game.holdCount.set(newHolderId, (game.holdCount.get(newHolderId) || 0) + 1);
         reassignment = {
             newHolderId,
             oldMessage,
@@ -1589,9 +1691,10 @@ async function handleBombMemberInvalidated(game, userId, reason) {
                 || game.messageToken !== reassignment.newToken
                 || game.currentHolderId !== reassignment.newHolderId
             ) return PANEL_SKIPPED;
+            const newHolderCount = game.holdCount?.get(reassignment.newHolderId) || 0;
             const payload = {
-                embeds: [makeEmbed(reassignmentDescription(userId, reassignment.newHolderId, reason))],
-                components: [passRow(game.id, reassignment.newToken)],
+                embeds: [makeEmbed(reassignmentDescription(game, userId, reassignment.newHolderId, reason))],
+                components: [passRow(game.id, reassignment.newToken, { defuseLocked: newHolderCount < 2 })],
             };
             const message = await safeSend(game, payload, 'member-invalidated-reassignment');
             if (message) {

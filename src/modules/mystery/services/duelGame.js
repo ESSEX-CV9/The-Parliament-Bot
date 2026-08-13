@@ -20,6 +20,7 @@ const CHANNEL_BUSY_MESSAGE = '🎮 **这里已经有一场游戏在进行了。*
 const INVALID_OPPONENT_MESSAGE = '⚔️ **这个对手现在无法参加死斗。**\n换个人再试试吧。';
 const GENERIC_FAILURE_MESSAGE = '❌ 处理神秘指令时出现错误，请稍后重试。';
 const WRONG_INVITEE_MESSAGE = '🚫 **这不是发给你的邀请。**';
+const CANCEL_NOT_YOURS_MESSAGE = '🚫 **这不是你发起的邀请。**';
 const TIMEOUT_BLOCKED_MESSAGE = '⚔️ **你现在无法参加死斗。**\n你当前还在禁言，暂时无法参加。';
 const INVALID_INITIATOR_MESSAGE = '⚔️ **你现在无法参加死斗。**';
 const EXPIRED_MESSAGE = '⌛ **这场死斗已经结束或失效了。**';
@@ -184,6 +185,35 @@ function acceptRow(gameId, disabled = false) {
     );
 }
 
+// 指定邀请：接受 / 拒绝 / 取消；公开招募：加入 / 取消（没有拒绝）。
+function invitationRows(game, disabled = false) {
+    const designated = Boolean(game.requestedOpponentId);
+    const primary = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`mystery_duel_accept:${game.id}`)
+            .setLabel(designated ? '⚔️ 接受死斗' : '⚔️ 加入死斗')
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(disabled)
+    );
+    if (designated) {
+        primary.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mystery_duel_reject:${game.id}`)
+                .setLabel('👋 拒绝')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(disabled)
+        );
+    }
+    const secondary = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`mystery_duel_cancel:${game.id}`)
+            .setLabel('✖️ 取消邀请')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(disabled)
+    );
+    return [primary, secondary];
+}
+
 function choiceRow(gameId, roundId) {
     return new ActionRowBuilder().addComponents(
         ...Object.entries(CHOICES).map(([choice, details]) => (
@@ -232,7 +262,7 @@ function invitationDescription(initiatorId, requestedOpponentId) {
 function invitationPayload(game, disabled = false, description) {
     return {
         embeds: [makeEmbed(description || invitationDescription(game.initiatorId, game.requestedOpponentId))],
-        components: [acceptRow(game.id, disabled)],
+        components: invitationRows(game, disabled),
     };
 }
 
@@ -332,12 +362,12 @@ async function disableInvitation(game) {
     if (game.componentsDisabled) return true;
     const disabled = game.panelRegistry
         ? await game.panelRegistry.retire(game.inviteMessage, {
-            disablePayload: { components: [acceptRow(game.id, true)] },
+            disablePayload: { components: invitationRows(game, true) },
             context: { action: 'duel-invitation' },
         })
         : await safeEdit(
             game.inviteMessage,
-            { components: [acceptRow(game.id, true)] },
+            { components: invitationRows(game, true) },
             game,
             'disable-invitation'
         );
@@ -679,7 +709,10 @@ async function expireInvitation(game) {
     return true;
 }
 
-async function startDuel(interaction, requestedOpponent) {
+async function startDuel(interaction, requestedOpponent, {
+    onGameStarted,
+    panelLifecycle = defaultPanelLifecycle,
+} = {}) {
     const userId = interaction.user?.id;
     const guildId = interaction.guildId || interaction.guild?.id;
     const channelId = interaction.channelId;
@@ -696,8 +729,9 @@ async function startDuel(interaction, requestedOpponent) {
         state: 'inviting',
         timers: new Set(),
         publicWriteQueue: Promise.resolve(),
-        panelRegistry: createPanelRegistry({ lifecycle: defaultPanelLifecycle }),
+        panelRegistry: createPanelRegistry({ lifecycle: panelLifecycle }),
         originInteraction: interaction,
+        onGameStarted,
     };
 
     if (!await deferPublicStart(interaction, provisionalGame)) return false;
@@ -804,7 +838,7 @@ async function startDuel(interaction, requestedOpponent) {
         return false;
     }
     game.panelRegistry.track(game.inviteMessage, {
-        disablePayload: { components: [acceptRow(game.id, true)] },
+        disablePayload: { components: invitationRows(game, true) },
         context: { action: 'duel-invitation', guildId, gameId: game.id },
     });
 
@@ -895,6 +929,13 @@ async function handleAccept(interaction, game) {
         return false;
     }
 
+    // 正式开局（邀请被接受）：双方进入冷却，由指令层按频道配置写入。
+    try {
+        game.onGameStarted?.([game.initiatorId, userId]);
+    } catch (error) {
+        logDiscordFailure(game, 'on-game-started', error, userId);
+    }
+
     const invitationDisabled = await disableInvitationWithRetry(game);
     if (!invitationDisabled) {
         await gameManager.runExclusive(game, () => {
@@ -906,8 +947,87 @@ async function handleAccept(interaction, game) {
         await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
         return false;
     }
+
+    // 开局真实 Ping 一次
+    try {
+        await game.channel?.send({
+            content: '⚔️ **「死斗」开始了！**\n'
+                + `<@${game.initiatorId}> <@${game.opponentId}>`
+                + '\n\n别聊忘了，石头剪刀布不等人。',
+            allowedMentions: { parse: [], users: [game.initiatorId, game.opponentId] },
+        });
+    } catch (error) {
+        logDiscordFailure(game, 'start-ping', error);
+    }
+
     const delivered = await deliverRoundPanels(game, round);
     return delivered === true;
+}
+
+async function handleReject(interaction, game) {
+    const userId = interaction.user?.id;
+    if (!game.requestedOpponentId) {
+        await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
+        return false;
+    }
+    if (userId !== game.requestedOpponentId) {
+        await safeEphemeralReply(interaction, WRONG_INVITEE_MESSAGE, game);
+        return false;
+    }
+    let ownsReject = false;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'inviting') return;
+        game.state = 'ended';
+        clearTimer(game, game.invitationTimer);
+        game.invitationTimer = null;
+        ownsReject = true;
+    });
+    if (!ownsReject) {
+        await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
+        return false;
+    }
+    await queuePublicWrite(game, () => safeSend(
+        game,
+        {
+            embeds: [makeEmbed(
+                `👋 <@${userId}> 拒绝了这场死斗。\n\n**邀请作废。**\n枪没拔出来，剑没出鞘，杀气散了。`
+            )],
+            components: [],
+        },
+        'duel-rejected'
+    ));
+    await cleanupDuelGame(game);
+    return true;
+}
+
+async function handleCancel(interaction, game) {
+    const userId = interaction.user?.id;
+    if (userId !== game.initiatorId) {
+        await safeEphemeralReply(interaction, CANCEL_NOT_YOURS_MESSAGE, game);
+        return false;
+    }
+    let ownsCancel = false;
+    await gameManager.runExclusive(game, () => {
+        if (game.ended || game.state !== 'inviting') return;
+        game.state = 'ended';
+        clearTimer(game, game.invitationTimer);
+        game.invitationTimer = null;
+        ownsCancel = true;
+    });
+    if (!ownsCancel) {
+        await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
+        return false;
+    }
+    await queuePublicWrite(game, () => safeSend(
+        game,
+        {
+            embeds: [makeEmbed(`🪑 <@${userId}> 收起了死斗邀请。\n\n**本场死斗取消。**\n杀气来得快去得也快。`)],
+            components: [],
+        },
+        'duel-cancelled'
+    ));
+    await cleanupDuelGame(game);
+    return true;
 }
 
 async function handleChoice(interaction, game, roundId, choice) {
@@ -961,6 +1081,8 @@ async function handleDuelInteraction(interaction, parts) {
         return false;
     }
     if (parsed.action === 'accept') return handleAccept(interaction, game);
+    if (parsed.action === 'reject') return handleReject(interaction, game);
+    if (parsed.action === 'cancel') return handleCancel(interaction, game);
     if (parsed.action === 'choice') {
         return handleChoice(interaction, game, parsed.roundId, parsed.choice);
     }

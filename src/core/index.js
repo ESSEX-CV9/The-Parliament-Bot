@@ -518,6 +518,22 @@ if (token.split('.').length !== 3) {
 // 确保后续模块（如命令同步）拿到的是清洗后的 token
 process.env.DISCORD_TOKEN = token;
 
+// 恶魔轮盘不做跨重启断点续局：进程退出前尽量给进行中的对局发出无责中止通知。
+const { shutdownAll: shutdownDevilRouletteGames } = require('../modules/mystery/services/devilRouletteGame');
+let devilShutdownRegistered = false;
+if (!devilShutdownRegistered) {
+    devilShutdownRegistered = true;
+    const devilShutdown = () => {
+        void shutdownDevilRouletteGames()
+            .catch(error => console.error('[DevilRoulette] shutdown cleanup failed:', error))
+            .finally(() => process.exit(0));
+        // 兜底：10 秒内没退出就强制结束，避免 Bot 卡在退出流程。
+        setTimeout(() => process.exit(0), 10_000).unref?.();
+    };
+    process.once('SIGINT', devilShutdown);
+    process.once('SIGTERM', devilShutdown);
+}
+
 client.login(token).catch((err) => {
     console.error('❌ Discord 登录失败。常见原因：Token 粘贴错误 / Token 已被重置失效 / 使用了非 Bot Token。');
     console.error(err);

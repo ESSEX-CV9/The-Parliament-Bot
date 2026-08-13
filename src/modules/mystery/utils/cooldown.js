@@ -1,20 +1,19 @@
-// 冷却按「服务器 + 用户 + 频道 + 游戏」计数：每个子区/帖子各算各的，
-// 时长由该频道解析出来的设置决定（见 services/channelAccessService.js）。
+// 冷却按「服务器 + 用户 + 游戏」计数：个人游戏冷却全服生效，换频道不能绕过；
+// 时长仍由本局实际所在频道解析出来的设置决定（见 services/channelAccessService.js）。
 const DEFAULT_COOLDOWN_DURATION_MS = 30 * 60 * 1000;
 
-// key 里带上 channelId 之后条目增长快得多，靠读取时的惰性删除清不干净，
-// 所以每写入 SWEEP_INTERVAL_WRITES 次就整体扫一遍过期项。
+// 靠读取时的惰性删除清不干净，所以每写入 SWEEP_INTERVAL_WRITES 次就整体扫一遍过期项。
 const SWEEP_INTERVAL_WRITES = 200;
 
 const cooldowns = new Map();
 const inFlight = new Set();
 let writesSinceSweep = 0;
 
-function buildCooldownKey(guildId, userId, channelId, subcommand) {
-    return `${guildId}:${userId}:${channelId}:${subcommand}`;
+function buildCooldownKey(guildId, userId, subcommand) {
+    return `${guildId}:${userId}:${subcommand}`;
 }
 
-// 并发锁不分频道：同一个人同一个游戏，任何频道都只允许有一次正在处理中的调用。
+// 并发锁与冷却同范围：同一个人同一个游戏，任何频道都只允许有一次正在处理中的调用。
 function buildInFlightKey(guildId, userId, subcommand) {
     return `${guildId}:${userId}:${subcommand}`;
 }
@@ -25,8 +24,8 @@ function sweepExpired(now) {
     }
 }
 
-function getCooldownExpiresAt(guildId, userId, channelId, subcommand, now = Date.now()) {
-    const key = buildCooldownKey(guildId, userId, channelId, subcommand);
+function getCooldownExpiresAt(guildId, userId, subcommand, now = Date.now()) {
+    const key = buildCooldownKey(guildId, userId, subcommand);
     const expiresAt = cooldowns.get(key);
 
     if (expiresAt === undefined) {
@@ -41,8 +40,8 @@ function getCooldownExpiresAt(guildId, userId, channelId, subcommand, now = Date
     return expiresAt;
 }
 
-function isOnCooldown(guildId, userId, channelId, subcommand, now = Date.now()) {
-    return getCooldownExpiresAt(guildId, userId, channelId, subcommand, now) !== null;
+function isOnCooldown(guildId, userId, subcommand, now = Date.now()) {
+    return getCooldownExpiresAt(guildId, userId, subcommand, now) !== null;
 }
 
 /**
@@ -52,7 +51,6 @@ function isOnCooldown(guildId, userId, channelId, subcommand, now = Date.now()) 
 function startCooldown(
     guildId,
     userId,
-    channelId,
     subcommand,
     durationMs = DEFAULT_COOLDOWN_DURATION_MS,
     now = Date.now()
@@ -60,7 +58,7 @@ function startCooldown(
     const duration = Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 0;
     if (duration === 0) return null;
 
-    const key = buildCooldownKey(guildId, userId, channelId, subcommand);
+    const key = buildCooldownKey(guildId, userId, subcommand);
     const expiresAt = now + duration;
     cooldowns.set(key, expiresAt);
 
