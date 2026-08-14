@@ -1754,6 +1754,21 @@ async function beginGame(game) {
         logDiscordFailure(game, 'on-game-started', error, game.initiatorId);
     }
 
+    // 开局真实 Ping 一次（只 Ping 真人）
+    const humanIds = validIds.filter(id => !isVirtualPlayer(id));
+    if (humanIds.length > 0) {
+        try {
+            await game.channel?.send({
+                content: '🔫 **「加压轮盘」开始了！**\n'
+                    + humanIds.map(id => `<@${id}>`).join(' ')
+                    + '\n\n别聊忘了，子弹可不长眼。',
+                allowedMentions: { parse: [], users: humanIds },
+            });
+        } catch (error) {
+            logDiscordFailure(game, 'start-ping', error);
+        }
+    }
+
     await startTurn(game);
 }
 
