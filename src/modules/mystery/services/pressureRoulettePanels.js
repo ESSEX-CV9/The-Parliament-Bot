@@ -30,7 +30,7 @@ const COLORS = Object.freeze({
     pass: 0x7F8C8D,       // 灰 — 传枪
     again: 0x9B59B6,      // 紫 — 再开一枪
     load: 0xD35400,       // 红橙 — 加压
-    unload: 0x1ABC9C,     // 青绿 — 抽弹
+    unload: 0x1ABC9C,     // 青绿 — 退弹
     riposte: 0xC0392B,    // 深红 — 反手
     coward: 0xF39C12,     // 黄 — 胆小鬼
     champion: 0xF1C40F,   // 金 — 冠军
@@ -84,7 +84,7 @@ const AGAIN_LINES = [
 ];
 
 const LOAD_LINES = [
-    name => `${name} 从箱子里摸了几发，塞进了枪里。`,
+    name => `${name} 从盒子里摸了几发，塞进了枪里。`,
     name => `${name} 觉得这局太温柔了。`,
     name => `${name} 决定加点料。`,
     name => `${name} 上膛的时候在笑。\n那笑容值得所有人警惕。`,
@@ -98,7 +98,7 @@ const DUD_LINES = [
     name => `子弹确实在那儿。\n只是它今天不想上班。`,
     name => `${name} 已经闭上眼了。\n然后又睁开了。`,
     name => `哑火。\n${name} 用一发子弹换了一条命，这买卖不亏。`,
-    name => `${name} 摸到了这箱里的次品。\n全场都替他松了口气，除了那几个不太诚恳的。`,
+    name => `${name} 摸到了这盒里的次品。\n全场都替他松了口气，除了那几个不太诚恳的。`,
 ];
 
 function pick(templates, ...args) {
@@ -184,14 +184,18 @@ function eliminatedBlock(view) {
 function gunLine(view) {
     const gun = `弹巢 ${formatChambers(view.chambers)}　│　枪内 **${view.bullets} 发**`
         + `　│　赌注 **💤 ${view.stakeMinutes} 分钟**`;
-    const pool = `-# 待发 ${view.poolRemaining || 0} 发　│　本轮哑弹 ${view.poolDudTotal || 0} 发`;
+    const pool = `-# 子弹盒里还有 ${view.poolRemaining || 0} 发　│　本轮哑弹 ${view.poolDudTotal || 0} 发`;
     return `${gun}\n${pool}`;
 }
 
 // 蓄力是这局最容易被忽略的信息，攒着的时候每张面板都提一句。
+// 攒够档位之后加压还能逼下家连开两枪，这一句比子弹数更能吓住人，一并写上。
 function chargeLine(view) {
     if (!view.charge) return null;
-    return `🔁 **连开蓄力 ×${view.charge}**　│　下次加压能塞 **${view.charge + 1} 发**`;
+    const forced = (view.chargeForcedShots || 1) > 1
+        ? '，并逼下家**连开两枪**'
+        : '';
+    return `🔁 **连开蓄力 ×${view.charge}**　│　下次加压能塞 **${view.charge + 1} 发**${forced}`;
 }
 
 function rosterLines(view) {
@@ -214,19 +218,20 @@ function joinRow(gameId, disabled = false) {
 
 // canQuit 为 false 时整个逃生按钮不渲染，而不是置灰：戴罪上桌的人
 // 不该看到一个自己永远点不了的出口。
-// canUnload 为 true 时中间插一个「🔧 抽弹开枪」。
-function fireRow(gameId, turnToken, { canQuit = true, canUnload = false } = {}) {
+// canUnload 为 true 时中间插一个「🔧 退弹开枪」。
+// fireLabel 用来区分「这一枪是自己的回合」还是「这一枪是加压欠下的」。
+function fireRow(gameId, turnToken, { canQuit = true, canUnload = false, fireLabel = '🔫 开枪' } = {}) {
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`mystery_pressure_fire:${gameId}:${turnToken}`)
-            .setLabel('🔫 开枪')
+            .setLabel(fireLabel)
             .setStyle(ButtonStyle.Danger)
     );
     if (canUnload) {
         row.addComponents(
             new ButtonBuilder()
                 .setCustomId(`mystery_pressure_unload:${gameId}:${turnToken}`)
-                .setLabel('🔧 抽弹开枪')
+                .setLabel('🔧 退弹开枪')
                 .setStyle(ButtonStyle.Success)
         );
     }
@@ -295,45 +300,26 @@ function recruitmentPanel(view) {
             ? ['', `🧪 已加入 **${view.botCount}** 个测试机器人，它们不怕死，也不会真的被禁言。`]
             : []),
         '',
+        // 规则只讲「怎么死、有哪些操作、代价是什么」。每个按钮的具体数值
+        // （概率、能塞几发、赌注涨到多少）游戏里的面板每回合都会算给玩家看，
+        // 这里再抄一遍只会把招募消息撑到没人看。
         '**规则**',
-        `- 桌上一箱 **${view.poolSize} 发**待发子弹，其中 **${view.poolDudMin}~${view.poolDudMax} 发是哑弹**`,
-        '　哑弹和实弹长得一模一样。**打响了才知道是哪种，谁也没法提前分辨**',
-        '　哑弹被击发照样从枪里扣掉一发，只是它带不走人',
-        '- 6 个弹巢，开局从箱子里抽 **1 发**装进去，位置随机',
-        '- 轮到你，自己点按钮扣扳机。吃到实弹就出局，然后闭嘴',
+        '- 6 个弹巢，开局装 **1 发**。轮到你就扣扳机，吃到实弹 → 出局并禁言',
+        `- 子弹盒 **${view.poolSize} 发**，其中 **${view.poolDudMin}~${view.poolDudMax} 发是哑弹**`,
+        '　哑弹照样从枪里扣掉一发，但它带不走人',
+        '　打响之前谁也分不出真假 —— 包括往枪里塞子弹的人',
         '- 活下来后三选一：',
-        '　🔫 **传枪** — 弹巢前进一格，交给下一个人',
-        '　🔁 **再开一枪** — 继续对自己开，每撑过一次攒 **1 层连开蓄力**',
-        '　💥 **加压** — 从箱子里抓 **1 + 蓄力层数** 发塞进枪并滚动弹巢，'
-            + `每发让赌注 +${view.minutesPerPressure} 分钟`,
-        '　　**抓到的是实弹还是哑弹，加压的人自己也不知道**',
-        '- **连开蓄力**只在连着对自己开枪时累积',
-        '　一旦传枪 / 加压 / 中弹就清零，攒了就得当场兑现',
-        '　连开三次再加压 = 一口气抓 4 发，但你得先自己撑过那三枪',
-        '- 🔧 **抽弹开枪**（每人每局 **1 次**，什么时候都能用）：',
-        '　从枪里随手抓一发扔掉、重转弹巢、立刻扣扳机',
-        '　**扔掉的是实弹还是哑弹没人知道**，而且不回箱子',
-        '　**赌注一分不降**；活下来直接传枪，这轮不能再开 / 加压 / 反手',
-        '- 🔙 **反手还击**：有人加压后，接到高压枪的人拿到「反手权」',
-        '　活过自己那一枪就能把枪**扔回给加压者**，逼他开一枪',
-        '　然后枪回到你手上再补一枪。加压者压得越狠，越容易被拉下水',
-        '- 轮到你的时候可以按 **🤡 胆小鬼** 退出',
-        '　不禁言，但名字会被挂上 **🤡胆小鬼**，游戏结束后至少还要再挂 **5 分钟**',
-        '　你退出那一刻的赌注比 5 分钟长的话，就按赌注算',
-        '　你改回去，我就改回来。**我不累。**',
-        '- 挂着 🤡 也能上桌，但是**戴罪**的：',
-        '　这一局你**没有逃生按钮**，机会你已经用掉一次了',
-        '　中弹的话，🤡 还没挂完的分钟会**折进禁言**一起还上',
-        '　只要打完这一局，🤡 当场摘掉 —— 倒下了也算',
-        '- **枪打空了不代表结束：**',
-        '　箱子里还有货 → 系统**自动补 1 发**接着打（这发白送，不抬赌注）',
-        '　箱子也空了 → 所有活着的人**投票**：同意收场就平局，',
-        '　**只要一个人不同意，就再开一盒子，接着打**',
-        '　只剩 1 人 → 他是**冠军**，零禁言，游戏立刻结束',
-        `- 基础赌注 **${view.baseMinutes} 分钟**，每加压一发 **+${view.minutesPerPressure} 分钟**`,
-        '　换箱子不清赌注，之前加的压一分都不会退',
+        '　🔫 **传枪** 交给下家　│　🔁 **再开一枪** 攒 1 层蓄力',
+        `　💥 **加压** 塞 **1 + 蓄力层数** 发并滚动弹巢，每发赌注 **+${view.minutesPerPressure} 分钟**`,
+        '- 💥 **连开 3 次以上再加压**，下家这一回合要**连开两枪**',
+        '　债还完之前他不能传枪、不能加压、也不能反手；他倒下则债一笔勾销，不传给别人',
+        '- 🔧 **退弹开枪**（每人每局 1 次）：扔掉一发再打，赌注一分不降，活下来强制传枪',
+        '　被压着连开两枪时，退弹还能抵掉一枪：第一枪就退＝照开但第二枪作废，撑到第二枪再退＝这枪直接跳过',
+        '- 🔙 **反手还击**：被加压的人把该开的枪全开完并活下来后，可以把枪扔回给加压者',
+        '- 🤡 **胆小鬼**：轮到你时可以退出，不禁言，但名字会被挂上 🤡 至少 **5 分钟**',
+        '- 枪空了自动补 1 发；盒子也空了 → 投票收场，**一人反对就再来一盒**',
+        `- 最后一个还站着的人是冠军。基础赌注 **${view.baseMinutes} 分钟**`,
         '',
-        `一盒子 ${view.poolSize} 发里有 ${view.poolDudMin}~${view.poolDudMax} 发是废的。`,
         '**你可以赌它是哑弹，但你只有一条命去验证。**',
         '',
         `**当前人数：${view.participantCount} / ${view.maxParticipants}**`,
@@ -350,28 +336,51 @@ function recruitmentPanel(view) {
     );
 }
 
+// 挂过机的玩家等待会缩短（60→30→15 秒），补一句斜体小字，省得玩家以为面板坏了。
+// Discord embed 没有真正的「小字」样式，斜体是视觉上最弱化的正文写法。
+function timeoutNote(view) {
+    if (view.autoPlay || !view.timeoutTier) return null;
+    const seconds = Math.round(view.turnTimeoutMs / 1000);
+    const reason = view.timeoutTier === 1 ? '挂机过一次' : '挂机太多次';
+    return `*（因为你${reason}，这局等你只剩 ${seconds} 秒）*`;
+}
+
 function firePanel(view) {
     const tail = view.autoPlay
         ? '🤖 **它正在思考人生……**'
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒内不动手，枪会自己响。`;
 
-    // 反手序列中的强制开枪：不能逃、不能加压、不能抽弹。要把原因说清楚。
+    // 加压逼出来的连开：欠着债的这几枪没有传枪 / 加压 / 反手，只能开、退弹或者认怂。
+    const forced = view.forcedShots;
+    const forcedDebtLine = forced
+        ? `💥 **${forced.sourceName || '上家'} 加压压过来的第 ${forced.index}/${forced.total} 枪。**`
+            + (forced.remaining > 1
+                ? `开完还欠 **${forced.remaining - 1} 枪** —— 债没还完之前不能传枪、不能加压、也不能反手。`
+                : '这是最后一枪，撑过去枪才算真正回到他手里。')
+        : null;
+
+    // 反手序列中的强制开枪：不能逃、不能加压、不能退弹。要把原因说清楚。
     let forcedLine = null;
     if (view.riposte) {
-        forcedLine = view.riposte.stage === 'return'
-            ? '🔙 **这一枪是反手换回来的补枪。**不能逃、不能加压、不能抽弹。'
-            : `🔙 **${view.riposte.targetName} 被反手逼到了枪口上。**这一枪不能逃、不能加压、不能抽弹。`;
+        forcedLine = `🔙 **${view.riposte.targetName} 被反手逼到了枪口上。**这一枪不能逃、不能加压、不能退弹。`;
     } else if (view.canQuit === false) {
         // 戴罪上桌的人没有逃生按钮，得当众说清楚，不然全场只会觉得面板少了个按钮。
         forcedLine = '🤡 **他是戴罪上桌的，这局没有退路。**逃生的机会他上一局已经用掉了。';
     }
 
-    const unloadLine = view.canUnload
-        ? `🔧 **抽弹开枪** — 随手抓一发扔掉并重转弹巢，然后立刻扣扳机。打到子弹的概率降到 **${formatPercent(view.unloadChance)}**，但**赌注一分不降**；抓到的是实弹还是哑弹没人知道，活下来直接传枪，这一轮不能再开 / 加压 / 反手。`
-        : null;
+    // 欠着最后一枪时退弹连扳机都不用扣，这跟平时的退弹是两码事，得分开写。
+    let unloadLine = null;
+    if (view.canUnload && view.unloadSkipsShot) {
+        unloadLine = '🔧 **退弹开枪** — 随手抓一发扔掉并重转弹巢，'
+            + '**这一枪直接抵消掉，扳机都不用扣**。代价是枪随后必须传走，不能加压、也没法反手。';
+    } else if (view.canUnload) {
+        unloadLine = `🔧 **退弹开枪** — 随手抓一发扔掉并重转弹巢，然后立刻扣扳机。打到子弹的概率降到 **${formatPercent(view.unloadChance)}**，但**赌注一分不降**；抓到的是实弹还是哑弹没人知道，活下来直接传枪，这一轮不能再开 / 加压 / 反手。`
+            + (forced ? `另外，**后面欠的 ${forced.remaining - 1} 枪一并抵消**。` : '');
+    }
 
     const description = [
         `**轮到 ${view.shooterName} 了。**`,
+        ...(forcedDebtLine ? ['', forcedDebtLine] : []),
         ...(forcedLine ? ['', forcedLine] : []),
         '',
         gunLine(view),
@@ -381,18 +390,23 @@ function firePanel(view) {
         ...(unloadLine ? ['', unloadLine] : []),
         '',
         tail,
+        ...(timeoutNote(view) ? [timeoutNote(view)] : []),
         ...rosterLines(view),
     ].join('\n');
 
     return message(
         baseEmbed(view, {
-            title: `🔫 第 ${view.shotNumber} 枪`,
+            title: forced
+                ? `💥 第 ${view.shotNumber} 枪（欠 ${forced.remaining} 枪）`
+                : `🔫 第 ${view.shotNumber} 枪`,
             description,
             color: COLORS.turn,
         }),
         view.autoPlay ? [] : [fireRow(view.gameId, view.turnToken, {
             canQuit: view.canQuit !== false,
             canUnload: view.canUnload === true,
+            // 第二枪开始换个说法：他不是在开自己的回合，是在还债。
+            fireLabel: forced && forced.index > 1 ? '🔁 再开一枪' : '🔫 开枪',
         })]
     );
 }
@@ -404,20 +418,35 @@ function choicePanel(view) {
     const passLine = charge > 0
         ? `🔫 **传枪** — 下一个人面对 ${sameOdds}。**攒的 ${charge} 层蓄力作废。**`
         : `🔫 **传枪** — 下一个人面对 ${sameOdds}`;
+    // 蓄力攒到档位就能逼下家连开两枪 —— 这是「再开」除了多塞子弹之外的另一半价值，
+    // 差一层就到档位的时候尤其要提醒，否则没人会为了它多冒一次险。
+    const againUpgrade = (view.againForcedShots || 1) > (view.chargeForcedShots || 1)
+        ? `，**加压时就能逼下家连开两枪**`
+        : '';
     const againLine = `🔁 **再开一枪** — 同样是 ${sameOdds}，但枪口对着**自己**。`
-        + `撑过去，蓄力涨到 **${charge + 1} 层**`;
+        + `撑过去，蓄力涨到 **${charge + 1} 层**${againUpgrade}`;
     const loadLine = view.canLoad
         ? `💥 **加压** — 一口气装 **${view.loadBullets} 发**`
             + (charge > 0 ? `（基础 1 + 蓄力 ${charge}）` : '')
             + `并滚动弹巢，下一个人面对 ${formatOdds(view.bullets + view.loadBullets, view.chamberCount)}`
             + ` ≈ ${formatPercent(view.loadChance)}，赌注升到 **💤 ${view.loadStakeMinutes} 分钟**`
-        : `💥 **加压** — 枪里已经塞满 ${view.chamberCount} 发，再塞就该炸膛了`;
+            + ((view.chargeForcedShots || 1) > 1
+                ? `。**而且他得连开两枪**，两枪都活下来才轮得到他选怎么处理这把枪`
+                : '')
+        // 加压不了有两种原因，得说对是哪一种：弹巢满了，还是盒子空了。
+        : (view.bullets >= view.chamberCount
+            ? `💥 **加压** — 枪里已经塞满 ${view.chamberCount} 发，再塞就该炸膛了`
+            : '💥 **加压** — 盒子已经空了，没有子弹可以往里塞');
     const tail = view.autoPlay
         ? '🤖 **它正在思考人生……**'
         : `⏳ ${Math.round(view.turnTimeoutMs / 1000)} 秒不选，默认传枪。`;
 
     const riposteLine = view.canRiposte
-        ? `🔙 **反手还击** — 把枪扔回给 ${view.riposteTargetName}。他必须开一枪（**${formatOdds(view.bullets, view.unknownCount)} ≈ ${formatPercent(view.riposteTargetChance)}**），无论他中没中，枪都会回到你手上，你再补一枪。`
+        ? `🔙 **反手还击** — 把枪扔回给 ${view.riposteTargetName}。他必须开一枪（**${formatOdds(view.bullets, view.unknownCount)} ≈ ${formatPercent(view.riposteTargetChance)}**），不能逃、不能加压、不能退弹。`
+            + (view.riposteKeepsGun
+                // 轮次绕一圈又回到他自己，枪不会再经过你手上，得说清楚。
+                ? `打完这一枪轮次正好又转回他自己，枪留在他手里由他接着选，你不用再补枪。`
+                : `无论他中没中，这一枪打完枪会直接顺延到你后面的人，你不用再补枪。`)
         : null;
 
     const description = [
@@ -432,6 +461,7 @@ function choicePanel(view) {
         loadLine,
         '',
         tail,
+        ...(timeoutNote(view) ? [timeoutNote(view)] : []),
     ].join('\n');
 
     return message(
@@ -444,12 +474,12 @@ function choicePanel(view) {
     );
 }
 
-// 池子也空了：还活着的人投票决定就此收场，还是再开一箱接着打。
+// 池子也空了：还活着的人投票决定就此收场，还是再开一盒接着打。
 function drawVotePanel(view) {
     const description = [
-        '**枪空了，箱子也空了。**',
+        '**枪空了，盒子也空了。**',
         '',
-        `还站着的 **${view.aliveIds.length} 个人**现在得决定：就这么算了，还是再来一箱。`,
+        `还站着的 **${view.aliveIds.length} 个人**现在得决定：就这么算了，还是再来一盒。`,
         '',
         '🤝 **同意收场** — 本局平局，没有冠军，但谁也不用再挨枪',
         `🔫 **再来一轮** — 桌上再摆 **${view.poolSize} 发**，`
@@ -497,13 +527,17 @@ function dudAnnouncement(view) {
     }));
 }
 
-// 枪打空但箱子里还有货：系统自动补 1 发接着打。补的这发不算加压，不抬赌注。
+// 枪打空但盒子里还有货：系统自动补 1 发接着打。补的这发不算加压，不抬赌注。
+// 默认只补进剩余未验格（保留弹巢历史）；弹巢打穿一整轮后才整巢重转。
 function reloadAnnouncement(view) {
+    const how = view.reloadMode === 'spin'
+        ? '**弹巢一整圈都验完了，转轮重新滚了一圈。**'
+        : `**系统往剩下的 ${view.reloadUnknownBefore} 个未验格子里补了 ${view.reloadCount} 发，没动已经验过的格子。**`;
     return message(baseEmbed(view, {
         title: '🔄 自动上膛',
         description: [
-            '枪空了，可桌上那箱子还没见底。',
-            '**系统往弹巢里补了 1 发，转轮重新滚了一圈。**',
+            '枪空了，可桌上那盒子还没见底。',
+            how,
             '',
             '*这一发没人付钱，赌注一分没涨。*',
             '*当然，它也可能是发哑弹 —— 谁知道呢。*',
@@ -515,7 +549,7 @@ function reloadAnnouncement(view) {
     }));
 }
 
-// 有人在和局判定里投了反对：重开一箱，继续。
+// 有人在和局判定里投了反对：重开一盒，继续。
 function newWaveAnnouncement(view) {
     return message(baseEmbed(view, {
         title: '📦 新的一轮',
@@ -525,7 +559,7 @@ function newWaveAnnouncement(view) {
             `桌上又摞上了一盒子 **${view.poolSize} 发**待发子弹，`
                 + `其中 **${view.poolDudTotal} 发**是哑弹。枪里已经补上 1 发。`,
             '',
-            `*这是第 ${view.wave} 轮。换箱子不换赌注，之前加的压一分都不会退。*`,
+            `*这是第 ${view.wave} 轮。换盒子不换赌注，之前加的压一分都不会退。*`,
             '',
             gunLine(view),
             ...rosterLines(view),
@@ -563,16 +597,20 @@ function unloadAnnouncement(view) {
     const lines = [
         `${view.actorName} 从弹巢里抓了 **${view.unloadedBullets} 发**出来扔掉，然后转了一下弹巢。`,
         '',
-        '**扔掉的那发是实弹还是哑弹，连他自己都不知道。** 反正是不回箱子了。',
+        '**扔掉的那发是实弹还是哑弹，连他自己都不知道。** 反正是不回盒子了。',
         '枪里少了一发，但**赌注一分不降** —— 他只买命，不省钱。',
-        '这一枪要是活下来，枪会直接传走，不能再开、不能加压、也没法反手。',
+        // 债还剩最后一枪时退弹，那一枪直接被抵掉，扳机根本不响 —— 不说清楚，
+        // 全场会以为面板卡住了：明明点了退弹，却没有任何开枪播报。
+        view.skippedShot
+            ? '**这一发退下去，欠的那一枪也跟着一笔勾销 —— 扳机没响。**枪现在直接传走，不能加压、也没法反手。'
+            : '这一枪要是活下来，枪会直接传走，不能再开、不能加压、也没法反手。',
         '',
         gunLine(view),
         ...rosterLines(view),
     ];
 
     return message(baseEmbed(view, {
-        title: '🔧 抽弹',
+        title: '🔧 退弹',
         description: lines.join('\n'),
         color: COLORS.unload,
     }));
@@ -582,8 +620,10 @@ function riposteAnnouncement(view) {
     const lines = [
         `${view.actorName} 没有把枪传下去，而是朝着 ${view.targetName} 扔了回去。`,
         '',
-        `**${view.targetName} 必须开这一枪** —— 不能逃、不能加压、不能抽弹。`,
-        '无论他中没中，枪都会回到发起人手上补第二枪。',
+        `**${view.targetName} 必须开这一枪** —— 不能逃、不能加压、不能退弹。`,
+        view.keepsGun
+            ? '这一枪打完反手就到此为止。轮次正好又转回他自己，枪留在他手里，由他接着选怎么处理。'
+            : '无论他中没中，这一枪打完反手就到此为止，枪会直接顺延到发起人后面的人。',
         '',
         gunLine(view),
         ...rosterLines(view),
@@ -638,6 +678,13 @@ const ACTION_STYLES = Object.freeze({
             lines.push(
                 `赌注涨到 **💤 ${view.stakeMinutes} 分钟**。下一个是 ${view.nextShooterName}，他面对 ${odds(view)}。`
             );
+            // 连开攒到档位再加压，下家不是开一枪就完事 —— 这一句是全场最该看见的信息。
+            if ((view.forcedShots || 1) > 1) {
+                lines.push(
+                    `💥 **他连开了这么多枪，${view.nextShooterName} 得连开两枪。**`
+                        + '两枪之间没有传枪、没有加压、也没有反手，只能继续开、退弹，或者当胆小鬼。'
+                );
+            }
             return lines.join('\n');
         },
     },
@@ -685,6 +732,44 @@ function cowardRenameMessage(taunt) {
     };
 }
 
+// ---------- 重启前后 ----------
+
+// 机器人要重启了。这条发完就存快照，恢复的时候会连同它一起删掉。
+function shutdownNotice(view) {
+    return message(baseEmbed(view, {
+        title: '⏸️ 机器人要重启一下',
+        description: [
+            '**这一局已经存下来了，不用重开。**',
+            '',
+            '枪里几发、盒子里剩多少、谁欠着多少赌注、谁还没用过退弹 —— 全都记着。',
+            '机器人回来之后会自己把牌桌摆回原样，从当前这个人继续。',
+            '',
+            '这期间上面那些按钮点不动，等新面板出来再说。',
+            '',
+            gunLine(view),
+        ].join('\n'),
+        color: COLORS.over,
+    }));
+}
+
+// 恢复成功，牌桌摆回来了。
+function restoredAnnouncement(view) {
+    return message(baseEmbed(view, {
+        title: '🔄 牌桌摆回来了',
+        description: [
+            '**接着打。** 局面和重启前一模一样：',
+            '',
+            gunLine(view),
+            ...(chargeLine(view) ? [chargeLine(view)] : []),
+            '',
+            '*重启期间掉线或被禁言的人已经从名单里拿掉了。*',
+            '*这一回合的时间重新计满 —— 刚回来，不能让你背着只剩几秒的枪。*',
+            ...rosterLines(view),
+        ].join('\n'),
+        color: COLORS.reload,
+    }));
+}
+
 // ---------- 结算 ----------
 
 function cancellationPanel(view, minParticipants) {
@@ -726,7 +811,7 @@ function championPanel(view) {
 
 function drawPanel(view) {
     const lines = [
-        `打完了 **${view.wave} 轮**，子弹和箱子一起见了底。`,
+        `打完了 **${view.wave} 轮**，子弹和盒子一起见了底。`,
         '',
         '**还站着的人一致同意收场**，本局平局，没有冠军。',
         '',
@@ -734,7 +819,7 @@ function drawPanel(view) {
     ];
     const block = eliminatedBlock(view);
     if (block) lines.push('', block);
-    lines.push('', '*谁都可以再要一箱的，但谁都没有。*', '*这大概就是所谓的成熟。*');
+    lines.push('', '*谁都可以再要一盒的，但谁都没有。*', '*这大概就是所谓的成熟。*');
 
     return message(baseEmbed(view, {
         title: '🕊️ 全票通过，到此为止',
@@ -785,6 +870,8 @@ module.exports = {
     actionAnnouncement,
     cowardAnnouncement,
     cowardRenameMessage,
+    shutdownNotice,
+    restoredAnnouncement,
     cancellationPanel,
     championPanel,
     drawPanel,

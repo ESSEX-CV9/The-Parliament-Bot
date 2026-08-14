@@ -60,6 +60,23 @@ function emptyPanel(text) {
     }));
 }
 
+// 该玩家在 12 个榜里的名次。查询时现算，复用 leaderboardPanel 同款 rankBy，
+// 所以这里的口径、并列名次与排行榜子命令完全一致。不满足上榜门槛 → rank 为 null。
+function ranksForUser(rows, userId) {
+    return METRICS.map(metric => {
+        const ranked = rankBy(rows, metric);
+        const entry = ranked.find(item => item.row.user_id === userId);
+        return { metric, rank: entry ? entry.rank : null };
+    });
+}
+
+// 单个榜的排名串。未上榜用斜体弱化，别和「第 1 名」抢视觉。
+function rankCell({ metric, rank }) {
+    return rank
+        ? `${metric.label}　**第 ${rank} 名**`
+        : `${metric.label}　_未上榜_`;
+}
+
 /** 个人战绩面板。 */
 function profilePanel({ row, rows, userId, totalPlayers }) {
     if (!row) {
@@ -73,6 +90,13 @@ function profilePanel({ row, rows, userId, totalPlayers }) {
     const { thrones, achievements } = titlesForUser(rows, userId);
     const luck = luckOf(row);
 
+    // 12 个榜两两一行，名次查询时现算：每打完一局写库后，下一次查询自动跟着变。
+    const rankCells = ranksForUser(rows, userId);
+    const rankLines = [];
+    for (let i = 0; i < rankCells.length; i += 2) {
+        rankLines.push(rankCells.slice(i, i + 2).map(rankCell).join('　│　'));
+    }
+
     const lines = [
         `${mention(userId)} 的加压轮盘战绩`,
         '',
@@ -80,12 +104,15 @@ function profilePanel({ row, rows, userId, totalPlayers }) {
         `🔫 开枪 **${row.shots_fired}** 次　│　💨 空枪 **${row.blanks}** 次　│　😶 哑弹 **${row.duds_fired || 0}** 次　│　🎯 中弹 **${row.hits_taken}** 次（${percent(row.hits_taken, row.shots_fired)}）`,
         `💣 加压 **${row.loads}** 次 / 塞入 **${row.bullets_loaded}** 发　│　🕊️ 无加压 **${row.peaceful_games}** 场　│　🤝 传枪 **${row.pass_count}** 次　│　🤡 逃跑 **${row.quits}** 次`,
         `🔁 累计连开 **${row.again_count}** 次　│　🔥 单局最多连开 **${row.max_charge}** 连　│　😤 最高直面 **${row.max_bullets_faced}** 发`,
-        `🔧 抽弹 **${row.unloads}** 次　│　🔙 反手 **${row.ripostes}** 次 / 送走 **${row.riposte_kills}** 人`,
+        `🔧 退弹 **${row.unloads}** 次　│　🔙 反手 **${row.ripostes}** 次 / 送走 **${row.riposte_kills}** 人`,
         `⛓️ 中弹禁言累计 **${formatMinutes(row.timeout_minutes)}**${row.coward_minutes > 0 ? `　│　🤡 逃跑惩罚累计 **${formatMinutes(row.coward_minutes)}**` : ''}`,
         '',
         row.shots_fired >= MIN_LUCK_SHOTS
-            ? `🍀 **运气值 ${formatLuck(luck)}**　（按当时概率算他该中 ${row.expected_hits.toFixed(2)} 枪，实际中了 ${row.hits_taken} 枪）`
+            ? `🍀 **运气值 ${formatLuck(luck)}**　（按每次扣扳机那一刻的实弹概率算，他该中 ${row.expected_hits.toFixed(2)} 枪，实际中了 ${row.hits_taken} 枪）`
             : `🍀 运气值　还需要再开 **${MIN_LUCK_SHOTS - row.shots_fired}** 枪才够样本量`,
+        '',
+        '**📊 全服各榜排名**',
+        ...rankLines,
     ];
 
     if (thrones.length > 0) {
