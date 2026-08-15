@@ -9,7 +9,7 @@ const gameManager = require('../services/mysteryGameManager');
 const { startRoulette } = require('../services/rouletteGame');
 const { startBomb } = require('../services/bombGame');
 const { startDuel } = require('../services/duelGame');
-const { startDevilRoulette } = require('../services/devilRouletteGame');
+const { startDevilRoulette, startDevilRoulettePve } = require('../services/devilRouletteGame');
 const { startPressureRoulette } = require('../services/pressureRouletteGame');
 const { getNames } = require('../services/namePoolStore');
 const { resolveMysterySettings } = require('../services/channelAccessService');
@@ -23,6 +23,7 @@ const SUBCOMMAND_ROULETTE = MYSTERY_GAMES.ROULETTE;
 const SUBCOMMAND_BOMB = MYSTERY_GAMES.BOMB;
 const SUBCOMMAND_DUEL = MYSTERY_GAMES.DUEL;
 const SUBCOMMAND_DEVIL_ROULETTE = MYSTERY_GAMES.DEVIL_ROULETTE;
+const SUBCOMMAND_DEVIL_ROULETTE_PVE = MYSTERY_GAMES.DEVIL_ROULETTE_PVE;
 const SUBCOMMAND_PRESSURE = MYSTERY_GAMES.PRESSURE;
 const VALID_SUBCOMMANDS = MYSTERY_GAME_NAMES;
 // 传炸弹用的是跨重启持久化的独立冷却存储，其余游戏走内存冷却。
@@ -34,6 +35,7 @@ const MULTIPLAYER_SUBCOMMANDS = new Set(MULTIPLAYER_GAME_NAMES);
 const DEFERRED_COOLDOWN_SUBCOMMANDS = new Set([
     SUBCOMMAND_DUEL,
     SUBCOMMAND_DEVIL_ROULETTE,
+    SUBCOMMAND_DEVIL_ROULETTE_PVE,
     SUBCOMMAND_PRESSURE,
 ]);
 const SELF_TIMEOUT_DURATION_MS = 5 * 60 * 1000;
@@ -70,11 +72,14 @@ const data = new SlashCommandBuilder()
             .setRequired(false)))
     .addSubcommand(subcommand => subcommand
         .setName(SUBCOMMAND_DEVIL_ROULETTE)
-        .setDescription('拿起霰弹枪，和一名成员来一场恶魔轮盘')
+        .setDescription('拿起霰弹枪，和一名成员来一场恶魔轮盘（留空则公屏邀请）')
         .addUserOption(option => option
             .setName('对手')
-            .setDescription('指定要挑战的对手（留空则公开招募）')
+            .setDescription('要挑战的对手（留空则公屏摆擂，等勇士应战）')
             .setRequired(false)))
+    .addSubcommand(subcommand => subcommand
+        .setName(SUBCOMMAND_DEVIL_ROULETTE_PVE)
+        .setDescription('向庄家发起恶魔轮盘，她不会手抖'))
     .addSubcommand(subcommand => subcommand
         .setName(SUBCOMMAND_PRESSURE)
         .setDescription('参加一场加压俄罗斯轮盘，自己往枪里加子弹'));
@@ -211,6 +216,9 @@ async function startMultiplayerGame(interaction, subcommand, onGameStarted, cool
     if (subcommand === SUBCOMMAND_DEVIL_ROULETTE) {
         return services.startDevilRoulette(interaction, interaction.options.getUser('对手'), { onGameStarted });
     }
+    if (subcommand === SUBCOMMAND_DEVIL_ROULETTE_PVE) {
+        return services.startDevilRoulettePve(interaction, { onGameStarted });
+    }
     return services.startDuel(interaction, interaction.options.getUser('对手'), { onGameStarted });
 }
 
@@ -243,6 +251,7 @@ function createMysteryCommand({
     startBomb: startBombGame = startBomb,
     startDuel: startDuelGame = startDuel,
     startDevilRoulette: startDevilRouletteGame = startDevilRoulette,
+    startDevilRoulettePve: startDevilRoulettePveGame = startDevilRoulettePve,
     startPressureRoulette: startPressureRouletteGame = startPressureRoulette,
     panelLifecycle = defaultPanelLifecycle,
 } = {}) {
@@ -251,6 +260,7 @@ function createMysteryCommand({
         startBomb: startBombGame,
         startDuel: startDuelGame,
         startDevilRoulette: startDevilRouletteGame,
+        startDevilRoulettePve: startDevilRoulettePveGame,
         startPressureRoulette: startPressureRouletteGame,
     };
 

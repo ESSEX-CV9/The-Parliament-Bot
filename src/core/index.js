@@ -453,10 +453,10 @@ function normalizeDiscordToken(raw) {
 
 // --- 优雅退出 ---
 // 推送更新重启时，进程会收到 SIGTERM（或 Ctrl+C 的 SIGINT）。
-// 在这之前，进行中的神秘游戏只活在内存里，进程一死就全没了 —— 频道里留下一堆
-// 点了就回「已失效」的按钮，玩家一局白打。这里给它们一个收尾的机会：
-//   · 加压轮盘：存快照，下次启动自动接着打
-//   · 其余游戏：干净取消，释放频道锁和玩家锁，摘掉按钮
+// 收尾统一走 mysteryGameManager.shutdownAllGames：每个游戏挂 onShutdown 自定收尾——
+// 加压轮盘存快照（下次启动接着打）；恶魔轮盘（PvP/PvE）删掉频道里的对局面板
+// （不留"已失效"死面板），快照每次渲染已落盘，下次启动由断连接续自动接着打；
+// 其余游戏走 cleanupGame 清锁摘按钮。
 //
 // 收尾必须有硬上限。托管平台通常在 SIGTERM 后十几秒就 SIGKILL，
 // 与其被砍在半路，不如自己卡着时间退。
@@ -475,6 +475,7 @@ async function gracefulShutdown(signal) {
     killer.unref?.();
 
     try {
+        // 加压轮盘存快照 + 恶魔轮盘删面板 + 其他游戏清锁摘按钮（游戏各自挂 onShutdown）。
         const result = await mysteryGameManager.shutdownAllGames({
             timeoutMs: SHUTDOWN_TIMEOUT_MS - 2000,
         });
@@ -517,22 +518,6 @@ if (token.split('.').length !== 3) {
 
 // 确保后续模块（如命令同步）拿到的是清洗后的 token
 process.env.DISCORD_TOKEN = token;
-
-// 恶魔轮盘不做跨重启断点续局：进程退出前尽量给进行中的对局发出无责中止通知。
-const { shutdownAll: shutdownDevilRouletteGames } = require('../modules/mystery/services/devilRouletteGame');
-let devilShutdownRegistered = false;
-if (!devilShutdownRegistered) {
-    devilShutdownRegistered = true;
-    const devilShutdown = () => {
-        void shutdownDevilRouletteGames()
-            .catch(error => console.error('[DevilRoulette] shutdown cleanup failed:', error))
-            .finally(() => process.exit(0));
-        // 兜底：10 秒内没退出就强制结束，避免 Bot 卡在退出流程。
-        setTimeout(() => process.exit(0), 10_000).unref?.();
-    };
-    process.once('SIGINT', devilShutdown);
-    process.once('SIGTERM', devilShutdown);
-}
 
 client.login(token).catch((err) => {
     console.error('❌ Discord 登录失败。常见原因：Token 粘贴错误 / Token 已被重置失效 / 使用了非 Bot Token。');

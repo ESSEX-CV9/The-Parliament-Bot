@@ -84,6 +84,19 @@ function initializeMysteryStatsDatabase() {
 
         CREATE INDEX IF NOT EXISTS idx_pressure_stats_guild
             ON pressure_player_stats (guild_id);
+
+        CREATE TABLE IF NOT EXISTS devil_roulette_pve_stats (
+            user_id         TEXT PRIMARY KEY,
+            wins            INTEGER NOT NULL DEFAULT 0,
+            losses          INTEGER NOT NULL DEFAULT 0,
+            first_played_at INTEGER NOT NULL,
+            last_played_at  INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS devil_roulette_global (
+            key   TEXT PRIMARY KEY,
+            value INTEGER NOT NULL DEFAULT 0
+        );
     `);
 
     // 老库迁移：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列。
@@ -220,6 +233,62 @@ function resetPressureGuild(guildId) {
     return info?.changes || 0;
 }
 
+// ── 恶魔轮盘 PvE 战绩 ──
+
+const pveResultStatement = statsDb.prepare(`
+    INSERT INTO devil_roulette_pve_stats (user_id, wins, losses, first_played_at, last_played_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+        wins = wins + excluded.wins,
+        losses = losses + excluded.losses,
+        last_played_at = excluded.last_played_at
+`);
+
+/**
+ * 记录一场恶魔轮盘 PvE 的胜负（真人玩家视角）。按 user_id 全局累计。
+ * @param {string} userId
+ * @param {boolean} won
+ * @param {number} playedAt
+ */
+function recordDevilRoulettePveResult(userId, won, playedAt = Date.now()) {
+    if (!userId || typeof userId !== 'string') return false;
+    pveResultStatement.run(userId, won ? 1 : 0, won ? 0 : 1, playedAt, playedAt);
+    return true;
+}
+
+/**
+ * 读取某玩家的恶魔轮盘 PvE 总战绩。
+ * @returns {{ wins: number, losses: number, total: number, winrate: number }}
+ */
+function getDevilRoulettePveStats(userId) {
+    const row = userId
+        ? statsDb.prepare('SELECT wins, losses FROM devil_roulette_pve_stats WHERE user_id = ?').get(userId)
+        : undefined;
+    const wins = row?.wins || 0;
+    const losses = row?.losses || 0;
+    const total = wins + losses;
+    return { wins, losses, total, winrate: total > 0 ? wins / total : 0 };
+}
+
+// ── 恶魔轮盘全局亡魂计数（PvE 失败改名「恶魔枪下的第 N 名亡魂」用，永久累计） ──
+
+const deathCounterStatement = statsDb.prepare(`
+    INSERT INTO devil_roulette_global (key, value) VALUES ('death_count', 1)
+    ON CONFLICT(key) DO UPDATE SET value = value + 1
+`);
+
+/**
+ * 全局亡魂号 +1（PvE 真人每输一场 +1），返回递增后的最新号数。
+ * @returns {number} 新号数（>=1）
+ */
+function incrementDevilRouletteDeathCount() {
+    deathCounterStatement.run();
+    const row = statsDb
+        .prepare("SELECT value FROM devil_roulette_global WHERE key = 'death_count'")
+        .get();
+    return Number(row?.value) || 1;
+}
+
 module.exports = {
     STATS_DB_FILE,
     initializeMysteryStatsDatabase,
@@ -229,4 +298,7 @@ module.exports = {
     getPressureGuildSummary,
     resetPressureUser,
     resetPressureGuild,
+    recordDevilRoulettePveResult,
+    getDevilRoulettePveStats,
+    incrementDevilRouletteDeathCount,
 };

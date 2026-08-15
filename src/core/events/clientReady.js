@@ -5,6 +5,7 @@ const {
     Routes,
 } = require('discord.js');
 const { restorePressureGames } = require('../../modules/mystery/services/pressureRouletteGame');
+const { restoreActiveGames: restoreDevilRouletteGames } = require('../../modules/mystery/services/devilRouletteGame');
 
 function normalizeDiscordToken(raw) {
     if (!raw) return '';
@@ -128,6 +129,13 @@ async function clientReadyHandler(client){
         await restorePressureGames(client);
     } catch (error) {
         console.error('❌ [MysteryPressure] 对局恢复流程异常（已跳过，不影响启动）：', error);
+    }
+
+    // 恶魔轮盘断连接续：把上次没打完的对局恢复回来（快照在每次渲染时落盘）。
+    try {
+        await restoreDevilRouletteGames(client);
+    } catch (error) {
+        console.error('❌ [DevilRoulette] 对局恢复流程异常（已跳过，不影响启动）：', error);
     }
 }
 
