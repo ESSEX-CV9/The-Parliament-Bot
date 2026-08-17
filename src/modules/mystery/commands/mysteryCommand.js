@@ -70,10 +70,10 @@ const data = new SlashCommandBuilder()
             .setRequired(false)))
     .addSubcommand(subcommand => subcommand
         .setName(SUBCOMMAND_DEVIL_ROULETTE)
-        .setDescription('拿起霰弹枪，和一名成员来一场恶魔轮盘')
+        .setDescription('把枪放在桌上，和一名成员赌一把命运（留空则公屏摆擂）')
         .addUserOption(option => option
             .setName('对手')
-            .setDescription('指定要挑战的对手（留空则公开招募）')
+            .setDescription('坐在你对面的倒霉蛋（留空则等勇士上桌）')
             .setRequired(false)))
     .addSubcommand(subcommand => subcommand
         .setName(SUBCOMMAND_PRESSURE)

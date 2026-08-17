@@ -1,3 +1,18 @@
+/**
+ * 恶魔轮盘交互层（PvP 挑战）。
+ *
+ * 面板/按钮/流程/文案：
+ *   - ChallengeView：⚔️ 应战 / 接受挑战 / 拒绝 / 🛑 发起人取消 / 📖 游戏规则
+ *   - GameView：当前回合指示 + 🔫 打对手 + 💀 打自己 + 道具按钮 + 💉 肾上腺素选择器
+ *              + 📜 我的情报 + 📖 游戏规则
+ *   - 播报面板（开枪/装填）、🎁 道具使用聚合面板、仅你可见情报/游戏规则（含认输）
+ *   - 🏆 结算面板（胜者选惩罚：禁言 5 / 改名 10，认输口径 3/7，30s 未选自动禁言 5）
+ *
+ * 引擎状态机走 core/devilRouletteEngine（一局定胜负）。
+ * 走 mystery 骨架：gameManager 锁、custom-id 路由前缀 mystery_devil_roulette_、
+ * mysteryNicknameLock 昵称锁（改名惩罚落地与到期恢复）。
+ */
+
 const { randomUUID } = require('node:crypto');
 const {
     ActionRowBuilder,
@@ -5,128 +20,163 @@ const {
     ButtonStyle,
     EmbedBuilder,
     MessageFlags,
+    ModalBuilder,
+    StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder,
+    TextInputBuilder,
+    TextInputStyle,
 } = require('discord.js');
 const gameManager = require('./mysteryGameManager');
-const defaultPanelLifecycle = require('./panelLifecycle');
-const { defaultService: devilPunishmentService } = require('./devilRoulettePunishment');
-const { createPanelRegistry } = defaultPanelLifecycle;
+const nicknameLock = require('./mysteryNicknameLock');
+const { ORDINARY_LOCK_TYPES } = require('./mysteryNicknameLockService');
+const resumeStore = require('../utils/devilRouletteResumeStore');
+const {
+    DevilState,
+    InvalidAction,
+    defaultRng,
+    ITEM_DEFS,
+    GAME_CONFIG,
+    SURRENDER_MIN_HP,
+} = require('../core/devilRouletteEngine');
 
-const INVITATION_DURATION_MS = 60_000;
-const TURN_DURATION_MS = 60_000;
-const TRANSITION_DELAY_MS = 2_000;
-const MAX_HP = 3;
-const MAX_INVENTORY = 4;
-const ITEMS_PER_RELOAD = 2;
-const CIGARETTE_HEAL = 1;
+// ── 常量 ────────────────────────────────────────────────────────────────────
 
-const PLAYER_BUSY_MESSAGE = '🚫 **一心不能二用。**\n你现在已经在一场神秘游戏里，先把那边活着玩完再说。';
-const CHANNEL_BUSY_MESSAGE = '🎮 **这里已经有一场游戏在进行了。**\n等当前游戏结束后再开新的吧。';
-const INVALID_OPPONENT_MESSAGE = '👿 **这个对手现在无法参加恶魔轮盘。**\n换个人再试试吧。';
-const INVALID_INITIATOR_MESSAGE = '👿 **你现在无法发起恶魔轮盘。**';
-const TIMEOUT_BLOCKED_MESSAGE = '👿 **你现在无法参加恶魔轮盘。**\n你当前还在禁言，暂时无法参加。';
-const EXPIRED_MESSAGE = '⌛ **这场恶魔轮盘已经结束或失效了。**';
-const SELF_ACCEPT_MESSAGE = '😐 **你已经坐在桌边了。**\n不用自己接受自己的邀请。';
-const SELF_JOIN_MESSAGE = '😐 **你已经在桌上了。**\n我暂时还没学会复制一个你出来当对手。';
-const WRONG_INVITEE_MESSAGE = '👀 **枪不是递给你的。**\n这场邀请已经有名字了，围观就好。';
-const NOT_YOUR_TURN_MESSAGE = '✋ **枪现在不在你手上。**\n等轮到你再动。';
-const STALE_PANEL_MESSAGE = '⌛ **这张面板已经过期了。**\n请使用最新的恶魔轮盘面板继续操作。';
-const SURRENDER_CONFIRM_PROMPT = [
-    '## 🏳️ 要投降吗？',
-    '',
-    '确认后你会**立即判负**。',
-    '对手将获得本局的处罚裁决权。',
-    '',
-    '你的回合计时**不会因为这个面板暂停**。',
-].join('\n');
-const SURRENDER_CANCEL_MESSAGE = '🔫 **那就继续。**\n枪还在桌上。';
-const CIGARETTE_FULL_HP_MESSAGE = '🚬 **你现在一颗心都没少。**\n这根烟先留着，别浪费。';
-const CIGARETTE_USED_MESSAGE = '🚬 **这一轮你已经抽过了。**\n再抽就不是回血，是单纯烟瘾大。';
-const SAW_STACKED_MESSAGE = '🔪 **这把枪已经够短了。**\n手锯效果不能叠加。';
-const HANDCUFF_STACKED_MESSAGE = '⛓️ **他已经被铐着了。**\n再铐一副也不会让他多长一只手。';
-const GENERIC_FAILURE_MESSAGE = '❌ **处理这次操作时出了点问题，请稍后再试。**';
+const CHALLENGE_SECONDS = 120; // 挑战 / 公屏擂台等待时长（无人应战自动取消）
+const TURN_SECONDS = 60;
+const GRACE_SECONDS = 2;
+const EPHEMERAL_TTL_MS = 60_000; // 仅自己可见的一次性窗口默认 TTL
+const PANEL_HISTORY_LIMIT = 3; // 滚动窗口上限
+const ITEM_LOG_LIMIT = 6; // 道具使用面板内最多保留的操作块数
+const PRIVATE_PANEL_LABEL = '📜 我的情报';
+const ITEM_HELP_LABEL = '📖 游戏规则';
+const PENALTY_MUTE_MINUTES = 5;
+const PENALTY_RENAME_MINUTES = 10;
+const PENALTY_AUTO_MUTE_MINUTES = 5;
+const PENALTY_SETTLEMENT_SECONDS = 60;
+const SURRENDER_MUTE_MINUTES = 3;
+const SURRENDER_RENAME_MINUTES = 7;
+const PENALTY_MUTE_REASON = '恶魔轮盘：败者惩罚';
+const PENALTY_RENAME_APPLY_REASON = '恶魔轮盘：败者强制改名';
+const PENALTY_RENAME_RESTORE_REASON = '恶魔轮盘：改名惩罚到期，恢复原昵称';
+const PENALTY_RENAME_ENFORCE_REASON = '恶魔轮盘：败者强制改名';
+const RENAME_LOCK_TYPE = 'devil_roulette_rename';
+const RENAME_MODAL_PREFIX = 'mystery_devil_roulette_rename_modal';
 
-const ITEM_LABELS = Object.freeze({
-    magnifier: '🔍 放大镜',
-    beer: '🍺 啤酒',
-    cigarette: '🚬 香烟',
-    saw: '🔪 手锯',
-    handcuff: '⛓️ 手铐',
-});
-const ITEM_ORDER = Object.freeze(['magnifier', 'beer', 'cigarette', 'saw', 'handcuff']);
-// 独立加权抽取概率
-const ITEM_WEIGHTS = Object.freeze({
-    magnifier: 0.25,
-    beer: 0.25,
-    cigarette: 0.20,
-    saw: 0.15,
-    handcuff: 0.15,
-});
+// 按钮配色语义：红=开枪/伤害；蓝=情报/查看；绿=治疗/恢复；灰=膛内工具/被动提示。
+const ITEM_BUTTON_STYLE = {
+    cigarette: 'success',
+    medicine: 'success',
+    magnifier: 'primary',
+    phone: 'primary',
+    beer: 'secondary',
+    inverter: 'secondary',
+    saw: 'danger',
+    handcuffs: 'danger',
+    adrenaline: 'secondary',
+};
 
-// ── 可测试的确定性 RNG 纯函数 ────────────────────────────────────────────────
+const STYLE_MAP = {
+    primary: ButtonStyle.Primary,
+    secondary: ButtonStyle.Secondary,
+    success: ButtonStyle.Success,
+    danger: ButtonStyle.Danger,
+};
 
-// 弹仓总弹数：3 发 30%、4 发 40%、5 发 30%。
-function rollChamberSize(randomValue) {
-    if (randomValue < 0.30) return 3;
-    if (randomValue < 0.70) return 4;
-    return 5;
-}
+// 风味文案：短、面无表情、带点荒诞。
+const FLAVOR = {
+    miss: [
+        '……没响。',
+        '空弹。',
+        '它很安静。',
+        '这次不是它。',
+        '枪只发出空响。',
+        '击针落了个空。',
+        '这一发，命运提前走了。',
+        '弹巢里安静得能听见心跳。',
+        '扳机扣下，房间里只有呼吸声。',
+        '运气站在了枪口这一边。',
+        '空弹滚出来，像一声叹息。',
+    ],
+    hit: [
+        '砰。',
+        '响了。',
+        '……中了。',
+        '弹孔没有偏。',
+        '它这一枪没有失手。',
+        '声音在房间里停留了一会儿。',
+        '枪说了算。',
+        '这一发等这一刻很久了。',
+        '血是热的，枪是冷的。',
+    ],
+    self_hit: [
+        '它咬的是自己。',
+        '枪口对着自己，这次它没客气。',
+        '镜子碎了，血是自己的。',
+        '它向自己证明了一件事。',
+        '赌错了，代价自己付。',
+        '枪没有同情，包括对自己。',
+    ],
+    reload: [
+        '弹壳用完了，重新装填。',
+        '它又塞进去几发。',
+        '弹巢重新转了起来。',
+        '它给枪换了口气。',
+        '又一轮，命运被重新洗牌。',
+        '桌上的弹壳被扫走，新的故事装了进来。',
+        '没有人知道下一发是什么。',
+    ],
+    game_end: [
+        '最后站着的人，拿着钱离开。',
+        '门开了，外面是夜。',
+        '枪放下了。尘埃也放下了。',
+        '赢家收拾桌面，输家收拾自己。',
+        '桌子还在，人少了一个。',
+        '这场赌局，到此为止。',
+    ],
+    saw: [
+        '锯子咬过，这一枪更狠。',
+        '它把伤口撕得更开。',
+        '下一位客人会记住这把锯。',
+        '子弹经过锯过的枪管，变得更急了。',
+        '锯齿的代价，是双倍的。',
+    ],
+    beer: [
+        '啤酒顶开了一发。',
+        '它把危险的子弹吐了出来。',
+        '咔嗒，一枚弹壳滚落。',
+        '子弹掉在桌上，还带着余温。',
+        '泡沫散了，子弹出来了。',
+    ],
+    handcuff: [
+        '手铐锁上了。',
+        '下一回合，对方动弹不得。',
+        '锁链声很轻。',
+        '它的对手被固定在椅子上。',
+        '手腕上的金属，比枪口更安静。',
+    ],
+    heal: [
+        '烟把命续了回来。',
+        '它重新有了力气。',
+        '血的颜色回来了。',
+        '它又看了一眼自己的手。',
+        '一口烟，换一寸血。',
+    ],
+    surrender: [
+        '它放下枪，走出了门。',
+        '子弹没有输，是心先认了输。',
+        '它比谁都想活着。',
+        '枪还在桌上，人已经离席。',
+        '勇气用完了，但命还在。',
+        '它把枪还给命运，转身离开。',
+        '认输不丢命，这是今晚最划算的交易。',
+    ],
+};
 
-// 各弹数构成（实弹数, 空包弹数），保证至少 1 实 1 空。
-function rollChamberComposition(size, randomValue) {
-    if (size === 3) {
-        return randomValue < 0.50 ? { live: 1, blank: 2 } : { live: 2, blank: 1 };
-    }
-    if (size === 4) {
-        if (randomValue < 0.60) return { live: 2, blank: 2 };
-        if (randomValue < 0.80) return { live: 1, blank: 3 };
-        return { live: 3, blank: 1 };
-    }
-    if (randomValue < 0.35) return { live: 2, blank: 3 };
-    if (randomValue < 0.70) return { live: 3, blank: 2 };
-    if (randomValue < 0.85) return { live: 1, blank: 4 };
-    return { live: 4, blank: 1 };
-}
+const EXPIRED_MESSAGE = '这局已经结束了。';
+const NOT_YOUR_TURN_MESSAGE = '现在还没轮到你。';
+const ACT_FAILED_MESSAGE = '操作失败，请重试或刷新面板。';
 
-function shuffleRounds(rounds, random = Math.random) {
-    const copy = [...rounds];
-    for (let i = copy.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1));
-        [copy[i], copy[j]] = [copy[j], copy[i]];
-    }
-    return copy;
-}
-
-function buildChamber(random = Math.random) {
-    const size = rollChamberSize(random());
-    const composition = rollChamberComposition(size, random());
-    const rounds = [];
-    for (let i = 0; i < composition.live; i++) rounds.push('live');
-    for (let i = 0; i < composition.blank; i++) rounds.push('blank');
-    return {
-        rounds: shuffleRounds(rounds, random),
-        liveCount: composition.live,
-        blankCount: composition.blank,
-    };
-}
-
-function rollItem(randomValue) {
-    let cumulative = 0;
-    for (const item of ITEM_ORDER) {
-        cumulative += ITEM_WEIGHTS[item];
-        if (randomValue < cumulative) return item;
-    }
-    return ITEM_ORDER[ITEM_ORDER.length - 1];
-}
-
-function drawItems(count, random = Math.random) {
-    const items = [];
-    for (let i = 0; i < count; i++) {
-        items.push(rollItem(random()));
-    }
-    return items;
-}
-
-// ── 基础工具 ────────────────────────────────────────────────────────────────
+// ── 基础工具 ──────────────────────────────────────────────────────────────────
 
 function logDiscordFailure(game, action, error, userId = 'system') {
     console.error(
@@ -135,1150 +185,1973 @@ function logDiscordFailure(game, action, error, userId = 'system') {
     );
 }
 
-function nowFor(game) {
-    return typeof game?.now === 'function' ? game.now() : Date.now();
+function mention(userId) {
+    if (userId == null) return '（无人）';
+    return `<@${userId}>`;
 }
 
-function randomFor(game) {
-    return typeof game?.random === 'function' ? game.random : Math.random;
+function pickRandom(arr) {
+    if (!arr || !arr.length) return '';
+    return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function makeEmbed(description) {
-    return new EmbedBuilder().setDescription(description);
+function flavor(kind) {
+    return pickRandom(FLAVOR[kind] || []);
 }
 
-function isActivelyTimedOut(member, now = Date.now()) {
-    return Number(member?.communicationDisabledUntilTimestamp) > now;
+function percent(value) {
+    return `${(value * 100).toFixed(1)}%`;
 }
 
-function isValidHumanMember(member) {
-    return Boolean(member?.id && member.user && !member.user.bot && !isActivelyTimedOut(member));
+function riskLabel(probability) {
+    if (probability <= 0.0) return '必空弹';
+    if (probability >= 1.0) return '必实弹';
+    if (probability < 0.34) return '低风险';
+    if (probability < 0.60) return '中风险';
+    if (probability < 0.80) return '高风险';
+    return '极高风险';
 }
 
-function isCurrentGuildMember(game, member, userId = member?.id) {
-    if (!isValidHumanMember(member) || member.id !== userId) return false;
-    const memberGuildId = member.guild?.id || member.guildId;
-    if (!memberGuildId || memberGuildId !== game.guildId) return false;
-    return game.guild?.members?.cache?.get(userId) === member;
-}
+// ── 网络健壮性工具 ────────────────────────────────────────────────────────────
 
-async function safeFetchMember(game, userId) {
+async function deferComponent(interaction, { ephemeral }) {
+    if (!interaction || interaction.replied || interaction.deferred) return true;
     try {
-        return await game.guild?.members?.fetch(userId) || null;
-    } catch (error) {
-        logDiscordFailure(game, 'fetch-member', error, userId);
-        return null;
-    }
-}
-
-async function deferEphemeralComponent(interaction, game) {
-    if (interaction.deferred || interaction.replied || typeof interaction.deferReply !== 'function') {
-        return true;
-    }
-    try {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        return true;
-    } catch (error) {
-        logDiscordFailure(game, 'defer-component-reply', error, interaction.user?.id);
-        return false;
-    }
-}
-
-// 私密消息默认 2 分钟后自动删除：私密面板不长期堆积在用户的交互消息里。
-const PRIVATE_PANEL_TTL_MS = 2 * 60 * 1000;
-
-async function sendPrivateMessage(interaction, payload, game) {
-    try {
-        if (interaction.deferred && !interaction.replied && typeof interaction.editReply === 'function') {
-            await interaction.editReply(payload);
-            return await interaction.fetchReply?.() || null;
-        } else if (interaction.replied && typeof interaction.followUp === 'function') {
-            return await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral }) || null;
-        } else if (!interaction.replied && typeof interaction.reply === 'function') {
-            await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
-            return await interaction.fetchReply?.() || null;
+        if (ephemeral) {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            interaction._ephemeralDeferred = true;
+        } else {
+            await interaction.deferUpdate();
         }
-        return null;
+        return true;
     } catch (error) {
-        logDiscordFailure(game, 'private-reply', error, interaction.user?.id);
-        return null;
+        logDiscordFailure(null, 'defer-component', error, interaction.user?.id);
+        return false;
     }
 }
 
-async function sendPrivate(interaction, payload, game) {
-    const message = await sendPrivateMessage(interaction, payload, game);
-    // 所有私密消息统一定时清理（复用公共 panelLifecycle 的延迟删除）。
-    if (message && typeof message.delete === 'function') {
-        defaultPanelLifecycle.deleteMessageAfter(message, PRIVATE_PANEL_TTL_MS, {
-            action: 'devil-private-cleanup',
-            guildId: game?.guildId,
-            gameId: game?.id,
+function scheduleEphemeralDelete(message, delayMs = EPHEMERAL_TTL_MS) {
+    if (!message || typeof message.delete !== 'function') return;
+    const t = setTimeout(() => {
+        message.delete().catch(() => {});
+    }, delayMs);
+    t.unref?.();
+}
+
+async function sendEphemeral(interaction, payload) {
+    if (!interaction) return false;
+    try {
+        let message = null;
+        if (interaction._ephemeralDeferred && typeof interaction.editReply === 'function') {
+            await interaction.editReply(payload);
+            message = await interaction.fetchReply?.() || null;
+        } else if ((interaction.deferred || interaction.replied) && typeof interaction.followUp === 'function') {
+            message = await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral });
+        } else if (typeof interaction.reply === 'function') {
+            await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+            message = await interaction.fetchReply?.() || null;
+        }
+        if (message) scheduleEphemeralDelete(message);
+        return Boolean(message);
+    } catch (error) {
+        logDiscordFailure(null, 'ephemeral-reply', error, interaction.user?.id);
+        return false;
+    }
+}
+
+async function sendComponentError(interaction, content) {
+    return sendEphemeral(interaction, { content });
+}
+
+async function confirmComponent(interaction, content) {
+    return sendEphemeral(interaction, { content });
+}
+
+// ── 会话 ──────────────────────────────────────────────────────────────────────
+
+class DevilRouletteGame {
+    constructor({
+        mode,
+        initiatorId,
+        channel,
+        guild,
+        targetId = null,
+        rng = null,
+    }) {
+        this.type = 'devil_roulette';
+        this.id = randomUUID().toString().replace(/-/g, '').slice(0, 12);
+        this.mode = mode;
+        this.initiatorId = initiatorId;
+        this.targetId = targetId;
+        this.channel = channel;
+        this.guild = guild;
+        this.guildId = guild?.id || null;
+        this.channelId = channel?.id || null;
+        this.participants = [initiatorId];
+        if (targetId != null) this.participants.push(targetId);
+        this.participantIds = [...this.participants];
+
+        this.status = 'challenge';
+        this.state = null;
+        this.rng = rng || null;
+
+        this.panels = [];
+        this.timers = new Set();
+        this.turnTimer = null;
+        this.lastEvent = '';
+        this.finalWinnerId = null;
+        this.penaltyPending = false;
+        this.penaltyApplied = false;
+        // 结算自动施罚定时器是否已武装（防刷新无限重置）。
+        this.settlementArmed = false;
+        // 主交互面板是否已建立。
+        this.mainPanelSent = false;
+        // 断连接续标记：restore 恢复回来的首张主面板标题带「断连接续」提醒，下次新发面板时清除。
+        this.resumed = false;
+        // 连续「打自己空弹保回合」合并面板：同一开枪回合原地编辑新增（同道具聚合），避免连续空枪刷屏。
+        this.selfShotPanel = null;
+        this.selfShotBlocks = [];
+        // 惩罚口径：normal（正常终局，禁言5/改名10）或 surrender（认输，禁言3/改名7）。
+        this.penaltyScope = 'normal';
+        // 已用 <@id> 提示过的行动者（用于回合切换只 ping 一次）。
+        this.announcedPlayer = null;
+        // 本次新面板是否处于回合切换（决定 allowed_mentions 是否 ping 当前行动者）。
+        this.pingCurrentTurn = false;
+        // 「道具使用」面板内容：同一开枪回合内逐块累积。
+        this.itemUsageLog = [];
+        // 当前开枪回合的「道具使用」面板。
+        this.itemPanelEntry = null;
+        // 面板颜色随上一动作变化。
+        this.panelColor = 0xE67E22;
+        this.released = false;
+    }
+
+    // ── 派生 ──
+
+    get title() {
+        return '😈 恶魔轮盘';
+    }
+
+    shortName(userId) {
+        return mention(userId);
+    }
+
+    plainName(userId) {
+        const member = this.guild?.members?.cache?.get(userId);
+        const name = member?.displayName;
+        if (name) return name;
+        // 缓存未命中（如重启续接后没预取到）：后台补拉成员进缓存，下次渲染恢复正常昵称。
+        this.guild?.members?.fetch?.(userId)?.catch?.(() => {});
+        return `玩家${userId}`;
+    }
+
+    modeText() {
+        // 当前规则：一局定胜负（血量 4 / 弹巢 5-8 发）。
+        return '一局定胜负';
+    }
+
+    openingEvent() {
+        const current = this.state?.currentPlayerId;
+        if (current == null) return '';
+        return `🎲 随机先手：**${this.shortName(current)}**。`;
+    }
+
+    // ── 断连接续 ──
+
+    serializeGame() {
+        return {
+            v: 1,
+            id: this.id,
+            guildId: this.guildId,
+            channelId: this.channelId,
+            mode: this.mode,
+            initiatorId: this.initiatorId,
+            targetId: this.targetId,
+            participants: this.participants,
+            status: this.status,
+            lastEvent: this.lastEvent,
+            panelColor: this.panelColor,
+            finalWinnerId: this.finalWinnerId,
+            penaltyPending: this.penaltyPending,
+            penaltyApplied: this.penaltyApplied,
+            penaltyScope: this.penaltyScope,
+            panelIds: this.panels.map(entry => entry?.message?.id).filter(Boolean),
+            state: this.state ? this.state.serialize() : null,
+        };
+    }
+
+    persistNow() {
+        // 对局快照落盘（断连接续）。写操作内部串行排队，异步完成，不阻塞渲染。
+        if (this.released) return;
+        try {
+            resumeStore.save(this.id, this.serializeGame());
+        } catch (error) {
+            logDiscordFailure(this, 'resume-persist', error);
+        }
+    }
+
+    deletePersisted() {
+        try {
+            resumeStore.remove(this.id);
+        } catch (error) {
+            logDiscordFailure(this, 'resume-delete', error);
+        }
+    }
+
+    // 从快照重建对局实例（保留原 gameId，旧面板按钮仍能命中）。
+    static restore(snapshot, { guild, channel }) {
+        const game = new DevilRouletteGame({
+            mode: snapshot.mode,
+            initiatorId: snapshot.initiatorId,
+            channel,
+            guild,
+            targetId: snapshot.targetId || null,
+        });
+        game.id = snapshot.id;
+        game.status = snapshot.status;
+        game.lastEvent = snapshot.lastEvent || '';
+        game.panelColor = snapshot.panelColor || 0x8E44AD;
+        game.finalWinnerId = snapshot.finalWinnerId || null;
+        game.penaltyPending = !!snapshot.penaltyPending;
+        game.penaltyApplied = !!snapshot.penaltyApplied;
+        game.penaltyScope = snapshot.penaltyScope === 'surrender' ? 'surrender' : 'normal';
+        game.settlementArmed = false;
+        game.participants = Array.isArray(snapshot.participants) ? [...snapshot.participants] : game.participants;
+        game.participantIds = [...game.participants];
+        game.state = snapshot.state ? DevilState.restore(snapshot.state) : null;
+        game.resumed = true; // 断连接续标记：恢复后的首张主面板标题提醒。
+        return game;
+    }
+
+    // ── 生命周期 ──
+
+    async open() {
+        const ok = await this.renderLocked();
+        return ok;
+    }
+
+    async acceptChallenge(interaction) {
+        await deferComponent(interaction, { ephemeral: true });
+        let changed = false;
+        let rejection = null;
+        await gameManager.runExclusive(this, () => {
+            if (this.status !== 'challenge') {
+                rejection = '这个挑战已经结束了。';
+                return;
+            }
+            if (interaction.user?.id === this.initiatorId) {
+                rejection = '发起人不能自己应战。';
+                return;
+            }
+            if (this.targetId != null && interaction.user?.id !== this.targetId) {
+                rejection = '只有被挑战的人可以接受。';
+                return;
+            }
+            if (interaction.user?.bot) {
+                rejection = '机器人不能应战。';
+                return;
+            }
+            const isPublic = this.targetId == null;
+            // 公屏擂台：应战者第一次进来要占玩家锁，并补进参与者。
+            if (isPublic) {
+                if (!this.participants.includes(interaction.user.id)) {
+                    if (!gameManager.addPlayer(this, interaction.user.id)) {
+                        rejection = '你已经在另一场游戏里了。';
+                        return;
+                    }
+                    this.participants.push(interaction.user.id);
+                }
+                this.targetId = interaction.user.id;
+            }
+            this.startLocked();
+            this.lastEvent = `⚔️ **${this.shortName(interaction.user.id)}** ${
+                isPublic ? '应战' : '接受了挑战'
+            }，恶魔轮盘开始。\n${this.openingEvent()}`;
+            changed = true;
+        });
+        if (rejection) {
+            await sendComponentError(interaction, rejection);
+            return;
+        }
+        if (!changed) {
+            await sendComponentError(interaction, '这个挑战已经结束了。');
+            return;
+        }
+        await this.sendBroadcastLocked({ title: '⚔️ 对局开始' });
+        await this.renderLocked();
+        try {
+            // 冷却只记在发起人头上：接受者只是应约，不该被罚 30 分钟冷却。
+            this.onGameStarted?.([this.initiatorId]);
+        } catch (error) {
+            logDiscordFailure(this, 'on-game-started', error, this.initiatorId);
+        }
+        await confirmComponent(interaction, '✅ 你坐进了这把椅子。恶魔轮盘，开始。');
+    }
+
+    async declineChallenge(interaction) {
+        await deferComponent(interaction, { ephemeral: true });
+        let changed = false;
+        let rejection = null;
+        await gameManager.runExclusive(this, () => {
+            if (this.status !== 'challenge') {
+                rejection = '这个挑战已经结束了。';
+                return;
+            }
+            if (interaction.user?.id !== this.targetId) {
+                rejection = '只有被挑战的人可以拒绝。';
+                return;
+            }
+            this.status = 'ended';
+            this.lastEvent = `🏳️ **${this.shortName(interaction.user.id)}** 拒绝了挑战。`;
+            changed = true;
+        });
+        if (rejection) {
+            await sendComponentError(interaction, rejection);
+            return;
+        }
+        await this.renderLocked();
+        await confirmComponent(interaction, '🏳️ 你拒绝了挑战。');
+    }
+
+    async cancelByInitiator(interaction) {
+        await deferComponent(interaction, { ephemeral: true });
+        let changed = false;
+        let rejection = null;
+        await gameManager.runExclusive(this, () => {
+            if (this.status !== 'challenge') {
+                rejection = '这局已经开始，不能取消。';
+                return;
+            }
+            if (interaction.user?.id !== this.initiatorId) {
+                rejection = '只有发起人可以取消。';
+                return;
+            }
+            this.status = 'ended';
+            this.lastEvent = '🛑 发起人取消了这局游戏。';
+            changed = true;
+        });
+        if (rejection) {
+            await sendComponentError(interaction, rejection);
+            return;
+        }
+        await this.renderLocked();
+        await confirmComponent(interaction, '🛑 你把枪收了回去，这局游戏取消。');
+    }
+
+    async act(interaction, action, expectedToken, { stealKey = null } = {}) {
+        // 按钮立即完成（deferUpdate），不产生 thinking；反馈是公屏新面板。
+        if (!await deferComponent(interaction, { ephemeral: false })) return;
+        let result = null;
+        let rejection = null;
+        await gameManager.runExclusive(this, () => {
+            if (this.status !== 'playing' || !this.state) {
+                rejection = EXPIRED_MESSAGE;
+                return;
+            }
+            if (interaction.user?.id !== this.state.currentPlayerId) {
+                rejection = NOT_YOUR_TURN_MESSAGE;
+                return;
+            }
+            try {
+                result = this.state.apply(action, interaction.user.id, { expectedToken, stealKey });
+            } catch (error) {
+                if (error instanceof InvalidAction) {
+                    rejection = error.message;
+                    return;
+                }
+                logDiscordFailure(this, 'act', error, interaction.user?.id);
+                rejection = ACT_FAILED_MESSAGE;
+            }
+        });
+        if (rejection) {
+            await sendComponentError(interaction, rejection);
+            return;
+        }
+        if (!result) {
+            await sendComponentError(interaction, ACT_FAILED_MESSAGE);
+            return;
+        }
+        await this.afterActionLocked(result);
+        if (result.reveal) {
+            await this.sendPrivateIntel(interaction);
+        }
+    }
+
+    async showPrivateState(interaction) {
+        await deferComponent(interaction, { ephemeral: true });
+        let rejection = null;
+        let embed = null;
+        await gameManager.runExclusive(this, () => {
+            if (!this.state || !['playing', 'ended'].includes(this.status)) {
+                rejection = '这局还没有可查看的私有情报。';
+                return;
+            }
+            if (!this.state.players.includes(interaction.user?.id)) {
+                rejection = '私有情报只属于本局玩家。';
+                return;
+            }
+            embed = this.privateEmbed(interaction.user.id);
+        });
+        if (rejection) {
+            await sendComponentError(interaction, rejection);
+            return;
+        }
+        await sendEphemeral(interaction, {
+            embeds: [embed],
+            components: this.privateIntelRefreshRows(),
         });
     }
-    return Boolean(message);
-}
 
-async function safeEphemeralReply(interaction, content, game) {
-    return sendPrivate(interaction, { content }, game);
-}
+    // 游戏规则（仅自己可见）。挑战面板的「📖 游戏规则」按钮与局内按钮共用同一弹窗。
+    rulesEmbed() {
+        const cfg = GAME_CONFIG;
+        const [lo, hi] = cfg.shells;
+        return new EmbedBuilder()
+            .setTitle('📖 游戏规则')
+            .setColor(0x5865F2)
+            .setAuthor({ name: `${this.title} · 仅你可见` })
+            .setDescription(
+                '**🔫 对局**\n'
+                + `每人 **${cfg.hp}** 点血，弹巢 ${lo}-${hi} 发（实弹占 40%-60%），一局定胜负——`
+                + '先把对方血量打到 **0** 的一方获胜。\n'
+                + '实弹与空弹随机排列，开枪前不知道当前这发是实是空：\n'
+                + '　• **💀 打自己**：空弹不扣血并**保住回合**，实弹扣自己 1 血；\n'
+                + '　• **🔫 打对手**：实弹扣对方 1 血，空弹把回合交给对方。\n'
+                + '弹巢打空会重新装填并给双方补道具，新弹巢的先手**强制轮换**。\n\n'
+                + '**🎁 道具**（开局发 2-3 件，同时上限 4 件，使用不消耗回合，轮到你时可先用再开枪）\n'
+                + '🔍 放大镜——查看当前这发是实弹还是空弹；\n'
+                + '📱 手机——预知往后某一发（只剩 1 发时不可用）；\n'
+                + '🪚 手锯——下一发实弹伤害翻倍（打自己同样翻倍）；\n'
+                + '🔗 手铐——对手下一回合被跳过（只剩 1 发时不可用；弹巢重装时未生效的铐直接作废）；\n'
+                + '🍺 啤酒——弹出膛内子弹，弹型公开（只剩 1 发时使用会结束回合）；\n'
+                + '🔄 逆转器——把膛内当前子弹翻转为相反类型（实↔空）；\n'
+                + '💉 肾上腺素——偷走对手一件道具并立即使用；\n'
+                + '🚬 香烟——回复 1 血；\n'
+                + '💊 过期药——40% 回 2 血，否则扣 1 血。\n\n'
+                + '**⏱ 回合与情报**：每回合 60 秒，超时自动开枪；'
+                + '🔍/📱 探到的弹位仅自己可见（点「📜 我的情报」回看）。\n\n'
+                + '**🔨 败者惩罚**：胜者选择 🔇 禁言 5 分或 ✏️ 改名 10 分'
+                + `（${PENALTY_SETTLEMENT_SECONDS} 秒不选则自动禁言 5 分）；中途认输（3 血以上可用）减轻为 3 / 7 分。\n\n`
+                + '**⚠️ 与原版 Buckshot Roulette 的差异**（玩过原版的请留意）：\n'
+                + '　• **交替先手**：弹巢打空重新装填后，先手**强制轮换**为上一弹巢先手的对方；\n'
+                + '　• **重装时未生效的手铐作废**：你给对手上了手铐但还没轮到他跳过时，'
+                + '若弹巢恰好打空重装，这副手铐**直接作废**——不会延续到新弹巢；\n'
+                + '　• **手铐/手机剩一发禁用**：弹巢只剩最后一发时两者均不可用；\n'
+                + '　• **手机只探未探弹位**：连续使用不会重复探测已知位置（原版可能空转）；\n'
+                + '　• **道具发放上限**：平衡性调整——强控类（手锯/手铐/肾上腺素）合计至多 1 件、'
+                + '回复类（香烟/过期药）合计至多 1 件（原版无组上限）；\n'
+                + '　• **补弹道具叠加**：重新装填时在当前持有上**再补** 2-3 件（原版重置为固定数量）；\n'
+                + '　• **过期药 40%**：成功率 40%（原版 50%）。'
+            );
+    }
 
-async function deferPublicStart(interaction, game) {
-    if (interaction.deferred || interaction.replied || typeof interaction.deferReply !== 'function') {
-        return false;
-    }
-    try {
-        await interaction.deferReply();
-        return true;
-    } catch (error) {
-        logDiscordFailure(game, 'defer-start-reply', error, interaction.user?.id);
-        return false;
-    }
-}
-
-async function rejectDeferredStart(interaction, content, game) {
-    try {
-        await interaction.deleteReply?.();
-    } catch (error) {
-        logDiscordFailure(game, 'delete-start-reply', error, interaction.user?.id);
-    }
-    try {
-        if (typeof interaction.followUp !== 'function') return false;
-        await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
-        return true;
-    } catch (error) {
-        logDiscordFailure(game, 'reject-start-reply', error, interaction.user?.id);
-        return false;
-    }
-}
-
-async function safeEdit(message, payload, game, action) {
-    if (typeof message?.edit !== 'function') return false;
-    try {
-        await message.edit(payload);
-        return true;
-    } catch (error) {
-        logDiscordFailure(game, action, error);
-        return false;
-    }
-}
-
-async function safeSend(game, payload, action) {
-    try {
-        return await game.channel?.send(payload) || null;
-    } catch (error) {
-        logDiscordFailure(game, action, error);
-        return null;
-    }
-}
-
-function queuePublicWrite(game, operation) {
-    const previous = game.publicWriteQueue || Promise.resolve();
-    const queued = previous
-        .catch(error => logDiscordFailure(game, 'public-write-queue', error))
-        .then(operation)
-        .catch(error => {
-            logDiscordFailure(game, 'public-write-queue', error);
-            return null;
+    async showItemHelp(interaction) {
+        await deferComponent(interaction, { ephemeral: true });
+        await sendEphemeral(interaction, {
+            embeds: [this.rulesEmbed()],
+            components: this.privateIntelViewRows(interaction.user?.id),
         });
-    game.publicWriteQueue = queued;
-    return queued;
-}
-
-function clearTimer(game, timer) {
-    if (!timer) return;
-    clearTimeout(timer);
-    game.timers?.delete(timer);
-}
-
-// ── 面板构建 ────────────────────────────────────────────────────────────────
-
-function heartLine(game, userId) {
-    const hp = game.hp?.[userId] ?? 0;
-    return `<@${userId}>　${'❤️'.repeat(Math.max(0, hp))}`;
-}
-
-function chamberLine(game) {
-    return [
-        '🔫 **剩余：**',
-        `🔴 ×${game.liveCount}`,
-        `⚪ ×${game.blankCount}`,
-    ].join(' ');
-}
-
-function inventoryLine(game, userId) {
-    const counts = new Map();
-    for (const item of game.inventory?.get(userId) || []) {
-        counts.set(item, (counts.get(item) || 0) + 1);
     }
-    const parts = [];
-    for (const item of ITEM_ORDER) {
-        const count = counts.get(item) || 0;
-        if (count > 0) parts.push(`${ITEM_LABELS[item]} ×${count}`);
+
+    async hintCurrentTurn(interaction) {
+        await deferComponent(interaction, { ephemeral: true });
+        let hint = null;
+        let rejection = null;
+        await gameManager.runExclusive(this, () => {
+            const state = this.state;
+            if (!state || this.status !== 'playing') {
+                rejection = '这局还没有开始或已经结束了。';
+                return;
+            }
+            const current = state.currentPlayerId;
+            if (current == null) {
+                rejection = '还没有当前行动者。';
+                return;
+            }
+            if (interaction.user?.id === current) {
+                hint = `✅ 现在是你的回合，请在 ⏱ ${TURN_SECONDS + GRACE_SECONDS} 秒内行动：\n`
+                    + '　🔫 **打对手** —— 实弹命中扣对方 1 血，空弹白白送回合；\n'
+                    + '　💀 **打自己** —— 空弹保住回合，实弹自己挨枪；\n'
+                    + '　🎁 道具按钮、📜 我的情报都在下方，按需使用。';
+            } else {
+                hint = `⏳ 现在轮到 **${this.plainName(current)}**，`
+                    + '请等待 TA 行动；轮到你时会自动切换面板。';
+            }
+        });
+        if (rejection) {
+            await sendComponentError(interaction, rejection);
+            return;
+        }
+        await sendEphemeral(interaction, { content: hint });
     }
-    return parts.length > 0 ? parts.join(' ') : '（空）';
-}
 
-function statusEffectLines(game) {
-    const lines = [];
-    if (game.saw) lines.push(`🔪 <@${game.saw}>：下一枪强化`);
-    if (game.handcuff) lines.push(`⛓️ <@${game.handcuff}>：下一回合跳过`);
-    return lines;
-}
-
-function stateSummary(game) {
-    const [a, b] = game.participantIds;
-    const lines = [
-        heartLine(game, a),
-        heartLine(game, b),
-        '',
-        chamberLine(game),
-        '',
-        `🎒 <@${a}>：${inventoryLine(game, a)}`,
-        `🎒 <@${b}>：${inventoryLine(game, b)}`,
-    ];
-    const effects = statusEffectLines(game);
-    if (effects.length > 0) {
-        lines.push('', ...effects);
+    async sendPrivateIntel(interaction) {
+        let embed = null;
+        await gameManager.runExclusive(this, () => {
+            if (!this.state || !this.state.players.includes(interaction.user?.id)) return;
+            embed = this.privateEmbed(interaction.user.id);
+        });
+        if (embed) {
+            await sendEphemeral(interaction, {
+                embeds: [embed],
+                components: this.privateIntelRefreshRows(),
+            });
+        }
     }
-    return lines;
-}
 
-function turnDescription(game) {
-    const deadline = Math.floor(game.turnDeadlineAt / 1000);
-    return [
-        `🎯 **轮到 <@${game.currentTurn}> 了。**`,
-        '',
-        ...stateSummary(game),
-        '',
-        `⏳ **本回合结束：<t:${deadline}:R>**`,
-        '',
-        '**你的选择：**',
-        '🔫 **射对手**　💀 **射自己**　🎒 **使用道具**　🏳️ **投降**',
-    ].join('\n');
-}
+    // 道具"被禁用"按钮点击：解释为什么不可用（仅自己可见）。
+    // customId 尾参=道具 key（渲染时写入，状态变化也不会错位）。
+    // 手机：只剩一发时实弹/空弹数在面板上明摆着，无从剧透——文案走荒诞俏皮调子，
+    // 顺带说明手机机制：只能探测「往后」的未来弹位。
+    // 手铐：只剩一发时马上重洗弹巢，铐不出有意义的"下一回合"。
+    async showItemBlocked(interaction, itemKeyArg) {
+        await deferComponent(interaction, { ephemeral: true });
+        if (String(itemKeyArg) === 'handcuffs') {
+            await sendComponentError(
+                interaction,
+                '🔗 只剩最后一发——弹巢马上重洗，铐不住任何「下一回合」。\n（手铐要在弹巢还有余量时才能锁住对手的行动，留到新弹巢再用。）'
+            );
+            return;
+        }
+        await sendComponentError(
+            interaction,
+            '📱 只剩最后一发——是什么子弹，弹巢已经不打自招。\n（手机只能探测「往后」的未来弹位，此刻已无未来可探。）'
+        );
+    }
 
-const RULES_DESCRIPTION = [
-    '## 📖 恶魔轮盘 · 游戏规则',
-    '',
-    '### ❤️ 胜负',
-    '',
-    '双方开局都有 **3 点生命**。',
-    '',
-    '任意一方生命归零，立即落败。',
-    '',
-    '---',
-    '',
-    '### 🔫 霰弹枪',
-    '',
-    '每次装填会随机放入 **3～5 发子弹**，其中至少包含：',
-    '',
-    '🔴 **1 发实弹**',
-    '⚪ **1 发空包弹**',
-    '',
-    '实弹和空包弹的**剩余数量会公开显示**，但顺序完全随机。',
-    '',
-    '每次重新装弹后，都会重新随机决定先手。',
-    '',
-    '---',
-    '',
-    '### 🎯 你的回合',
-    '',
-    '每回合有 **60 秒**。',
-    '',
-    '你可以：',
-    '',
-    '🔫 **射对手**',
-    '💀 **射自己**',
-    '🎒 **使用道具**',
-    '🏳️ **投降**',
-    '',
-    '**射对手**',
-    '',
-    '- 实弹 → 对手掉血，换对方行动',
-    '- 空包 → 无伤害，换对方行动',
-    '',
-    '**射自己**',
-    '',
-    '- 实弹 → 自己掉血，换对方行动',
-    '- 空包 → 你没事，并且获得一个新的 **60 秒回合**',
-    '',
-    '60 秒内没有开枪，Bot 会替你**自动射向对手**。',
-    '',
-    '---',
-    '',
-    '### 🎒 道具',
-    '',
-    '每次装弹时，双方都会随机获得 **2 个道具**。',
-    '',
-    '每人最多携带 **4 个**，未使用的道具会保留下来。',
-    '',
-    '🔍 **放大镜**',
-    '',
-    '私下查看当前下一发是实弹还是空包弹。',
-    '',
-    '🍺 **啤酒**',
-    '',
-    '直接退出当前子弹，并公开它是实弹还是空包弹。',
-    '',
-    '🚬 **香烟**',
-    '',
-    '恢复 1 点生命，最高恢复至 **3 点**。',
-    '',
-    '每次装弹周期最多使用 1 次。',
-    '',
-    '🔪 **手锯**',
-    '',
-    '强化下一次真正的射击。',
-    '',
-    '如果是实弹，伤害提升至 **2 点**。',
-    '',
-    '空包弹也会消耗强化。',
-    '',
-    '⛓️ **手铐**',
-    '',
-    '让对手的下一次行动机会直接跳过。',
-    '',
-    '---',
-    '',
-    '### 👿 败者处罚',
-    '',
-    '游戏结束后，赢家可以选择：',
-    '',
-    '🔇 **禁言败者 5 分钟**',
-    '',
-    '或',
-    '',
-    '✏️ **给败者改名 10 分钟**',
-    '',
-    '赢家有 **30 秒**决定处罚。',
-    '',
-    '超时没有选择，将自动执行：',
-    '',
-    '**禁言 5 分钟**',
-    '',
-    '---',
-    '',
-    '### 🏳️ 投降',
-    '',
-    '对局开始后可以随时投降。',
-    '',
-    '投降会经过一次确认。',
-    '',
-    '确认后立即判负，对手获得处罚权。',
-    '',
-    '---',
-    '',
-    '### ⏳ 其他说明',
-    '',
-    '使用道具**不会暂停或延长你的 60 秒回合**。',
-    '',
-    '对局正式开始后，双方都会进入本游戏冷却。',
-    '',
-    '**枪已经放在桌上了。剩下的，看你敢不敢扣扳机。**',
-].join('\n');
-
-function invitationRow(game, designated) {
-    const row = new ActionRowBuilder();
-    if (designated) {
-        row.addComponents(
+    // 「📜 我的情报」附带的「🔄 刷新当前面板」：强制重渲染当前主面板。
+    // 面板按钮异常/缺失时的恢复手段——点击后发一张带最新状态与按钮的新面板。
+    privateIntelRefreshRows() {
+        const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-                .setCustomId(`mystery_devil_roulette_accept:${game.id}`)
-                .setLabel('🔫 接受')
-                .setStyle(ButtonStyle.Danger),
-            new ButtonBuilder()
-                .setCustomId(`mystery_devil_roulette_reject:${game.id}`)
-                .setLabel('👋 拒绝')
+                .setCustomId(`mystery_devil_roulette_refresh:${this.id}`)
+                .setLabel('🔄 刷新当前面板')
                 .setStyle(ButtonStyle.Secondary)
         );
-    } else {
-        row.addComponents(
-            new ButtonBuilder()
-                .setCustomId(`mystery_devil_roulette_accept:${game.id}`)
-                .setLabel('🪑 坐上赌桌')
-                .setStyle(ButtonStyle.Danger)
-        );
+        return [row];
     }
-    row.addComponents(
-        new ButtonBuilder()
-            .setCustomId(`mystery_devil_roulette_rules:${game.id}`)
-            .setLabel('📖 详细规则')
-            .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-            .setCustomId(`mystery_devil_roulette_cancel:${game.id}`)
-            .setLabel('✖️ 取消邀请')
-            .setStyle(ButtonStyle.Secondary)
-    );
-    return row;
-}
 
-function designatedInvitationDescription(initiatorId, opponentId) {
-    return [
-        '## 👿 恶魔轮盘',
-        '',
-        `<@${initiatorId}> 把枪推到了 <@${opponentId}> 面前。`,
-        '',
-        '**双方各有 ❤️❤️❤️，轮流拿起一把装有实弹与空包弹的霰弹枪。**',
-        '你可以把枪口对准**对手**，也可以赌一把——**对准自己**。',
-        '',
-        '🔫 谁先失去全部生命，谁就输掉这局。',
-        '🎒 对局中还会获得各种道具，帮你看弹、退弹、回血，或者让下一枪更狠。',
-        '',
-        '**败者将接受赢家的处罚：禁言 5 分钟，或改名 10 分钟。**',
-        '',
-        '⏳ 邀请将在 **60秒后**失效。',
-        '',
-        '**敢坐下吗？**',
-    ].join('\n');
-}
-
-function openInvitationDescription(initiatorId) {
-    return [
-        '## 👿 恶魔轮盘',
-        '',
-        `<@${initiatorId}> 拉开了赌桌对面的椅子。`,
-        '',
-        '**双方各有 ❤️❤️❤️，轮流拿起一把装有实弹与空包弹的霰弹枪。**',
-        '枪可以对准**对手**，也可以对准**自己**。',
-        '',
-        '🔫 谁先失去全部生命，谁就输掉这局。',
-        '🎒 放大镜、啤酒、香烟、手锯、手铐——桌上的东西，都可能救你一命。',
-        '',
-        '**败者将接受赢家的处罚：禁言 5 分钟，或改名 10 分钟。**',
-        '',
-        '⏳ **60秒内**没人坐下，这桌就散。',
-        '',
-        '**还差一个人。**',
-    ].join('\n');
-}
-
-function invitationPayload(game) {
-    const designated = Boolean(game.requestedOpponentId);
-    const description = designated
-        ? designatedInvitationDescription(game.initiatorId, game.requestedOpponentId)
-        : openInvitationDescription(game.initiatorId);
-    return {
-        embeds: [makeEmbed(description)],
-        components: [invitationRow(game, designated)],
-    };
-}
-
-function turnRow(game) {
-    const token = game.turnToken;
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`mystery_devil_roulette_shoot:${game.id}:${token}:opponent`)
-            .setLabel('🔫 射对手')
-            .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-            .setCustomId(`mystery_devil_roulette_shoot:${game.id}:${token}:self`)
-            .setLabel('💀 射自己')
-            .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-            .setCustomId(`mystery_devil_roulette_items:${game.id}:${token}`)
-            .setLabel('🎒 使用道具')
-            .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-            .setCustomId(`mystery_devil_roulette_surrender:${game.id}:${token}`)
-            .setLabel('🏳️ 投降')
-            .setStyle(ButtonStyle.Secondary)
-    );
-}
-
-// ── 过程面板生命周期 ────────────────────────────────────────────────────────
-
-function trackProcessPanel(game, message, action) {
-    if (!message) return;
-    game.panelRegistry?.track(message, {
-        context: { action, guildId: game.guildId, gameId: game.id },
-    });
-}
-
-async function publishPublicPanel(game, payload, action, { track = true, invalidatePrevious = true } = {}) {
-    // 公开动作默认先失效旧过程面板的按钮（保留消息可见），再发新面板。
-    // 道具效果面板不失效旧面板：道具不推进 token，当前回合面板必须保持可用。
-    if (track && invalidatePrevious) {
-        await game.panelRegistry?.stageAll();
-    }
-    const message = await queuePublicWrite(game, () => safeSend(game, payload, action));
-    if (message && track) trackProcessPanel(game, message, action);
-    return message;
-}
-
-// ── 射击与回合 ──────────────────────────────────────────────────────────────
-
-function opponentOf(game, userId) {
-    return game.participantIds.find(id => id !== userId);
-}
-
-function countInventory(game, userId) {
-    return game.inventory?.get(userId)?.length ?? 0;
-}
-
-function grantItems(game) {
-    const random = randomFor(game);
-    game.inventory ||= new Map();
-    game.cigaretteUsed ||= new Map();
-    for (const userId of game.participantIds) {
-        const inventory = game.inventory.get(userId) || [];
-        // 每人 +2，最多 4；库存 3 只补 1，4 不补。
-        const space = Math.max(0, MAX_INVENTORY - inventory.length);
-        const grantCount = Math.min(ITEMS_PER_RELOAD, space);
-        if (grantCount > 0) {
-            inventory.push(...drawItems(grantCount, random));
+    async refreshPanel(interaction) {
+        await deferComponent(interaction, { ephemeral: true });
+        let allowed = false;
+        await gameManager.runExclusive(this, () => {
+            if (['playing', 'ended'].includes(this.status) && this.state) allowed = true;
+        });
+        if (!allowed) {
+            await sendComponentError(interaction, '这局还没有可刷新的活动面板。');
+            return;
         }
-        game.inventory.set(userId, inventory);
-        game.cigaretteUsed.set(userId, false);
-    }
-}
-
-function installReload(game) {
-    const chamber = buildChamber(randomFor(game));
-    game.chamber = chamber.rounds;
-    game.liveCount = chamber.liveCount;
-    game.blankCount = chamber.blankCount;
-    game.reloadNumber = (game.reloadNumber || 0) + 1;
-    // 手锯与手铐跨 reload 保留；香烟 cycle 重置；道具补充。
-    grantItems(game);
-    // 重新随机先手。
-    const index = Math.floor(randomFor(game)() * game.participantIds.length);
-    game.currentTurn = game.participantIds[index];
-}
-
-function advanceTurnToken(game) {
-    game.turnToken = randomUUID().replaceAll('-', '').slice(0, 12);
-}
-
-function clearTurnTimer(game) {
-    clearTimer(game, game.turnTimer);
-    game.turnTimer = null;
-}
-
-function armTurnTimer(game) {
-    clearTurnTimer(game);
-    // 道具不刷新 deadline：计时器按实际剩余时间（turnDeadlineAt）对齐。
-    const delay = Math.max(0, Math.min(game.turnDeadlineAt - nowFor(game), 2 ** 31 - 1));
-    const timer = setTimeout(() => {
-        game.timers.delete(timer);
-        handleTurnTimeout(game).catch(error =>
-            logDiscordFailure(game, 'turn-timer', error)
-        );
-    }, delay);
-    timer.unref?.();
-    game.timers.add(timer);
-    game.turnTimer = timer;
-}
-
-function delayTransition(game, delayMs = game.transitionDelayMs ?? TRANSITION_DELAY_MS) {
-    return new Promise(resolve => {
-        let finished = false;
-        let timer;
-        const finish = () => {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timer);
-            game.timers.delete(timer);
-            resolve();
-        };
-        timer = setTimeout(finish, delayMs);
-        timer.unref?.();
-        game.timers.add(timer);
-    });
-}
-
-async function startTurn(game, { preserveDeadline = false } = {}) {
-    if (!preserveDeadline) {
-        game.turnDeadlineAt = nowFor(game) + TURN_DURATION_MS;
-    }
-    advanceTurnToken(game);
-    const payload = {
-        embeds: [makeEmbed(turnDescription(game))],
-        components: [turnRow(game)],
-    };
-    await publishPublicPanel(game, payload, 'turn-panel');
-    armTurnTimer(game);
-}
-
-// 手铐跳过：被铐玩家失去本次行动机会。
-async function skipHandcuffedTurn(game, handcuffedId) {
-    game.handcuff = null;
-    game.turnDeadlineAt = nowFor(game) + TURN_DURATION_MS;
-    advanceTurnToken(game);
-    const other = opponentOf(game, handcuffedId);
-    const description = [
-        `⛓️ **轮到 <@${handcuffedId}> 了。**`,
-        '',
-        '……本来应该是。',
-        '',
-        '手铐还挂在桌边。',
-        '',
-        `**<@${handcuffedId}> 的本回合被跳过。**`,
-        '',
-        `🔫 枪重新回到 <@${other}> 手里。`,
-    ].join('\n');
-    await publishPublicPanel(game, { embeds: [makeEmbed(description)], components: [] }, 'handcuff-skip');
-    await delayTransition(game);
-    await startTurn(game);
-}
-
-async function beginTurnFor(game, nextUserId) {
-    if (game.ended || game.state !== 'playing') return;
-    if (game.handcuff === nextUserId) {
-        await skipHandcuffedTurn(game, nextUserId);
-        return;
-    }
-    game.currentTurn = nextUserId;
-    await startTurn(game);
-}
-
-function removeItem(game, userId, item) {
-    const inventory = game.inventory.get(userId) || [];
-    const index = inventory.indexOf(item);
-    if (index !== -1) inventory.splice(index, 1);
-    game.inventory.set(userId, inventory);
-}
-
-// ── 射击结算 ────────────────────────────────────────────────────────────────
-
-function shootDescription(game, actorId, targetId, bullet, opts = {}) {
-    const { saw = false, auto = false } = opts;
-    const damage = saw ? 2 : 1;
-    if (targetId === actorId) {
-        if (bullet === 'live') {
-            return [
-                '💥 **砰！**',
-                '',
-                saw ? '💥 **砰！！**\n\n这把锯短的枪，对准的是自己。' : `<@${actorId}> 把枪口顶向了自己。`,
-                '',
-                `## 🔴 实弹${saw ? ' · 手锯强化' : ''}`,
-                '',
-                `<@${actorId}> **失去 ${damage} 点生命。**`,
-                '',
-                '赌错了。',
-                '',
-                '枪换手。',
-            ].join('\n');
-        }
-        return [
-            '**咔哒。**',
-            '',
-            `<@${actorId}> 对自己扣下扳机。`,
-            '',
-            '## ⚪ 空包弹',
-            '',
-            '他还站着。',
-            '',
-            '**而且枪还在他手上。**',
-        ].join('\n');
-    }
-    if (bullet === 'live') {
-        return [
-            '💥 **砰！**',
-            '',
-            saw
-                ? `锯短的枪管几乎贴到了 <@${targetId}> 面前。`
-                : `<@${actorId}> 把枪口对准了 <@${targetId}>。`,
-            '',
-            `## 🔴 实弹${saw ? ' · 手锯强化' : ''}`,
-            '',
-            `<@${targetId}> **失去 ${damage} 点生命。**`,
-            '',
-            `<@${targetId}>　${'❤️'.repeat(Math.max(0, game.hp?.[targetId] ?? 0))}`,
-            '',
-            '枪换手。',
-        ].join('\n');
-    }
-    return [
-        '**咔哒。**',
-        '',
-        `<@${actorId}> 对着 <@${targetId}> 扣下扳机。`,
-        '',
-        '## ⚪ 空包弹',
-        '',
-        '什么都没发生。',
-        '',
-        `除了枪现在该交给 <@${targetId}> 了。`,
-    ].join('\n');
-}
-
-function autoShootDescription(actorId, targetId) {
-    return [
-        `⏳ **<@${actorId}> 犹豫得太久了。**`,
-        '',
-        '既然不肯扣扳机——',
-        '',
-        '**那就让恶魔替你。**',
-        '',
-        `🔫 枪口自动转向 <@${targetId}>。`,
-    ].join('\n');
-}
-
-function reloadDescription(game, viaBeer = false) {
-    const lines = viaBeer
-        ? [
-            '🍺 **最后一发也被退了出来。**',
-            '',
-            '弹仓彻底空了。',
-            '',
-            '## 🔄 重新装填',
-        ]
-        : [
-            '## 🔄 弹仓空了',
-            '',
-            '枪被重新拿回桌面中央。',
-            '',
-            '**咔。咔。咔。**',
-            '',
-            '新一轮装填：',
-        ];
-    lines.push(
-        '',
-        `🔴 实弹 ×${game.liveCount}`,
-        `⚪ 空包弹 ×${game.blankCount}`,
-        '',
-        '🎒 双方获得新的道具。',
-        '',
-        '🎲 **重新决定先手……**',
-    );
-    return lines.join('\n');
-}
-
-async function performReload(game, viaBeer = false) {
-    clearTurnTimer(game);
-    installReload(game);
-    await publishPublicPanel(
-        game,
-        { embeds: [makeEmbed(reloadDescription(game, viaBeer))], components: [] },
-        'reload-panel'
-    );
-    await delayTransition(game);
-    // reload 后重新随机先手；如果抽中被铐玩家则立即跳过。
-    await beginTurnFor(game, game.currentTurn);
-}
-
-// 真正开枪（含自动开枪）。所有状态变更在 runExclusive 内认领。
-async function performShot(game, input) {
-    const { actorId, target: targetChoice, auto = false, turnToken } = input;
-    let shot = null;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') return;
-        if (game.turnToken !== turnToken) return;
-        if (game.currentTurn !== actorId) return;
-
-        clearTurnTimer(game);
-
-        const bullet = game.chamber.shift();
-        const targetId = targetChoice === 'self' ? actorId : opponentOf(game, actorId);
-        const sawActive = game.saw === actorId;
-        if (sawActive) game.saw = null;
-        if (bullet === 'live') {
-            game.liveCount -= 1;
-        } else {
-            game.blankCount -= 1;
-        }
-
-        const damage = sawActive ? 2 : 1;
-        let hpZero = false;
-        let selfBlank = false;
-        if (bullet === 'live') {
-            const nextHp = Math.max(0, (game.hp?.[targetId] ?? MAX_HP) - damage);
-            game.hp[targetId] = nextHp;
-            hpZero = nextHp <= 0;
-        } else if (targetId === actorId) {
-            selfBlank = true;
-        }
-
-        game.turnToken = randomUUID().replaceAll('-', '').slice(0, 12);
-
-        shot = {
-            actorId,
-            targetId,
-            bullet,
-            sawActive,
-            damage,
-            auto,
-            hpZero,
-            selfBlank,
-        };
-    });
-
-    if (!shot) return false;
-
-    if (auto) {
-        await publishPublicPanel(
-            game,
-            { embeds: [makeEmbed(autoShootDescription(shot.actorId, shot.targetId))], components: [] },
-            'auto-shoot-intro'
-        );
-    }
-
-    const chamberEmpty = game.chamber.length === 0;
-
-    if (shot.hpZero) {
-        // 致死：立即进入最终结算，不再有 2 秒过渡。
-        return finishWithShotDeath(game, shot);
-    }
-
-    const description = shootDescription(game, shot.actorId, shot.targetId, shot.bullet, { saw: shot.sawActive, auto: shot.auto });
-    await publishPublicPanel(game, { embeds: [makeEmbed(description)], components: [] }, 'shot-result');
-
-    if (shot.selfBlank) {
-        // 射自己空包：继续当前玩家，全新 60 秒；若恰好打空弹仓则先 reload。
-        await delayTransition(game);
-        if (chamberEmpty) {
-            await performReload(game, false);
-            return true;
-        }
-        await beginTurnFor(game, shot.actorId);
-        return true;
-    }
-
-    await delayTransition(game);
-    if (chamberEmpty) {
-        await performReload(game, false);
-        return true;
-    }
-    // 射自己实弹：回合交给对方；射对手：回合交给对手。
-    const nextUserId = shot.targetId === shot.actorId
-        ? opponentOf(game, shot.actorId)
-        : shot.targetId;
-    await beginTurnFor(game, nextUserId);
-    return true;
-}
-
-async function finishWithShotDeath(game, shot) {
-    const winnerId = opponentOf(game, shot.targetId);
-    const loserId = shot.targetId;
-    const description = shot.sawActive
-        ? [
-            '## 👿 恶魔轮盘结束',
-            '',
-            '💥 **实弹 · 手锯强化**',
-            '',
-            `这一枪没给 <@${loserId}> 留第二次机会。`,
-        ]
-        : [
-            '## 👿 恶魔轮盘结束',
-            '',
-            '💥 最后一发是 **🔴 实弹**。',
-            '',
-            `<@${loserId}> 的最后一颗心熄灭了。`,
-        ];
-    return concludeGame(game, { winnerId, loserId, introLines: description, shot });
-}
-
-// ── 终局与处罚 ──────────────────────────────────────────────────────────────
-
-const PENDING_JUDGMENT_LINES = [
-    '',
-    `⚖️ **赢家正在决定败者的命运……**`,
-];
-
-async function concludeGame(game, { winnerId, loserId, introLines, skipPunishment = false }) {
-    clearTurnTimer(game);
-    let concluded = false;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') return;
-        game.state = 'ended';
-        game.winnerId = winnerId;
-        game.loserId = loserId;
-        concluded = true;
-    });
-    if (!concluded) return false;
-
-    const lines = [
-        ...introLines,
-        '',
-        `🏆 <@${winnerId}> **获胜**`,
-        `💀 <@${loserId}> **落败**`,
-    ];
-    // 赢家裁决能力：按 Bot 权限 + loser 锁状态评估。
-    const capabilities = !skipPunishment
-        ? devilPunishmentService.evaluateCapabilities({ guild: game.guild, loserId })
-        : null;
-    if (!skipPunishment && capabilities && !capabilities.anyPossible) {
-        lines.push('', '⚠️ Bot 当前无法对败者执行处罚。', '', '**本局仅结算胜负。**');
-    } else if (!skipPunishment) {
-        lines.push(...PENDING_JUDGMENT_LINES);
-    }
-    const entryComponents = capabilities?.anyPossible
-        ? [devilPunishmentService.buildEntryRow(`devil-${game.id}`, game.turnToken)]
-        : [];
-
-    const finalMessage = await publishPublicPanel(
-        game,
-        { embeds: [makeEmbed(lines.join('\n'))], components: entryComponents },
-        'final-result',
-        { track: false }
-    );
-
-    // 解锁游戏锁与过程面板清理：惩罚会话独立于游戏锁继续。
-    game.finalMessage = finalMessage;
-    if (!skipPunishment && finalMessage && capabilities?.anyPossible) {
-        game.punishmentSession = devilPunishmentService.start({
-            id: `devil-${game.id}`,
-            guildId: game.guildId,
-            winnerId,
-            loserId,
-            effectToken: game.turnToken,
-            finalMessage,
-            guild: game.guild,
-            client: game.guild?.client,
-            channelId: game.channelId,
+        // 强制重渲染当前面板（人类回合会带上开枪按钮；旧面板按钮被禁用）。
+        const ok = await this.renderLocked();
+        await sendEphemeral(interaction, {
+            content: ok ? '🔄 已刷新当前面板。' : '🔄 面板刷新失败，请稍后再试。',
         });
     }
-    await cleanupDevilRouletteGame(game, { preserveFinal: true });
-    return true;
-}
 
-// ── 邀请流程 ────────────────────────────────────────────────────────────────
-
-async function cleanupDevilRouletteGame(game, { preserveFinal = false } = {}) {
-    if (!game || game.cleanupPromise) return game?.cleanupPromise;
-    game.cleanupStarted = true;
-    game.cleanupPromise = (async () => {
-        activeGames.delete(game);
-        clearTurnTimer(game);
-        clearTimer(game, game.invitationTimer);
-        game.invitationTimer = null;
-        // 所有过程面板（邀请 + 回合 + 动作结果）统一失效按钮后延迟删除；最终结算消息不入 registry，永久保留。
-        await game.panelRegistry?.stageAll();
-        await gameManager.cleanupGame(game);
-        game.panelRegistry?.armAll();
-    })().catch(error => {
-        logDiscordFailure(game, 'cleanup', error);
-    });
-    return game.cleanupPromise;
-}
-
-function invitationExpiredDescription() {
-    return '⌛ **没人坐下。**\n\n枪已经收回去了，本次恶魔轮盘取消。';
-}
-
-async function cancelInvitation(game, description, action) {
-    let cancelled = false;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'inviting') return;
-        game.state = 'ended';
-        clearTimer(game, game.invitationTimer);
-        game.invitationTimer = null;
-        cancelled = true;
-    });
-    if (!cancelled) return false;
-    await publishPublicPanel(
-        game,
-        { embeds: [makeEmbed(description)], components: [] },
-        action
-    );
-    await cleanupDevilRouletteGame(game);
-    return true;
-}
-
-async function expireInvitation(game) {
-    return cancelInvitation(game, invitationExpiredDescription(), 'invitation-timeout');
-}
-
-// ── 正式开局 ────────────────────────────────────────────────────────────────
-
-const OPENING_LINES = (initiatorId, opponentId) => [
-    '## 👿 恶魔轮盘开始',
-    '',
-    heartLine({ hp: { [initiatorId]: MAX_HP, [opponentId]: MAX_HP } }, initiatorId),
-    heartLine({ hp: { [initiatorId]: MAX_HP, [opponentId]: MAX_HP } }, opponentId),
-    '',
-    '**咔。咔。咔。**',
-    '',
-    '霰弹枪重新装填……',
-];
-
-async function beginGame(game) {
-    let began = false;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'inviting') return;
-        game.state = 'playing';
-        game.hp = {
-            [game.initiatorId]: MAX_HP,
-            [game.opponentId]: MAX_HP,
-        };
-        game.saw = null;
-        game.handcuff = null;
-        game.surrendered = null;
-        installReload(game);
-        began = true;
-    });
-    if (!began) return false;
-
-    // 正式开局：双方进入冷却（由指令层按频道配置写入）。
-    try {
-        game.onGameStarted?.([game.initiatorId, game.opponentId]);
-    } catch (error) {
-        logDiscordFailure(game, 'on-game-started', error, game.initiatorId);
+    async surrender(interaction) {
+        await deferComponent(interaction, { ephemeral: true });
+        let changed = false;
+        let rejection = null;
+        let loserId = null;
+        await gameManager.runExclusive(this, () => {
+            if (this.status !== 'playing' || !this.state) {
+                rejection = '这局还没开始或已经结束了。';
+                return;
+            }
+            if (!this.state.players.includes(interaction.user?.id)) {
+                rejection = '只有对局里的玩家可以认输。';
+                return;
+            }
+            if ((this.state.hp[interaction.user.id] || 0) <= SURRENDER_MIN_HP) {
+                rejection = `血量仅剩 ${SURRENDER_MIN_HP} 点，这一枪必须打完。`;
+                return;
+            }
+            loserId = interaction.user.id;
+            this.status = 'ended';
+            this.finalWinnerId = this.state.other(loserId);
+            this.penaltyScope = 'surrender';
+            this.panelColor = 0x8E44AD;
+            this.lastEvent = `🏳️ **${this.shortName(loserId)}** 认输了。\n${flavor('surrender')}`;
+            changed = true;
+        });
+        if (rejection) {
+            await sendComponentError(interaction, rejection);
+            return;
+        }
+        if (!changed) {
+            await sendComponentError(interaction, '这局还没开始或已经结束了。');
+            return;
+        }
+        this.onGameEndedLocked(); // 与正常终局同路：置位 penaltyPending（惩罚按钮 + 60s 自动施罚）
+        await this.renderLocked();
+        await confirmComponent(interaction, '🏳️ 你放下了枪。命还在，就是赢了另一半。');
     }
 
-    const [a, b] = [game.initiatorId, game.opponentId];
-    const opening = [
-        ...OPENING_LINES(a, b),
-        '',
-        `🔴 实弹：**${game.liveCount}**`,
-        `⚪ 空包弹：**${game.blankCount}**`,
-        '',
-        '🎒 双方获得了新的道具。',
-        '',
-        '🎲 正在决定谁先碰枪……',
-    ].join('\n');
-    await publishPublicPanel(game, { embeds: [makeEmbed(opening)], components: [] }, 'opening-panel');
-    await delayTransition(game);
-    await beginTurnFor(game, game.currentTurn);
-    return true;
+    onGameEndedLocked() {
+        // 终局统一处理：胜者自选惩罚。
+        if (!this.state || this.finalWinnerId == null) return;
+        this.penaltyPending = true;
+    }
+
+    armSettlementTimeoutLocked() {
+        // 幂等：胜者超时未选才自动禁言。刷新面板/重渲染会重复调用——
+        // 若每次都重置，败者可用「🔄 刷新」无限拖延自动施罚。只武装一次。
+        if (this.settlementArmed) return;
+        this.settlementArmed = true;
+        this.cancelTimerLocked();
+        this.turnTimer = this.schedule(
+            () => this.settlementTimeout().catch(error => logDiscordFailure(this, 'settlement-timeout', error)),
+            PENALTY_SETTLEMENT_SECONDS * 1000
+        );
+    }
+
+    async settlementTimeout() {
+        let act = false;
+        await gameManager.runExclusive(this, () => {
+            if (this.status !== 'ended' || this.penaltyApplied || !this.penaltyPending) return;
+            act = true;
+        });
+        if (act) await this.autoPenaltyLocked();
+    }
+
+    async autoPenaltyLocked() {
+        // 胜者超时未选择：自动禁言输家 5 分钟。
+        const state = this.state;
+        const winnerId = this.finalWinnerId;
+        if (!state || winnerId == null) return;
+        let proceed = false;
+        // 在临界区内「认领」惩罚（先置位再做网络 I/O），否则与胜者手点 finalizePenalty 竞态，
+        // 双方都通过检查 → 输家被同时禁言+改名。
+        await gameManager.runExclusive(this, () => {
+            if (this.penaltyApplied || !this.penaltyPending) return;
+            this.penaltyApplied = true;
+            this.penaltyPending = false;
+            proceed = true;
+        });
+        if (!proceed) return;
+        const loserId = state.other(winnerId);
+        const [ok, line, retryable] = await this.applyPenaltyAndNarrate(loserId, 'mute', {
+            minutes: PENALTY_AUTO_MUTE_MINUTES,
+        });
+        if (!ok && retryable) {
+            // 可重试失败：放开认领让胜者还能手点（按钮保留）。
+            await gameManager.runExclusive(this, () => {
+                if (this.status === 'ended' && this.penaltyApplied) {
+                    this.penaltyApplied = false;
+                    this.penaltyPending = true;
+                }
+            });
+            this.lastEvent += `\n${line}（胜者未在 ${PENALTY_SETTLEMENT_SECONDS} 秒内选择，自动施罚失败——胜者仍可手动重试）`;
+        } else {
+            // 成功，或不可重试（权限不足——重试无意义）：维持终局，按钮不再出现。
+            this.lastEvent += `\n${line}（胜者未在 ${PENALTY_SETTLEMENT_SECONDS} 秒内选择，自动施罚）`;
+        }
+        await this.renderLocked();
+    }
+
+    async applyPenaltyAndNarrate(loserId, penaltyType, { nickname = null, minutes = null } = {}) {
+        let ok = false;
+        let message = '';
+        let retryable = false;
+        try {
+            [ok, message, retryable] = await this.applyPenalty(this.guild, loserId, penaltyType, { nickname, minutes });
+        } catch (error) {
+            logDiscordFailure(this, 'penalty', error, loserId);
+            ok = false;
+            message = '惩罚调用异常（网络或内部错误）';
+            retryable = true;
+        }
+        if (ok) return [true, `🔒 败者 **${this.shortName(loserId)}**：${message}`, false];
+        return [false, `⚠️ 败者 **${this.shortName(loserId)}** 惩罚未生效：${message}`, retryable];
+    }
+
+    async finalizePenalty(interaction, penaltyType, nickname) {
+        // 胜者点击惩罚按钮后执行（PvP）。网络 I/O + 面板刷新，异常不抛出。
+        const deferred = await deferComponent(interaction, { ephemeral: true });
+        // 交互无法确认（超 3s 或 Discord 拒收）→ 不施罚，避免静默生效且胜者无反馈。
+        if (!deferred) return;
+        let rejection = null;
+        let ok = false;
+        let loserId = null;
+        await gameManager.runExclusive(this, () => {
+            const state = this.state;
+            const winnerId = this.finalWinnerId;
+            if (this.status !== 'ended' || !state || winnerId == null) {
+                rejection = '这局已经结束。';
+                return;
+            }
+            if (this.penaltyApplied) {
+                rejection = '败者惩罚已经处理过了。';
+                return;
+            }
+            if (interaction.user?.id !== winnerId) {
+                rejection = '只有胜利者可以决定败者的惩罚。';
+                return;
+            }
+            // 临界区内认领惩罚，避免与 settlementTimeout 自动禁言竞态（同局被禁言+改名）。
+            this.penaltyApplied = true;
+            this.penaltyPending = false;
+            loserId = state.other(winnerId);
+        });
+        if (rejection) {
+            await sendComponentError(interaction, rejection);
+            return;
+        }
+        if (loserId == null) {
+            await sendComponentError(interaction, '这局已经结束。');
+            return;
+        }
+        const [muteMin, renameMin] = this.penaltyMinutes();
+        const minutes = penaltyType === 'mute' ? muteMin : renameMin;
+        let line = null;
+        let retryable = false;
+        [ok, line, retryable] = await this.applyPenaltyAndNarrate(loserId, penaltyType, { nickname, minutes });
+        if (!ok) {
+            if (retryable) {
+                // 可重试失败（网络抖动等）：放开认领，让自动禁言兜底或胜者重试，避免输家逃罚。
+                await gameManager.runExclusive(this, () => {
+                    if (this.status === 'ended' && this.penaltyApplied) {
+                        this.penaltyApplied = false;
+                        this.penaltyPending = true;
+                    }
+                });
+            }
+            // 不可重试（权限不足等）：保持认领——按钮不再出现，60s 自动施罚也已跳过，
+            // 避免胜者反复点击反复失败刷屏。失败原因已写进结算叙述。
+        }
+        // 惩罚结果拼进叙述（last_event += line，结算面板可见）。
+        if (line) this.lastEvent += `\n${line}`;
+        await this.renderLocked();
+        await sendEphemeral(
+            interaction,
+            {
+                content: ok ? '✅ 败者惩罚已施加。'
+                    : retryable ? '❌ 败者惩罚未能施加（网络问题），可稍后重试。'
+                    : '❌ 败者惩罚无法施加（权限不足）——原因已写在结算面板，本局不再提供惩罚选项。',
+            }
+        );
+    }
+
+    async chooseMutePenalty(interaction) {
+        await this.finalizePenalty(interaction, 'mute', null);
+    }
+
+    async chooseRenamePenalty(interaction, nickname) {
+        await this.finalizePenalty(interaction, 'rename', nickname);
+    }
+
+    async openRenameModal(interaction) {
+        // 改名按钮：校验胜者后弹出昵称输入对话框。
+        // 纯读取校验不走 runExclusive——那是慢路径，交互超 3s 未响应会被 Discord 丢弃 Modal。
+        // 真正变更在提交时 finalizePenalty 内再上锁复检（此处读到的是瞬间快照，竞态由复检兜底）。
+        const state = this.state;
+        const winnerId = this.finalWinnerId;
+        if (this.status !== 'ended' || !state || winnerId == null) {
+            await deferComponent(interaction, { ephemeral: true });
+            await sendComponentError(interaction, '这局已经结束。');
+            return;
+        }
+        if (this.penaltyApplied) {
+            await deferComponent(interaction, { ephemeral: true });
+            await sendComponentError(interaction, '败者惩罚已经处理过了。');
+            return;
+        }
+        if (interaction.user?.id !== winnerId) {
+            await deferComponent(interaction, { ephemeral: true });
+            await sendComponentError(interaction, '只有胜利者可以决定败者的惩罚。');
+            return;
+        }
+        const input = new TextInputBuilder()
+            .setCustomId('devil_roulette_rename_input')
+            .setLabel('要给败者改成的昵称（最多 32 字）')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(32)
+            .setPlaceholder('例如：🔒 恶魔轮盘输家');
+        const modal = new ModalBuilder()
+            .setCustomId(`${RENAME_MODAL_PREFIX}:${this.id}`)
+            .setTitle('✏️ 败者改名惩罚')
+            .addComponents(new ActionRowBuilder().addComponents(input));
+        try {
+            await interaction.showModal(modal);
+        } catch (error) {
+            logDiscordFailure(this, 'show-rename-modal', error, interaction.user?.id);
+        }
+    }
+
+    // ── 定时器 ──
+
+    schedule(fn, ms) {
+        const t = setTimeout(() => {
+            this.timers.delete(t);
+            fn();
+        }, Math.min(ms, 2 ** 31 - 1));
+        t.unref?.();
+        this.timers.add(t);
+        return t;
+    }
+
+    cancelTimerLocked() {
+        if (this.turnTimer) {
+            clearTimeout(this.turnTimer);
+            this.timers.delete(this.turnTimer);
+            this.turnTimer = null;
+        }
+    }
+
+    async challengeTimeout() {
+        let changed = false;
+        await gameManager.runExclusive(this, () => {
+            if (this.status !== 'challenge') return;
+            this.status = 'ended';
+            this.lastEvent = '⌛ 没有人敢碰那把枪。挑战超时，面板已失效。';
+            changed = true;
+        });
+        if (changed) await this.renderLocked();
+    }
+
+    // 回合超时：直接替当前玩家开一枪（主延迟由定时器承担，含 2s 宽限）。
+    async turnTimeout(armedToken) {
+        let result = null;
+        await gameManager.runExclusive(this, () => {
+            if (this.status !== 'playing' || !this.state) return;
+            if (this.state.turnToken !== armedToken) return;
+            try {
+                result = this.state.apply('shoot_opponent', this.state.currentPlayerId, { expectedToken: armedToken });
+            } catch (error) {
+                if (!(error instanceof InvalidAction)) throw error;
+            }
+        });
+        if (result) await this.afterActionLocked(result);
+        else await this.armTimerLocked();
+    }
+
+    startLocked() {
+        this.status = 'playing';
+        this.state = new DevilState(this.participants, {
+            rng: this.rng || defaultRng(),
+            alternateFirstTurn: this.mode === 'pvp',
+        });
+    }
+
+    armTimerLocked() {
+        this.cancelTimerLocked();
+        if (this.status === 'challenge') {
+            this.turnTimer = this.schedule(
+                () => this.challengeTimeout().catch(error => logDiscordFailure(this, 'challenge-timeout', error)),
+                CHALLENGE_SECONDS * 1000
+            );
+        } else if (this.status === 'playing' && this.state) {
+            const token = this.state.turnToken;
+            this.turnTimer = this.schedule(
+                () => this.turnTimeout(token).catch(error => logDiscordFailure(this, 'turn-timeout', error)),
+                (TURN_SECONDS + GRACE_SECONDS) * 1000
+            );
+        }
+    }
+
+    // ── 渲染 ──
+
+    ensureReleased() {
+        // 终局但胜者还没选惩罚（结算待定）：暂不释放，惩罚落定后再释放。
+        if (this.status === 'ended' && this.penaltyPending && !this.penaltyApplied) return;
+        if (this.released) return;
+        this.released = true;
+        this.disableAllComponents();
+        this.settlementArmed = false;
+        this.deletePersisted();
+        return gameManager.cleanupGame(this);
+    }
+
+    teardownNoSend() {
+        this.status = 'ended';
+        this.cancelTimerLocked();
+        this.ensureReleased();
+    }
+
+    async afterActionLocked(result) {
+        // 动作提交后的统一分流：终局→结算面板；道具→道具面板+主面板同步；开枪→播报+新面板。
+        this.lastEvent = this.safeFormatResult(result);
+        this.panelColor = this.resultColor(result);
+        const boundary = result.action === 'shoot_self'
+            || result.action === 'shoot_opponent'
+            || result.reloaded
+            || result.roundEnded;
+        if (result.gameEnded) {
+            this.resetItemPanel();
+            this.status = 'ended';
+            this.finalWinnerId = result.gameWinnerId;
+            await this.onGameEndedLocked();
+            await this.renderLocked();
+        } else if (result.action in ITEM_DEFS) {
+            // 道具使用：记录进「道具使用」面板（同一开枪回合内编辑更新）+ 主面板同步道具数。
+            this.recordItemUse(result);
+            await this.publishItemPanelLocked(result);
+            await this.renderItemUseLocked();
+            if (boundary) this.resetItemPanel();
+        } else {
+            // 开枪分流：空枪打自己 → 连击面板 + 主面板原地刷新；其余 → 播报面板 + 新主面板。
+            const selfBlank = result.action === 'shoot_self' && !result.hit && !result.roundEnded
+                && this.state != null && this.state.currentPlayerId === result.actorId;
+            if (selfBlank) {
+                // 连续空枪合并进同一张连击面板。顺序固定：主面板先就位（原地编辑保位置；
+                // 掉出滚动窗口就新发到最底），连击面板随后更新——**任何情况下都在主面板下方**。
+                // 空枪恰好打空弹巢（reloaded）：重装通知已含在 lastEvent 里，随这发并入后断开合并。
+                const n = this.selfShotBlocks.length + 1;
+                this.selfShotBlocks.push(`**第 ${n} 发空枪**　${this.lastEvent}`);
+                await this.refreshMainPanelLocked();
+                await this.updateSelfShotComboLocked();
+                if (result.reloaded) {
+                    this.selfShotBlocks = [];
+                    this.selfShotPanel = null;
+                }
+            } else {
+                this.selfShotBlocks = [];
+                this.selfShotPanel = null;
+                if (result.action === 'shoot_self' || result.action === 'shoot_opponent') {
+                    await this.sendBroadcastLocked({ title: this.broadcastTitle(result) });
+                }
+                await this.renderLocked();
+            }
+            if (boundary) this.resetItemPanel();
+        }
+    }
+
+    selfShotComboEmbed() {
+        // 连击面板：author=游戏名，标题带连击数，正文=逐发叙述块。
+        const n = this.selfShotBlocks.length;
+        let desc = this.selfShotBlocks.join('\n\n');
+        if (this.state) {
+            desc += `\n\n**🔫 枪里还剩 ${this.state.totalRemaining} 发**　实弹 ${this.state.liveRemaining} · 空弹 ${this.state.blankRemaining}`;
+        }
+        return new EmbedBuilder()
+            .setAuthor({ name: `${this.title} · ${this.modeText()}` })
+            .setColor(this.panelColor)
+            .setTitle(`😮‍💨 空枪连击 · 共 ${n} 发`)
+            .setDescription(desc)
+            .setFooter({ text: '连续打自己空枪保住回合 · 开枪/换手后刷新' });
+    }
+
+    // 空枪连击面板：**任何情况下都保证在主面板下方**（即频道最底）。
+    // 调用前主面板已就位（原地编辑保位置，或新发到最底）。连击面板已是
+    // 滚动窗口最后一条 → 原地编辑新增；位置被后续面板顶掉（或编辑失败）→
+    // 删掉旧连击面板、重新发到最底——不留上面的旧副本。
+    async updateSelfShotComboLocked() {
+        if (!this.selfShotBlocks.length || typeof this.channel?.send !== 'function') return;
+        const embed = this.selfShotComboEmbed();
+        const entry = this.selfShotPanel;
+        if (entry != null) {
+            const isLast = this.panels.length > 0 && this.panels[this.panels.length - 1] === entry;
+            if (isLast) {
+                try {
+                    await entry.message.edit({
+                        embeds: [embed],
+                        allowedMentions: { parse: [], users: [], repliedUser: false },
+                    });
+                    return;
+                } catch (error) {
+                    logDiscordFailure(this, 'selfshot-panel-edit', error);
+                }
+            }
+            // 旧面板不在最底（或已失效）：删旧重发，保证紧跟主面板下方。
+            this.selfShotPanel = null;
+            this.panels = this.panels.filter(e => e !== entry);
+            try {
+                await entry.message.delete();
+            } catch (error) {
+                logDiscordFailure(this, 'selfshot-panel-delete', error);
+            }
+        }
+        let message;
+        try {
+            message = await this.channel.send({
+                embeds: [embed],
+                allowedMentions: { parse: [], users: [], repliedUser: false },
+            });
+        } catch (error) {
+            logDiscordFailure(this, 'selfshot-panel-send', error);
+            return;
+        }
+        const comboEntry = { message, interactive: false };
+        this.selfShotPanel = comboEntry;
+        this.panels.push(comboEntry);
+        await this.pruneWindowLocked();
+    }
+
+    broadcastTitle(result) {
+        if (result.action === 'shoot_self' || result.action === 'shoot_opponent') {
+            if (result.hit) return pickRandom(['💥 实弹命中！', '🔫 正中靶心', '💀 一枪见血', '🩸 弹不虚发', '⚡ 该响的时候响了']);
+            return pickRandom(['😮‍💨 空枪……', '💨 打空了', '🤷 没响，有点尴尬', '🍃 与死神擦肩', '😶 虚惊一场']);
+        }
+        if (result.reloaded) return '🔁 重新装填';
+        return '🎲 恶魔轮盘';
+    }
+
+    async sendBroadcastLocked({ title }) {
+        // 把 last_event 的叙述单独发成一张「播报面板」：计入滚动窗口、无按钮、不 ping。
+        if (!this.lastEvent) return;
+        if (typeof this.channel?.send !== 'function') return;
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setColor(this.panelColor)
+            .setAuthor({ name: `${this.title} · ${this.modeText()}` })
+            .setDescription(this.lastEvent);
+        let message;
+        try {
+            message = await this.channel.send({
+                embeds: [embed],
+                allowedMentions: { parse: [], users: [], repliedUser: false },
+            });
+        } catch (error) {
+            logDiscordFailure(this, 'broadcast', error);
+            return;
+        }
+        this.panels.push({ message, interactive: false });
+        await this.pruneWindowLocked();
+    }
+
+    async disablePreviousButtonsLocked() {
+        for (const entry of this.panels) {
+            if (!entry.interactive) continue;
+            entry.interactive = false;
+            try {
+                await entry.message.edit({
+                    components: [],
+                    allowedMentions: { parse: [], users: [], repliedUser: false },
+                });
+            } catch (error) {
+                logDiscordFailure(this, 'disable-previous-buttons', error);
+            }
+        }
+    }
+
+    async pruneWindowLocked() {
+        while (this.panels.length > PANEL_HISTORY_LIMIT) {
+            const entry = this.panels.shift();
+            if (entry === this.itemPanelEntry) this.itemPanelEntry = null;
+            try {
+                await entry.message.delete();
+            } catch (error) {
+                logDiscordFailure(this, 'prune-window', error);
+            }
+        }
+    }
+
+    async pruneToFinalLocked(keep) {
+        const doomed = this.panels.filter(entry => entry !== keep);
+        this.panels = [keep];
+        for (const entry of doomed) {
+            if (entry === this.itemPanelEntry) this.itemPanelEntry = null;
+            try {
+                await entry.message.delete();
+            } catch (error) {
+                logDiscordFailure(this, 'prune-to-final', error);
+            }
+        }
+    }
+
+    buildPanel() {
+        if (this.status === 'challenge') {
+            return { embed: this.challengeEmbed(), rows: this.challengeViewRows(), interactive: true };
+        }
+        if (this.status === 'playing' && this.state) {
+            return { embed: this.playEmbed(), rows: this.gameViewRows(), interactive: true };
+        }
+        const rows = this.settlementViewRows();
+        return { embed: this.settlementEmbed(), rows, interactive: rows.length > 0 };
+    }
+
+    async renderLocked({ armTimer = true } = {}) {
+        // 断连接续：每次渲染前把当前对局状态落盘（renderLocked 是「状态变更后」的集中出口）。
+        this.persistNow();
+        const first = this.panels.length === 0;
+        // 道具面板不在此重置：它跟「开枪回合」生命周期走。
+        this.pingCurrentTurn = false;
+        let entry = null;
+        try {
+            const { embed, rows, interactive } = this.buildPanel();
+            // 软兜底：人类回合面板绝不能没按钮——空行强制换成最小可用按钮集。
+            let finalRows = rows;
+            const current = this.state?.currentPlayerId;
+            if (this.status === 'playing' && this.state && current != null) {
+                if (!rows.length) {
+                    logDiscordFailure(this, 'rows-fallback', new Error(`human turn got empty rows (rows=${rows.length})`), current);
+                    finalRows = this.guaranteedTurnRows(this.state);
+                }
+            }
+            const message = await this.channel.send({
+                embeds: [embed],
+                components: interactive ? finalRows : [],
+                allowedMentions: this.panelMentions(),
+            });
+            entry = { message, interactive };
+        } catch (error) {
+            logDiscordFailure(this, 'render', error);
+            // 软兜底：发送失败（如组件被 Discord 拒绝）时，用最小可用按钮集重试一次，
+            // 保证人类回合面板永远弹得出（guaranteedTurnRows 的 customId 恒唯一，不会重蹈 50035）。
+            if (this.status === 'playing' && this.state && this.state.currentPlayerId != null && entry == null) {
+                try {
+                    const embed = this.playEmbed();
+                    const fallbackRows = this.guaranteedTurnRows(this.state);
+                    const message = await this.channel.send({
+                        embeds: [embed],
+                        components: fallbackRows,
+                        allowedMentions: { parse: [], users: [], repliedUser: false },
+                    });
+                    entry = { message, interactive: true };
+                } catch (error2) {
+                    logDiscordFailure(this, 'render-fallback-retry', error2);
+                }
+                if (entry) this.mainPanelSent = true;
+            }
+            // 主面板从未成功建立 → 彻底收尾，避免游戏隐形空转。
+            if (!this.mainPanelSent) {
+                this.teardownNoSend();
+                return false;
+            }
+            if (armTimer && ['challenge', 'playing'].includes(this.status)) {
+                this.armTimerLocked();
+            } else if (this.status === 'ended') {
+                this.cancelTimerLocked();
+                this.ensureReleased();
+            }
+            return true;
+        }
+
+        try {
+            if (!first) await this.disablePreviousButtonsLocked();
+            this.panels.push(entry);
+            this.mainPanelSent = true;
+            // 面板已入列：再落盘一次，让快照 panelIds 包含刚发出的这张（开头那次 persist 在
+            // 发送前、不含它）。否则非优雅退出时恢复兜底按 panelIds 删旧面板会漏掉当前主面板，
+            // 频道里留下仍可点击的旧面板。
+            this.persistNow();
+            if (['challenge', 'playing'].includes(this.status)) {
+                await this.pruneWindowLocked();
+                if (armTimer) this.armTimerLocked();
+            } else {
+                this.cancelTimerLocked();
+                await this.pruneToFinalLocked(entry);
+                this.ensureReleased();
+                // 结算面板挂起且胜者未选惩罚 → 启动自动施罚倒计时。
+                if (this.penaltyPending && !this.penaltyApplied) {
+                    this.armSettlementTimeoutLocked();
+                }
+            }
+        } catch (error) {
+            logDiscordFailure(this, 'render-cleanup', error);
+            if (['challenge', 'playing'].includes(this.status)) {
+                try {
+                    this.armTimerLocked();
+                } catch (error2) {
+                    this.teardownNoSend();
+                }
+            } else {
+                this.ensureReleased();
+                // 清理抛错也不能丢了 30s 自动施罚：结算挂起且胜者未选 → 补装定时器。
+                if (this.penaltyPending && !this.penaltyApplied) {
+                    try {
+                        this.armSettlementTimeoutLocked();
+                    } catch (error2) {
+                        logDiscordFailure(this, 'render-cleanup-settlement', error2);
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    async refreshMainPanelLocked() {
+        // 主面板原地编辑刷新（不新发消息）：道具使用、空枪保回合复用。
+        // 找不到可编辑的主面板（如从未发送/被 3 窗口挤出）时退回新发。
+        // 断连接续：状态已变（空枪/道具），先落盘再编辑。
+        this.persistNow();
+        if (!this.panels.length || this.status !== 'playing') {
+            await this.renderLocked();
+            return;
+        }
+        try {
+            const { embed, rows, interactive } = this.buildPanel();
+            // 软兜底：主面板编辑也绝不落成无按钮的人类回合面板。
+            let finalRows = rows;
+            const current = this.state?.currentPlayerId;
+            if (this.state && current != null) {
+                if (!rows.length) {
+                    logDiscordFailure(this, 'refresh-main-rows-fallback', new Error(`refresh edit got empty rows`), current);
+                    finalRows = this.guaranteedTurnRows(this.state);
+                }
+            }
+            // 主面板 = 最后一张交互面板（带按钮）；广播/道具面板 interactive=false 不会被选中。
+            const entry = [...this.panels].reverse().find(e => e.interactive);
+            if (!entry) {
+                // 主面板已被连击/道具记录挤出窗口：重发一张新的到最底。
+                // （连击面板的「保持在主面板下方」由调用后的 updateSelfShotComboLocked 负责。）
+                await this.renderLocked();
+                return;
+            }
+            await entry.message.edit({
+                embeds: [embed],
+                components: interactive ? finalRows : [],
+                allowedMentions: this.panelMentions(),
+            });
+            entry.interactive = interactive;
+        } catch (error) {
+            logDiscordFailure(this, 'refresh-main', error);
+            await this.renderLocked();
+            return;
+        }
+        this.armTimerLocked();
+    }
+
+    async renderItemUseLocked() {
+        // 道具使用后同步编辑主面板（道具详情已进专用道具面板）——复用主面板原地刷新。
+        await this.refreshMainPanelLocked();
+    }
+
+    resetItemPanel() {
+        // 刷新「道具使用」面板：清内容 + 释放指针（下一次道具操作开新面板）。
+        this.itemPanelEntry = null;
+        this.itemUsageLog = [];
+    }
+
+    async publishItemPanelLocked(result) {
+        // 发布/更新「道具使用」面板：同开枪回合首条道具 → 发新面板；后续道具 → 原地编辑。
+        if (!this.itemUsageLog.length || this.status !== 'playing' || !this.state) return;
+        const embed = this.itemPanelEmbed(result.actorId);
+        const entry = this.itemPanelEntry;
+        if (entry != null) {
+            try {
+                await entry.message.edit({
+                    embeds: [embed],
+                    allowedMentions: { parse: [], users: [], repliedUser: false },
+                });
+                return;
+            } catch (error) {
+                logDiscordFailure(this, 'item-panel-edit', error);
+                this.itemPanelEntry = null;
+            }
+        }
+        if (typeof this.channel?.send !== 'function') return;
+        let message;
+        try {
+            message = await this.channel.send({
+                embeds: [embed],
+                allowedMentions: { parse: [], users: [], repliedUser: false },
+            });
+        } catch (error) {
+            logDiscordFailure(this, 'item-panel-send', error);
+            return;
+        }
+        const newEntry = { message, interactive: false };
+        this.itemPanelEntry = newEntry;
+        this.panels.push(newEntry);
+        await this.pruneWindowLocked();
+    }
+
+    itemPanelEmbed(actorId) {
+        const embed = new EmbedBuilder()
+            .setTitle('🎁 道具使用')
+            .setColor(0xE67E22)
+            .setAuthor({ name: `${this.title} · ${this.modeText()}` });
+        let desc = this.itemUsageLog.join('\n\n');
+        if (this.state) desc += `\n\n**剩余道具**：${this.itemsText(actorId)}`;
+        embed.setDescription(desc);
+        embed.setFooter({ text: '本回合的道具操作都记在这里 · 主面板同步更新 · 开枪后翻篇' });
+        return embed;
+    }
+
+    recordItemUse(result) {
+        this.itemUsageLog.push(this.itemUsageBlock(result));
+        if (this.itemUsageLog.length > ITEM_LOG_LIMIT) this.itemUsageLog.shift();
+    }
+
+    itemUsageBlock(result) {
+        const actor = this.shortName(result.actorId);
+        let head;
+        if (result.itemKey === 'adrenaline') {
+            const stolen = ITEM_DEFS[result.stolenKey || ''];
+            const victim = this.state ? this.shortName(this.state.other(result.actorId)) : '对手';
+            const stolenLabel = stolen ? `${stolen.emoji} ${stolen.name}` : '道具';
+            head = `💉 肾上腺素 → 偷取 ${victim} 的 ${stolenLabel} 并立即使用`;
+        } else {
+            const item = ITEM_DEFS[result.itemKey || ''];
+            head = item ? `${item.emoji} ${item.name}` : '道具';
+        }
+        const lines = [`- **${actor} 使用 ${head}**`];
+        for (const ln of this.itemEffectLines(result)) lines.push(`　${ln}`);
+        return lines.join('\n');
+    }
+
+    resultColor(result) {
+        if (result.gameEnded || result.roundEnded) return 0x8E44AD; // 紫 — 新一轮 / 终局
+        if (result.action === 'shoot_self' || result.action === 'shoot_opponent') {
+            return result.hit ? 0xE74C3C : 0x2ECC71; // 红 — 中弹 / 绿 — 空枪
+        }
+        return 0xE67E22; // 橙 — 道具使用等
+    }
+
+    panelMentions() {
+        // 每个新面板该 ping 谁：挑战→被挑战者；回合切换→当前真人行动者；结算待选→胜者。
+        const pingIds = [];
+        if (this.status === 'challenge' && this.targetId != null) {
+            pingIds.push(this.targetId);
+        } else if (this.status === 'playing' && this.state && this.pingCurrentTurn) {
+            const current = this.state.currentPlayerId;
+            if (current != null) pingIds.push(current);
+        } else if (this.status === 'ended' && this.penaltyPending && !this.penaltyApplied) {
+            const winner = this.finalWinnerId;
+            if (winner != null) pingIds.push(winner);
+        }
+        this.pingCurrentTurn = false;
+        return { parse: [], users: pingIds, repliedUser: false };
+    }
+
+    // ── 面板文案 ──
+
+    challengeEmbed() {
+        // 游戏名放 author 小字常驻，title 用动态大标题。
+        const embed = new EmbedBuilder()
+            .setTitle('🔫 决斗邀请')
+            .setColor(0x5865F2)
+            .setAuthor({ name: `${this.title} · ${this.modeText()}` });
+        const cfg = GAME_CONFIG;
+        let headline;
+        if (this.targetId == null) {
+            headline = `**${this.shortName(this.initiatorId)}** 摆下恶魔轮盘擂台，**等待一位勇士**……`
+                + `\n（${this.modeText()}）\n\n`
+                + '任何成员点下方 **⚔️ 应战** 即可入局。';
+        } else {
+            headline = `**${this.shortName(this.initiatorId)}** 向 ${mention(this.targetId)} 发起恶魔轮盘对决`
+                + `（${this.modeText()}）。\n\n`;
+        }
+        const deadline = Math.floor(Date.now() / 1000) + CHALLENGE_SECONDS;
+        const [lo, hi] = cfg.shells;
+        embed.setDescription(
+            `${headline}\n`
+            + `每人 **${cfg.hp}** 点血，弹巢 ${lo}-${hi} 发（实弹占比 40%-60%），一局定胜负。`
+            + '开枪前不知道这发是实是空：**打自己**空弹保回合 / **打对手**实弹扣血。\n'
+            + `开局随机发道具，可用「${ITEM_HELP_LABEL}」随时看完整规则与道具讲解。\n\n`
+            + `🔨 **败者惩罚**（胜者定）：🔇 禁言 ${PENALTY_MUTE_MINUTES} 分 / ✏️ 改名 ${PENALTY_RENAME_MINUTES} 分。\n\n`
+            + `⏳ 擂台将在 <t:${deadline}:R> 后收摊。`
+        );
+        if (this.targetId == null) {
+            embed.setFooter({ text: '谁都能上桌（发起人自己不行）；不想玩了，发起人可随时收枪取消。' });
+        } else {
+            embed.setFooter({ text: '枪只递给了一个人——只有 TA 能接受或拒绝；发起人可以取消。' });
+        }
+        return embed;
+    }
+
+    playEmbed() {
+        const state = this.state;
+        if (!state) {
+            return new EmbedBuilder()
+                .setTitle(this.title)
+                .setColor(0x8E44AD)
+                .setDescription(this.lastEvent || '游戏尚未开始。');
+        }
+
+        const current = state.currentPlayerId;
+        // 断连接续标记：恢复回来的首张主面板标题提醒，下一次新发面板时清除。
+        const resumed = this.resumed;
+        if (resumed) this.resumed = false;
+        const title = resumed ? '🔁 断连接续 · 🎯 开枪回合' : '🎯 开枪回合';
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setColor(this.panelColor)
+            .setAuthor({ name: `${this.title} · ${this.modeText()}` });
+
+        // 主体状态放 description，空行分节给呼吸感。
+        const parts = [];
+
+        // 回合切换的 ping 标记保留（新面板只 ping 新的行动者一次）。
+        let isNewTurn = false;
+        if (current != null) {
+            isNewTurn = current !== this.announcedPlayer;
+            if (isNewTurn) {
+                this.announcedPlayer = current;
+                this.pingCurrentTurn = true;
+            }
+        }
+
+        // 实时倒计时：<t:deadline:R> 客户端滴答。
+        if (current != null) {
+            if (isNewTurn) parts.push(`⚡现在轮到${mention(current)}开枪了！`);
+            parts.push(`⏳ <t:${Math.floor(Date.now() / 1000) + TURN_SECONDS + GRACE_SECONDS}:R> 自动行动`);
+            parts.push('');
+        }
+
+        // 枪内状态：整行加粗 + 🔫 前缀。
+        if (state.inverterObscured) {
+            parts.push(`**🔫 枪内 ${state.totalRemaining} 发　实弹 ？？ · 空弹 ？？　中弹率 ？？**`);
+        } else {
+            const chance = state.totalRemaining ? state.liveRemaining / state.totalRemaining : 0.0;
+            const risk = state.totalRemaining ? `（${riskLabel(chance)}）` : '';
+            const pct = state.totalRemaining ? percent(chance) : '—';
+            parts.push(
+                `**🔫 枪内 ${state.totalRemaining} 发　实弹 ${state.liveRemaining} · `
+                + `空弹 ${state.blankRemaining}　中弹率 ${pct}**${risk}`
+            );
+        }
+        if (state.sawArmed) parts.push('　🪚 手锯已上膛：下一发实弹伤害翻倍。');
+        parts.push('', '');
+
+        embed.setDescription(parts.join('\n'));
+
+        // 双方区块：整行宽字段，每人独立成块；<@id> 必须放 field.value。
+        const ordered = current != null
+            ? [current, ...state.players.filter(p => p !== current)]
+            : state.players;
+        for (let idx = 0; idx < ordered.length; idx++) {
+            const playerId = ordered[idx];
+            const fname = playerId === current ? '🔥 行动中' : '💤 等待';
+            const lines = [
+                `${mention(playerId)}　${state.hpText(playerId)}`,
+                `道具：${this.itemsText(playerId)}`,
+            ];
+            if (state.handcuffed.has(playerId)) {
+                lines.push('🔗 下一回合被铐住，跳过行动');
+            }
+            // 块尾一个 ZWSP 行 = 一行空行分隔下一玩家。
+            if (idx < ordered.length - 1) lines.push('​');
+            embed.addFields([{ name: fname, value: lines.join('\n'), inline: false }]);
+        }
+        return embed;
+    }
+
+    itemsText(playerId) {
+        const state = this.state;
+        if (!state) return '—';
+        const items = state.items[playerId] || [];
+        if (!items.length) return '（无）';
+        const counts = new Map();
+        for (const key of items) counts.set(key, (counts.get(key) || 0) + 1);
+        const parts = [];
+        for (const [key, n] of counts) {
+            const item = ITEM_DEFS[key];
+            const label = `${item.emoji} ${item.name}`;
+            parts.push(n === 1 ? label : `${label}×${n}`);
+        }
+        return parts.join('　');
+    }
+
+    privateEmbed(userId) {
+        const state = this.state;
+        if (!state) throw new InvalidAction('这局还没有私有情报。');
+        return new EmbedBuilder()
+            .setTitle(`${this.title} · 仅你可见`)
+            .setColor(0x5865F2)
+            .addFields([
+                { name: '⚡ 我的电量', value: state.hpText(userId), inline: true },
+                { name: '🎁 我的道具', value: this.itemsText(userId), inline: true },
+                { name: '📜 情报', value: state.privateIntelText(userId), inline: false },
+            ]);
+    }
+
+    penaltyMinutes() {
+        // 当前惩罚口径的 (禁言分钟, 改名分钟)。正常终局 5/10；认输 3/7。
+        if (this.penaltyScope === 'surrender') {
+            return [SURRENDER_MUTE_MINUTES, SURRENDER_RENAME_MINUTES];
+        }
+        return [PENALTY_MUTE_MINUTES, PENALTY_RENAME_MINUTES];
+    }
+
+    settlementEmbed() {
+        const embed = new EmbedBuilder()
+            .setTitle('🏆 结算')
+            .setColor(0xF1C40F)
+            .setAuthor({ name: this.title });
+        const parts = [];
+        if (this.finalWinnerId != null) {
+            parts.push(`🏆 ${mention(this.finalWinnerId)} 赢下了这场恶魔轮盘。\n${flavor('game_end')}`);
+        }
+        if (this.lastEvent) parts.push(this.lastEvent);
+        if (this.penaltyPending && !this.penaltyApplied) {
+            const [muteMin, renameMin] = this.penaltyMinutes();
+            parts.push(
+                `🔨 **胜者，轮到你收利息了**：🔇 禁言 ${muteMin} 分钟，`
+                + `或 ✏️ 改名 ${renameMin} 分钟（可自定义败者的新名字）——点下方按钮。`
+                + `${PENALTY_SETTLEMENT_SECONDS} 秒内不选，桌子替你做主：`
+                + `**自动禁言输家 ${PENALTY_AUTO_MUTE_MINUTES} 分钟**。`
+            );
+        }
+        embed.setDescription(parts.join('\n\n'));
+        return embed;
+    }
+
+    // ── 叙述 ──
+
+    safeFormatResult(result) {
+        try {
+            return this.formatResult(result);
+        } catch (error) {
+            logDiscordFailure(this, 'format-result', error, result.actorId);
+            return `⚠️ **${this.shortName(result.actorId)}** 的操作已完成，但事件描述生成失败。`;
+        }
+    }
+
+    formatResult(result) {
+        const actor = this.shortName(result.actorId);
+        const lines = [];
+        if (result.action === 'shoot_self' || result.action === 'shoot_opponent') {
+            const targetSelf = result.action === 'shoot_self';
+            if (result.hit) {
+                const dmg = result.sawDoubled ? `（手锯翻倍 ${result.damage} 点）` : '（1 点）';
+                if (targetSelf) {
+                    lines.push(`💥 ${actor} 开枪打自己，中弹 ${dmg}。`);
+                    lines.push(flavor('self_hit'));
+                } else {
+                    lines.push(`💥 ${actor} 开枪命中 **${this.shortName(result.targetId)}** ${dmg}。`);
+                    lines.push(flavor('hit'));
+                }
+            } else {
+                if (targetSelf) {
+                    lines.push(`😮‍💨 ${actor} 开枪打自己，空弹，保住了回合。`);
+                } else {
+                    lines.push(`😮‍💨 ${actor} 开枪打 **${this.shortName(result.targetId)}**，空弹。`);
+                }
+                lines.push(flavor('miss'));
+            }
+            if (result.reloaded) {
+                lines.push('（弹壳用完了。枪，重新装填。）');
+                lines.push(flavor('reload'));
+            }
+        } else if (result.action === 'adrenaline') {
+            const stolen = ITEM_DEFS[result.stolenKey || ''];
+            const victim = this.state ? this.shortName(this.state.other(result.actorId)) : '对手';
+            const stolenLabel = stolen ? `${stolen.emoji} ${stolen.name}` : '道具';
+            lines.push(`💉 ${actor} 用肾上腺素偷走了 **${victim}** 的 ${stolenLabel}，并立即使用。`);
+            lines.push(...this.itemEffectLines(result));
+        } else {
+            const item = ITEM_DEFS[result.itemKey || ''];
+            const label = item ? `${item.emoji} ${item.name}` : result.itemKey;
+            lines.push(`🎁 ${actor} 使用了 ${label}。`);
+            lines.push(...this.itemEffectLines(result));
+        }
+
+        if (result.roundEnded && result.killedId === result.actorId && result.itemKey) {
+            lines.push('💀 那粒过期药，把赌命的人一起带走了。');
+        }
+        return lines.join('\n');
+    }
+
+    itemEffectLines(result) {
+        const lines = [];
+        if (result.reveal) lines.push('🔍 偷看了一眼命运的底牌（仅自己可见）。');
+        if (result.healed) {
+            lines.push(`❤️‍🩹 回复 ${result.healed} 点生命。`);
+            lines.push(flavor('heal'));
+        } else if (result.fullHp) {
+            if (result.itemKey === 'cigarette') lines.push('🚬 血量已满，这口烟抽了个寂寞。');
+            else if (result.itemKey === 'medicine') lines.push('💊 血量已满，过期药白吃了一粒。');
+            else lines.push('❤️ 血量已满，没有回复效果。');
+        }
+        if (result.lostHp) lines.push(`💔 失去 ${result.lostHp} 点生命。`);
+        if (result.ejected) {
+            const shellType = result.ejectedLive ? '实弹' : '空弹';
+            lines.push(`🍺 弹出当前膛内子弹（${shellType}）。`);
+            lines.push(flavor('beer'));
+        }
+        if (result.flipped) lines.push('🔄 命运翻了个面——膛内子弹已反转。');
+        if (result.handcuffedId != null) {
+            lines.push(`🔗 **${this.shortName(result.handcuffedId)}** 被铐在了椅子上，下一回合无法行动。`);
+            lines.push(flavor('handcuff'));
+        }
+        if (result.itemKey === 'saw' || result.stolenKey === 'saw') {
+            lines.push('🪚 手锯咬住了枪管，下一发实弹翻倍。');
+            lines.push(flavor('saw'));
+        }
+        return lines;
+    }
+
+    // ── 惩罚应用（改名复用 parliament 昵称锁） ──
+
+    async applyPenalty(guild, loserId, penaltyType, { nickname = null, minutes = null } = {}) {
+        if (penaltyType === 'mute') {
+            return this.applyMute(guild, loserId, { minutes });
+        }
+        return this.applyRename(guild, loserId, { nickname, minutes });
+    }
+
+    async applyMute(guild, loserId, { minutes = null } = {}) {
+        const member = await this.fetchMember(guild, loserId);
+        if (!member) return [false, '禁言未生效（找不到成员）', false];
+        // 权限预检：bot 无法禁言对方（身份组层级更高 / 服务器主人 / bot 自身无 Timeout 权限）。
+        // 这是不可重试的失败——不放开按钮让胜者反复点。
+        if (member.moderatable === false) {
+            return [false, '禁言未生效（我的身份组层级低于对方，无法禁言 TA）', false];
+        }
+        const mins = minutes || PENALTY_MUTE_MINUTES;
+        try {
+            await member.timeout(mins * 60_000, PENALTY_MUTE_REASON);
+            return [true, `已禁言 ${mins} 分钟`, false];
+        } catch (error) {
+            logDiscordFailure(this, 'apply-mute', error, loserId);
+            const code = error?.code;
+            const detail = code === 50013 ? '（我缺少「禁言成员」权限）'
+                : code === 50035 ? '（时长参数被 Discord 拒收）' : `（Discord 返回错误 ${code ?? '未知'}）`;
+            // 50013 权限缺失不可重试；其他（网络等）可重试。
+            return [false, `禁言未生效${detail}`, code !== 50013];
+        }
+    }
+
+    async applyRename(guild, loserId, { nickname = null, minutes = null } = {}) {
+        const member = await this.fetchMember(guild, loserId);
+        if (!member) return [false, '改名未生效（找不到成员）', false];
+        const enforced = (nickname || PENALTY_NICKNAME).trim();
+        if (!enforced) return [false, '改名未生效（昵称不能为空）', false];
+        // 权限预检：bot 无法改对方昵称（层级更高/服务器主人）——不可重试。
+        if (member.manageable === false) {
+            return [false, '改名未生效（我的身份组层级低于对方，无法改 TA 的昵称）', false];
+        }
+        const renameMinutes = minutes || PENALTY_RENAME_MINUTES;
+        const result = await nicknameLock.service.replaceLock({
+            member,
+            type: RENAME_LOCK_TYPE,
+            enforcedNickname: enforced,
+            expiresAt: Date.now() + renameMinutes * 60_000,
+            applyReason: PENALTY_RENAME_APPLY_REASON,
+            restoreReason: PENALTY_RENAME_RESTORE_REASON,
+            enforceReason: PENALTY_RENAME_ENFORCE_REASON,
+            channelId: this.channelId,
+            expectedTypes: ORDINARY_LOCK_TYPES,
+        });
+        if (result.created) {
+            return [true, `已强制改名 ${renameMinutes} 分钟（新昵称：${enforced}）`, false];
+        }
+        if (result.reason === 'existing_lock') {
+            return [false, '改名未生效（对方正挂着更高优先级的昵称锁）', false];
+        }
+        // 权限不足或成员状态异常——不可重试。
+        return [false, '改名未生效（Bot 权限不足或成员状态）', false];
+    }
+
+    async fetchMember(guild, userId) {
+        try {
+            return await guild?.members?.fetch?.(userId) || null;
+        } catch (error) {
+            logDiscordFailure(this, 'fetch-member', error, userId);
+            return null;
+        }
+    }
+
+    // ── 视图 ──
+
+    challengeViewRows() {
+        // 规则按钮（仅自己可见的详细规则弹窗）放在第一行——应战前就能看。
+        const rulesBtn = new ButtonBuilder()
+            .setCustomId(`mystery_devil_roulette_item_help:${this.id}:${this.state?.turnToken ?? ''}`)
+            .setLabel(ITEM_HELP_LABEL)
+            .setStyle(ButtonStyle.Secondary);
+        const rows = [new ActionRowBuilder()];
+        if (this.targetId == null) {
+            // 公屏擂台：任何非发起人的成员都能应战。
+            rows[0].addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`mystery_devil_roulette_accept:${this.id}`)
+                    .setLabel('⚔️ 应战')
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId(`mystery_devil_roulette_cancel:${this.id}`)
+                    .setLabel('🛑 发起人取消')
+                    .setStyle(ButtonStyle.Secondary),
+                rulesBtn
+            );
+        } else {
+            rows[0].addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`mystery_devil_roulette_accept:${this.id}`)
+                    .setLabel('⚔️ 接受挑战')
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId(`mystery_devil_roulette_decline:${this.id}`)
+                    .setLabel('拒绝')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`mystery_devil_roulette_cancel:${this.id}`)
+                    .setLabel('🛑 发起人取消')
+                    .setStyle(ButtonStyle.Secondary),
+                rulesBtn
+            );
+        }
+        return rows;
+    }
+
+    // 第 0 行按钮组：回合指示 + 打对手/打自己（正常面板与软兜底面板共用）。
+    turnActionRows0(state) {
+        const row0 = new ActionRowBuilder();
+        row0.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mystery_devil_roulette_turn_hint:${this.id}:${state.turnToken}`)
+                .setLabel(`当前回合：@${this.plainName(state.currentPlayerId)}`)
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId(`mystery_devil_roulette_shoot:${this.id}:${state.turnToken}:opponent`)
+                .setLabel('🔫 打对手')
+                .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+                .setCustomId(`mystery_devil_roulette_shoot:${this.id}:${state.turnToken}:self`)
+                .setLabel('💀 打自己')
+                .setStyle(ButtonStyle.Danger)
+        );
+        return row0;
+    }
+
+    // 软兜底：人类回合面板必须带开枪按钮。任何按钮构建异常/空结果都退回这套最小可用按钮集，
+    // 保证面板永远可操作（不会出现「转手后没有按钮、只能干等 60s 自动开枪」）。
+    guaranteedTurnRows(state) {
+        const lastRow = new ActionRowBuilder();
+        this.addPrivateButton(lastRow);
+        this.addItemHelpButton(lastRow);
+        return [this.turnActionRows0(state), lastRow];
+    }
+
+    // 道具按钮（gameViewRows 第 1 行起，每行最多 5 个；肾上腺素单独走选择菜单）。
+    // 同一道具持有多件（如啤酒×2/手机×2）会渲染多个按钮——customId 必须带序号去重，
+    // 否则 Discord 报 50035 Invalid Form Body、面板渲染失败。
+    // 弹巢只剩一发时的手机/手铐保留"（被禁用）"按钮，点击弹仅我可见解释
+    // （customId 尾参 = itemKey:index，双手机也不撞车）；
+    // 其余不可用道具（如对手已被铐住时的手铐）按原样不渲染。
+    appendItemRows(rows, state, current) {
+        const itemKeys = [];
+        for (const k of state.items[current]) {
+            if (k === 'adrenaline') continue;
+            if (state.canUseItem(current, k) || k === 'phone' || k === 'handcuffs') itemKeys.push(k);
+        }
+        for (let index = 0; index < itemKeys.length; index++) {
+            const itemKey = itemKeys[index];
+            const button = this.itemButton(state, current, itemKey, index);
+            if (button == null) continue;
+            const rowIndex = 1 + Math.floor(index / 5);
+            if (!rows[rowIndex]) rows[rowIndex] = new ActionRowBuilder();
+            rows[rowIndex].addComponents(button);
+        }
+    }
+
+    // 单个道具按钮：可用 → 正常道具按钮；被禁用（剩一发）→ 解释按钮；对手已铐的手铐 → null。
+    itemButton(state, current, itemKey, index) {
+        if (!state.canUseItem(current, itemKey)) {
+            const blockedByOccupied = itemKey === 'handcuffs'
+                && state.handcuffed.has(state.other(current));
+            if (blockedByOccupied) return null;
+            return new ButtonBuilder()
+                .setCustomId(`mystery_devil_roulette_phone_blocked:${this.id}:${state.turnToken}:${itemKey}:${index}`)
+                .setLabel(`${ITEM_DEFS[itemKey].emoji} ${ITEM_DEFS[itemKey].name}（被禁用）`)
+                .setStyle(ButtonStyle.Secondary);
+        }
+        const item = ITEM_DEFS[itemKey];
+        return new ButtonBuilder()
+            .setCustomId(`mystery_devil_roulette_item:${this.id}:${state.turnToken}:${itemKey}:${index}`)
+            .setLabel(`${item.emoji} ${item.name}`)
+            .setStyle(STYLE_MAP[ITEM_BUTTON_STYLE[itemKey]] || ButtonStyle.Secondary);
+    }
+
+    gameViewRows() {
+        const state = this.state;
+        if (!state) {
+            return [];
+        }
+        const current = state.currentPlayerId;
+        if (current == null) {
+            // 待定态：只留 情报 + 游戏规则 两个只读按钮。
+            const row = new ActionRowBuilder();
+            this.addPrivateButton(row, 0);
+            this.addItemHelpButton(row, 0);
+            return [row];
+        }
+
+        try {
+            // 第 0 行：回合指示 + 开枪主行动（与软兜底面板同一构建）。
+            const rows = [this.turnActionRows0(state)];
+
+            // 第 1 行起：道具按钮。
+            this.appendItemRows(rows, state, current);
+
+            // 肾上腺素：选择菜单（偷取对手哪件道具）。
+            if (state.canUseItem(current, 'adrenaline')) {
+                const stealable = state._stealableItems(current);
+                if (stealable.length) {
+                    const selectRow = new ActionRowBuilder().addComponents(
+                        new StringSelectMenuBuilder()
+                            .setCustomId(`mystery_devil_roulette_adrenaline:${this.id}:${state.turnToken}`)
+                            .setPlaceholder('💉 肾上腺素：偷取对手道具')
+                            .addOptions(
+                                stealable.map(k => new StringSelectMenuOptionBuilder()
+                                    .setLabel(`${ITEM_DEFS[k].emoji} ${ITEM_DEFS[k].name}`)
+                                    .setValue(k))
+                            )
+                    );
+                    rows.push(selectRow);
+                }
+            }
+
+            // 末行：我的情报 + 游戏规则（同一行，情报在左）。
+            const lastRow = new ActionRowBuilder();
+            this.addPrivateButton(lastRow, 0);
+            this.addItemHelpButton(lastRow, 0);
+            rows.push(lastRow);
+            return rows;
+        } catch (error) {
+            logDiscordFailure(this, 'game-rows-fallback', error, current);
+            return this.guaranteedTurnRows(state);
+        }
+    }
+
+    addPrivateButton(row) {
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mystery_devil_roulette_intel:${this.id}:${this.state?.turnToken ?? ''}`)
+                .setLabel(PRIVATE_PANEL_LABEL)
+                .setStyle(ButtonStyle.Primary)
+        );
+    }
+
+    addItemHelpButton(row) {
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mystery_devil_roulette_item_help:${this.id}:${this.state?.turnToken ?? ''}`)
+                .setLabel(ITEM_HELP_LABEL)
+                .setStyle(ButtonStyle.Secondary)
+        );
+    }
+
+    privateIntelViewRows(userId) {
+        // 「📖 游戏规则」面板附带的认输按钮。
+        const state = this.state;
+        const isPlayer = state != null && userId != null && state.players.includes(userId);
+        const lowHp = isPlayer && (state.hp[userId] || 0) <= SURRENDER_MIN_HP;
+        let label;
+        if (this.status !== 'playing') {
+            label = '🏳️ 认输（对局已结束）';
+        } else if (!isPlayer) {
+            label = '🏳️ 认输（你不在本局中）';
+        } else if (lowHp) {
+            label = `🏳️ 认输（血量仅剩 ${SURRENDER_MIN_HP} 点，无法使用）`;
+        } else {
+            label = '🏳️ 认输';
+        }
+        const canSurrender = this.status === 'playing'
+            && state != null
+            && userId != null
+            && state.players.includes(userId)
+            && !lowHp;
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mystery_devil_roulette_surrender:${this.id}`)
+                .setLabel(label)
+                .setStyle(ButtonStyle.Danger)
+                .setDisabled(!canSurrender)
+        );
+        return [row];
+    }
+
+    settlementViewRows() {
+        // 败者惩罚由胜者自选（PvP 终局才会 pending）；时长按正常/认输口径。
+        if (!this.penaltyPending || this.penaltyApplied) return [];
+        const [muteMin, renameMin] = this.penaltyMinutes();
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mystery_devil_roulette_penalty_mute:${this.id}`)
+                .setLabel(`🔇 禁言 ${muteMin} 分钟`)
+                .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+                .setCustomId(`mystery_devil_roulette_penalty_rename:${this.id}`)
+                .setLabel(`✏️ 改名 ${renameMin} 分钟`)
+                .setStyle(ButtonStyle.Success)
+        );
+        return [row];
+    }
+
+    // ── 收尾 ──
+
+    disableAllComponents() {
+        this.cancelTimerLocked();
+        for (const entry of this.panels) {
+            if (!entry.interactive) continue;
+            entry.interactive = false;
+            entry.message.edit({
+                components: [],
+                allowedMentions: { parse: [], users: [], repliedUser: false },
+            }).catch(error => logDiscordFailure(this, 'disable-components', error));
+        }
+    }
+
 }
 
-// ── 启动入口 ────────────────────────────────────────────────────────────────
+// ── 启动入口 ──────────────────────────────────────────────────────────────────
 
 async function startDevilRoulette(interaction, requestedOpponent, {
     onGameStarted,
-    panelLifecycle = defaultPanelLifecycle,
 } = {}) {
     const userId = interaction.user?.id;
-    const guildId = interaction.guildId || interaction.guild?.id;
-    const channelId = interaction.channelId;
-    const provisionalGame = {
-        id: randomUUID(),
-        type: 'devil_roulette',
-        guildId,
-        channelId,
-        guild: interaction.guild,
-        channel: interaction.channel,
-        initiatorId: userId,
-        participantIds: [userId],
-        requestedOpponentId: requestedOpponent?.id || requestedOpponent?.user?.id || null,
-        state: 'inviting',
-        timers: new Set(),
-        publicWriteQueue: Promise.resolve(),
-        panelRegistry: createPanelRegistry({ lifecycle: panelLifecycle }),
-        originInteraction: interaction,
-        onGameStarted,
-        random: Math.random,
-        now: Date.now,
-    };
 
-    if (!await deferPublicStart(interaction, provisionalGame)) return false;
-
-    const initiator = await safeFetchMember(provisionalGame, userId);
-    if (!isCurrentGuildMember(provisionalGame, initiator, userId)) {
-        await rejectDeferredStart(
-            interaction,
-            isActivelyTimedOut(initiator) ? TIMEOUT_BLOCKED_MESSAGE : INVALID_INITIATOR_MESSAGE,
-            provisionalGame
-        );
+    const targetId = requestedOpponent?.id || requestedOpponent?.user?.id || null;
+    if (targetId === userId || requestedOpponent?.user?.bot) {
+        await interaction.reply({ content: '不能挑战自己或机器人账号。', flags: MessageFlags.Ephemeral });
         return false;
     }
 
-    let opponent = null;
-    if (provisionalGame.requestedOpponentId) {
-        if (
-            provisionalGame.requestedOpponentId === userId
-            || gameManager.getPlayerGame(guildId, provisionalGame.requestedOpponentId)
-        ) {
-            await rejectDeferredStart(interaction, INVALID_OPPONENT_MESSAGE, provisionalGame);
-            return false;
-        }
-        opponent = await safeFetchMember(provisionalGame, provisionalGame.requestedOpponentId);
-        if (!isCurrentGuildMember(
-            provisionalGame,
-            opponent,
-            provisionalGame.requestedOpponentId
-        )) {
-            await rejectDeferredStart(interaction, INVALID_OPPONENT_MESSAGE, provisionalGame);
-            return false;
-        }
-    }
+    const session = new DevilRouletteGame({
+        mode: 'pvp',
+        initiatorId: userId,
+        targetId,
+        channel: interaction.channel,
+        guild: interaction.guild,
+    });
+    session.onGameStarted = onGameStarted;
 
-    let game;
-    provisionalGame.onMemberInvalidated = async invalidMember => {
+    const created = gameManager.createGame(session);
+    if (!created.ok) {
+        await interaction.reply({
+            content: created.reason === 'player'
+                ? '你已经在另一场游戏里了。'
+                : '这个频道已经有一场游戏在进行中。',
+            flags: MessageFlags.Ephemeral,
+        });
+        return false;
+    }
+    // gameManager 把会话克隆成普通对象注册（getGame 走这里）；补回类原型让方法可用。
+    Object.setPrototypeOf(created.game, DevilRouletteGame.prototype);
+    const game = created.game;
+    attachDevilShutdown(game); // 原生收尾：shutdownAllGames 统一驱动
+    game.onMemberInvalidated = async invalidMember => {
         const invalidUserId = invalidMember?.id || invalidMember?.user?.id;
         if (invalidUserId) {
-            await handleDevilRouletteMemberInvalidated(game, invalidUserId, 'member-invalidated');
+            await handleDevilRouletteMemberInvalidated(game, invalidUserId);
         }
     };
-    provisionalGame.disableComponents = () => {
-        clearTurnTimer(game);
-        clearTimer(game, game?.invitationTimer);
-    };
-
-    let finalPreflightRejection = null;
-    if (!isCurrentGuildMember(provisionalGame, initiator, userId)) {
-        finalPreflightRejection = isActivelyTimedOut(initiator)
-            ? TIMEOUT_BLOCKED_MESSAGE
-            : INVALID_INITIATOR_MESSAGE;
-    } else if (
-        provisionalGame.requestedOpponentId
-        && (
-            !isCurrentGuildMember(
-                provisionalGame,
-                opponent,
-                provisionalGame.requestedOpponentId
-            )
-            || gameManager.getPlayerGame(guildId, provisionalGame.requestedOpponentId)
-        )
-    ) {
-        finalPreflightRejection = INVALID_OPPONENT_MESSAGE;
-    }
-    if (finalPreflightRejection) {
-        await rejectDeferredStart(interaction, finalPreflightRejection, provisionalGame);
-        return false;
-    }
-
-    const created = gameManager.createGame(provisionalGame);
-    if (!created.ok) {
-        await rejectDeferredStart(
-            interaction,
-            created.reason === 'player' ? PLAYER_BUSY_MESSAGE : CHANNEL_BUSY_MESSAGE,
-            provisionalGame
-        );
-        return false;
-    }
-    game = created.game;
-    registerActiveGame(game);
 
     try {
-        const replyResult = await interaction.editReply(invitationPayload(game));
-        const responseMessage = replyResult?.resource?.message || replyResult;
-        if (typeof responseMessage?.edit === 'function') game.inviteMessage = responseMessage;
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     } catch (error) {
-        logDiscordFailure(game, 'invitation-panel', error, userId);
-        await cleanupDevilRouletteGame(game);
-        await rejectDeferredStart(interaction, GENERIC_FAILURE_MESSAGE, game);
+        logDiscordFailure(game, 'defer-start', error, userId);
+        await cleanup(game);
         return false;
     }
-    if (!game.inviteMessage) {
-        try {
-            const fetched = await interaction.fetchReply?.();
-            if (typeof fetched?.edit === 'function') game.inviteMessage = fetched;
-        } catch (error) {
-            logDiscordFailure(game, 'fetch-invitation-panel', error, userId);
-        }
-    }
-    if (!game.inviteMessage) {
-        await cleanupDevilRouletteGame(game);
-        await rejectDeferredStart(interaction, GENERIC_FAILURE_MESSAGE, game);
-        return false;
-    }
-    game.panelRegistry.track(game.inviteMessage, {
-        disablePayload: { components: [] },
-        context: { action: 'devil-invitation', guildId, gameId: game.id },
-    });
 
-    game.invitationTimer = setTimeout(() => {
-        return expireInvitation(game).catch(error => {
-            logDiscordFailure(game, 'invitation-timer', error);
-            return cleanupDevilRouletteGame(game);
-        });
-    }, INVITATION_DURATION_MS);
-    game.invitationTimer.unref?.();
-    game.timers.add(game.invitationTimer);
+    let okOpen = false;
+    try {
+        okOpen = await game.open();
+    } catch (error) {
+        okOpen = false;
+        logDiscordFailure(game, 'open', error, userId);
+    }
+    if (!okOpen) {
+        await cleanup(game);
+        try {
+            await interaction.editReply({ content: '我没有权限在这里发送游戏面板。' });
+        } catch (error) {
+            logDiscordFailure(game, 'open-failure-reply', error, userId);
+        }
+        return false;
+    }
+    await interaction.editReply({
+        content: targetId == null ? '⚔️ 擂台已摆下，等待勇士应战……' : '恶魔轮盘挑战已发出。',
+    });
     return true;
 }
 
-// ── 交互解析 ────────────────────────────────────────────────────────────────
+// ── 交互分发 ──────────────────────────────────────────────────────────────────
 
 function parseParts(parts) {
     const input = (Array.isArray(parts) ? parts : [parts]).filter(part => typeof part === 'string');
@@ -1295,679 +2168,220 @@ function parseParts(parts) {
     };
 }
 
-// ── 邀请交互 ────────────────────────────────────────────────────────────────
+// Discord 昵称禁用字符：@ # : 反斜杠、控制符、空字符。胜者自定的败者昵称必须先清洗，
+// 否则 PATCH 被 Discord 拒收 → replaceLock 失败 → 输家逃罚（fail-open）。
+function sanitizeRenameNickname(raw) {
+    return String(raw ?? '')
+        .replace(/[@#:\\\x00-\x1F\x7F]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 32);
+}
 
-async function handleRulesButton(interaction, game) {
-    await safeEphemeralReply(interaction, RULES_DESCRIPTION, game);
+async function handleRenameModalSubmit(interaction) {
+    const parts = String(interaction.customId || '').split(':');
+    const gameId = parts[1];
+    const game = gameId && gameManager.getGame(gameId);
+    if (!game || game.type !== 'devil_roulette') {
+        await deferComponent(interaction, { ephemeral: true });
+        await sendComponentError(interaction, EXPIRED_MESSAGE);
+        return false;
+    }
+    const raw = interaction.fields?.getTextInputValue?.('devil_roulette_rename_input');
+    const nickname = sanitizeRenameNickname(raw);
+    if (!nickname) {
+        await deferComponent(interaction, { ephemeral: true });
+        await sendComponentError(interaction, '昵称不能为空，或包含 Discord 禁止的字符（@ # : 等）。');
+        return false;
+    }
+    await game.chooseRenamePenalty(interaction, nickname);
     return true;
 }
 
-async function handleCancelButton(interaction, game) {
-    if (interaction.user?.id !== game.initiatorId) {
-        await safeEphemeralReply(interaction, WRONG_INVITEE_MESSAGE, game);
+async function handleDevilRouletteInteraction(interaction, parts) {
+    if (interaction.isModalSubmit?.() && typeof interaction.customId === 'string'
+        && interaction.customId.startsWith(RENAME_MODAL_PREFIX)) {
+        return handleRenameModalSubmit(interaction);
+    }
+    const parsed = parseParts(parts);
+    const game = parsed.gameId && gameManager.getGame(parsed.gameId);
+    if (!game || game.type !== 'devil_roulette') {
+        await deferComponent(interaction, { ephemeral: true });
+        await sendComponentError(interaction, EXPIRED_MESSAGE);
         return false;
     }
-    const description = `🪑 <@${game.initiatorId}> 把赌桌收了。\n\n**这枪今天先不响。**`;
-    const cancelled = await cancelInvitation(game, description, 'initiator-cancelled');
-    if (!cancelled) {
-        await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
+    const { action, turnToken, argument } = parsed;
+    switch (action) {
+        case 'accept':
+            return game.acceptChallenge(interaction);
+        case 'decline':
+            return game.declineChallenge(interaction);
+        case 'cancel':
+            return game.cancelByInitiator(interaction);
+        case 'turn_hint':
+            return game.hintCurrentTurn(interaction);
+        case 'refresh':
+            return game.refreshPanel(interaction);
+        case 'shoot':
+            return game.act(interaction, argument === 'self' ? 'shoot_self' : 'shoot_opponent', Number(turnToken));
+        case 'item':
+            return game.act(interaction, argument, Number(turnToken));
+        case 'phone_blocked':
+            // 被禁用按钮的道具类型由 handler 按当前持有人道具列表还原（customId 只带序号）。
+            return game.showItemBlocked(interaction, argument);
+        case 'adrenaline':
+            return game.act(interaction, 'adrenaline', Number(turnToken), {
+                stealKey: interaction.values?.[0],
+            });
+        case 'intel':
+            return game.showPrivateState(interaction);
+        case 'item_help':
+            return game.showItemHelp(interaction);
+        case 'surrender':
+            return game.surrender(interaction);
+        case 'penalty_mute':
+            return game.chooseMutePenalty(interaction);
+        case 'penalty_rename':
+            return game.openRenameModal(interaction);
+        default:
+            await deferComponent(interaction, { ephemeral: true });
+            await sendComponentError(interaction, EXPIRED_MESSAGE);
+            return false;
     }
-    return cancelled;
 }
 
-async function handleRejectButton(interaction, game) {
-    const userId = interaction.user?.id;
-    if (!game.requestedOpponentId) {
-        await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
-        return false;
-    }
-    if (userId !== game.requestedOpponentId) {
-        await safeEphemeralReply(interaction, WRONG_INVITEE_MESSAGE, game);
-        return false;
-    }
-    let ownsReject = false;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'inviting') return;
-        game.state = 'ended';
-        clearTimer(game, game.invitationTimer);
-        game.invitationTimer = null;
-        ownsReject = true;
-    });
-    if (!ownsReject) {
-        await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
-        return false;
-    }
-    const description = [
-        `👋 <@${userId}> 看了一眼桌上的枪。`,
-        '',
-        '**然后把椅子推了回去。**',
-        '',
-        '本次邀请取消。',
-    ].join('\n');
-    await publishPublicPanel(game, { embeds: [makeEmbed(description)], components: [] }, 'invite-rejected');
-    await cleanupDevilRouletteGame(game);
-    return true;
-}
+// ── 成员失格 ──────────────────────────────────────────────────────────────────
 
-async function handleAcceptButton(interaction, game) {
-    const userId = interaction.user?.id;
-    let rejection = null;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'inviting') rejection = EXPIRED_MESSAGE;
-        else if (userId === game.initiatorId) {
-            rejection = game.requestedOpponentId ? SELF_ACCEPT_MESSAGE : SELF_JOIN_MESSAGE;
-        } else if (game.requestedOpponentId && userId !== game.requestedOpponentId) {
-            rejection = WRONG_INVITEE_MESSAGE;
-        }
-    });
-    if (rejection) {
-        await safeEphemeralReply(interaction, rejection, game);
-        return false;
-    }
-
-    const member = await safeFetchMember(game, userId);
-    let accepted = false;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'inviting') {
-            rejection = EXPIRED_MESSAGE;
-            return;
-        }
-        if (userId === game.initiatorId) {
-            rejection = game.requestedOpponentId ? SELF_ACCEPT_MESSAGE : SELF_JOIN_MESSAGE;
-            return;
-        }
-        if (game.requestedOpponentId && userId !== game.requestedOpponentId) {
-            rejection = WRONG_INVITEE_MESSAGE;
-            return;
-        }
-        const owner = gameManager.getPlayerGame(game.guildId, userId);
-        if (owner && owner !== game) {
-            rejection = PLAYER_BUSY_MESSAGE;
-            return;
-        }
-        if (!isCurrentGuildMember(game, member, userId)) {
-            rejection = isActivelyTimedOut(member) ? TIMEOUT_BLOCKED_MESSAGE : INVALID_OPPONENT_MESSAGE;
-            return;
-        }
-        if (!gameManager.addPlayer(game, userId)) {
-            rejection = PLAYER_BUSY_MESSAGE;
-            return;
-        }
-
-        clearTimer(game, game.invitationTimer);
-        game.invitationTimer = null;
-        game.opponentId = userId;
-        accepted = true;
-    });
-
-    if (!accepted) {
-        await safeEphemeralReply(interaction, rejection || EXPIRED_MESSAGE, game);
-        return false;
-    }
-
-    const began = await beginGame(game);
-    if (!began) {
-        await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
-        return false;
-    }
-    return true;
-}
-
-// ── 对局交互 ────────────────────────────────────────────────────────────────
-
-async function handleShootButton(interaction, game, turnToken, targetChoice) {
-    const userId = interaction.user?.id;
-    let rejection = null;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') rejection = EXPIRED_MESSAGE;
-        else if (game.turnToken !== turnToken) rejection = STALE_PANEL_MESSAGE;
-        else if (game.currentTurn !== userId) rejection = NOT_YOUR_TURN_MESSAGE;
-    });
-    if (rejection) {
-        await safeEphemeralReply(interaction, rejection, game);
-        return false;
-    }
-    const shot = await performShot(game, {
-        actorId: userId,
-        target: targetChoice,
-        auto: false,
-        turnToken,
-    });
-    if (!shot) {
-        await safeEphemeralReply(interaction, STALE_PANEL_MESSAGE, game);
-    }
-    return Boolean(shot);
-}
-
-function itemButtonsRow(game, turnToken, userId) {
-    const counts = new Map();
-    for (const item of game.inventory?.get(userId) || []) {
-        counts.set(item, (counts.get(item) || 0) + 1);
-    }
-    const row = new ActionRowBuilder();
-    for (const item of ITEM_ORDER) {
-        if ((counts.get(item) || 0) === 0) continue;
-        row.addComponents(
-            new ButtonBuilder()
-                .setCustomId(`mystery_devil_roulette_item:${game.id}:${turnToken}:${item}`)
-                .setLabel(`${ITEM_LABELS[item]} ×${counts.get(item)}`)
-                .setStyle(ButtonStyle.Secondary)
-        );
-    }
-    return row;
-}
-
-function itemPanelDescription(game, userId) {
-    return [
-        '## 🎒 你的道具',
-        '',
-        '你可以在本回合继续使用道具。',
-        '',
-        '⏳ **使用道具不会延长回合时间。**',
-        '',
-        '**当前持有：**',
-        inventoryLine(game, userId) || '（空）',
-    ].join('\n');
-}
-
-// 道具面板：按钮绑定最新 token；使用道具后原地刷新，
-// 同一个私密面板在本回合内可以连续使用多个道具。
-function itemPanelPayload(game, userId, turnToken, extraEmbeds = []) {
-    const row = itemButtonsRow(game, turnToken, userId);
-    const payload = { embeds: [...extraEmbeds, makeEmbed(itemPanelDescription(game, userId))] };
-    if (row.components.length > 0) payload.components = [row];
-    return payload;
-}
-
-async function refreshItemPanel(interaction, game, userId, extraEmbeds = []) {
-    return sendPrivate(interaction, itemPanelPayload(game, userId, game.turnToken, extraEmbeds), game);
-}
-
-async function handleItemsButton(interaction, game, turnToken) {
-    const userId = interaction.user?.id;
-    let rejection = null;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') rejection = EXPIRED_MESSAGE;
-        else if (game.turnToken !== turnToken) rejection = STALE_PANEL_MESSAGE;
-        else if (game.currentTurn !== userId) rejection = NOT_YOUR_TURN_MESSAGE;
-    });
-    if (rejection) {
-        await safeEphemeralReply(interaction, rejection, game);
-        return false;
-    }
-
-    await sendPrivate(interaction, itemPanelPayload(game, userId, game.turnToken), game);
-    return true;
-}
-
-async function handleItemButton(interaction, game, turnToken, item) {
-    const userId = interaction.user?.id;
-    if (!ITEM_ORDER.includes(item)) {
-        await safeEphemeralReply(interaction, STALE_PANEL_MESSAGE, game);
-        return false;
-    }
-    let rejection = null;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') rejection = EXPIRED_MESSAGE;
-        else if (game.turnToken !== turnToken) rejection = STALE_PANEL_MESSAGE;
-        else if (game.currentTurn !== userId) rejection = NOT_YOUR_TURN_MESSAGE;
-    });
-    if (rejection) {
-        await safeEphemeralReply(interaction, rejection, game);
-        return false;
-    }
-
-    if (item === 'magnifier') return useMagnifier(interaction, game, userId, turnToken);
-    if (item === 'beer') return useBeer(interaction, game, userId, turnToken);
-    if (item === 'cigarette') return useCigarette(interaction, game, userId, turnToken);
-    if (item === 'saw') return useSaw(interaction, game, userId, turnToken);
-    if (item === 'handcuff') return useHandcuff(interaction, game, userId, turnToken);
-    return false;
-}
-
-// 道具认领与效果在同一 runExclusive 内原子完成；失败不消耗、不改状态。
-// 使用道具不改变 deadline；turnToken 推进使旧道具面板与旧操作面板全部失效。
-async function claimItemEffect(game, userId, turnToken, item) {
-    const outcome = { ok: false, reason: 'stale', effect: null };
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') return;
-        if (game.turnToken !== turnToken || game.currentTurn !== userId) return;
-
-        // 业务拒绝优先（可重试场景给出明确文案），再由库存检查兜底双击安全：
-        // 所有道具要么消耗库存、要么设置一次性状态（saw/handcuff/cigarette），
-        // 配合 runExclusive 串行，双击不可能重复生效。
-        if (item === 'cigarette') {
-            if ((game.hp?.[userId] ?? MAX_HP) >= MAX_HP) {
-                outcome.reason = 'full_hp';
-                return;
-            }
-            if (game.cigaretteUsed?.get(userId)) {
-                outcome.reason = 'cigarette_used';
-                return;
-            }
-        }
-        if (item === 'saw') {
-            if (game.saw) {
-                outcome.reason = 'saw_stacked';
-                return;
-            }
-        }
-        if (item === 'handcuff') {
-            if (game.handcuff) {
-                outcome.reason = 'handcuff_stacked';
-                return;
-            }
-        }
-
-        const inventory = game.inventory.get(userId) || [];
-        if (!inventory.includes(item)) return;
-
-        if (item === 'magnifier') {
-            const bullet = game.chamber[0] || null;
-            if (!bullet) return;
-            removeItem(game, userId, item);
-            // 道具不推进 turnToken：回合面板保持有效，deadline 不刷新。
-            outcome.ok = true;
-            outcome.effect = { bullet };
-            return;
-        }
-        if (item === 'beer') {
-            const ejected = game.chamber.shift() || null;
-            if (!ejected) return;
-            if (ejected === 'live') game.liveCount -= 1;
-            else game.blankCount -= 1;
-            removeItem(game, userId, item);
-            outcome.ok = true;
-            outcome.effect = { ejected, chamberEmpty: game.chamber.length === 0 };
-            return;
-        }
-        if (item === 'cigarette') {
-            removeItem(game, userId, item);
-            game.hp[userId] = Math.min(MAX_HP, (game.hp?.[userId] ?? 0) + CIGARETTE_HEAL);
-            game.cigaretteUsed.set(userId, true);
-            outcome.ok = true;
-            outcome.effect = { healed: true };
-            return;
-        }
-        if (item === 'saw') {
-            removeItem(game, userId, item);
-            game.saw = userId;
-            outcome.ok = true;
-            outcome.effect = { saw: true };
-            return;
-        }
-        if (item === 'handcuff') {
-            const targetId = opponentOf(game, userId);
-            removeItem(game, userId, item);
-            game.handcuff = targetId;
-            outcome.ok = true;
-            outcome.effect = { targetId };
-            return;
-        }
-    });
-    return outcome;
-}
-
-async function useMagnifier(interaction, game, userId, turnToken) {
-    const outcome = await claimItemEffect(game, userId, turnToken, 'magnifier');
-    if (!outcome.ok) {
-        await safeEphemeralReply(interaction, STALE_PANEL_MESSAGE, game);
-        return false;
-    }
-    const { bullet } = outcome.effect;
-    const privateDescription = bullet === 'live'
-        ? [
-            '🔍 **你看清了。**',
-            '',
-            '当前这一发是：',
-            '',
-            '## 🔴 实弹',
-            '',
-            '至于要把枪口对准谁，是另一回事。',
-        ].join('\n')
-        : [
-            '🔍 **你看清了。**',
-            '',
-            '当前这一发是：',
-            '',
-            '## ⚪ 空包弹',
-            '',
-            '这个秘密现在只有你知道。',
-        ].join('\n');
-    // 私密结果先行（快速），公开面板随后发布；道具不推进 token，回合面板保持有效。
-    await refreshItemPanel(interaction, game, userId, [makeEmbed(privateDescription)]);
-    await publishPublicPanel(game, {
-        embeds: [makeEmbed(`🔍 **<@${userId}> 拿起放大镜看了一眼枪膛。**\n\n他看到了什么？\n\n**只有他自己知道。**`)],
-        components: [],
-    }, 'magnifier-public', { invalidatePrevious: false });
-    return true;
-}
-
-async function useBeer(interaction, game, userId, turnToken) {
-    const outcome = await claimItemEffect(game, userId, turnToken, 'beer');
-    if (!outcome.ok) {
-        await safeEphemeralReply(interaction, STALE_PANEL_MESSAGE, game);
-        return false;
-    }
-    const { ejected, chamberEmpty } = outcome.effect;
-    const description = ejected === 'live'
-        ? `🍺 **<@${userId}> 喝了一口，然后直接拉开了枪机。**\n\n一发 **🔴 实弹** 被退了出来。`
-        : `🍺 **<@${userId}> 拉开枪机。**\n\n一发 **⚪ 空包弹** 掉在了桌上。`;
-    if (chamberEmpty) {
-        await sendPrivate(interaction, { content: '🍺 **已退出当前子弹。**\n弹仓空了，正在重新装填。' }, game);
-        await publishPublicPanel(game, { embeds: [makeEmbed(description)], components: [] }, 'beer-eject', { invalidatePrevious: false });
-        await performReload(game, true);
-        return true;
-    }
-    await refreshItemPanel(interaction, game, userId);
-    await publishPublicPanel(game, { embeds: [makeEmbed(description)], components: [] }, 'beer-eject', { invalidatePrevious: false });
-    return true;
-}
-
-async function useCigarette(interaction, game, userId, turnToken) {
-    const outcome = await claimItemEffect(game, userId, turnToken, 'cigarette');
-    if (!outcome.ok) {
-        const content = outcome.reason === 'full_hp'
-            ? CIGARETTE_FULL_HP_MESSAGE
-            : outcome.reason === 'cigarette_used'
-                ? CIGARETTE_USED_MESSAGE
-                : STALE_PANEL_MESSAGE;
-        await safeEphemeralReply(interaction, content, game);
-        return false;
-    }
-    await refreshItemPanel(interaction, game, userId);
-    await publishPublicPanel(game, {
-        embeds: [makeEmbed(`🚬 **<@${userId}> 点了根烟。**\n\n深吸一口。\n\n❤️ **恢复 1 点生命。**`)],
-        components: [],
-    }, 'cigarette-use', { invalidatePrevious: false });
-    return true;
-}
-
-async function useSaw(interaction, game, userId, turnToken) {
-    const outcome = await claimItemEffect(game, userId, turnToken, 'saw');
-    if (!outcome.ok) {
-        const content = outcome.reason === 'saw_stacked' ? SAW_STACKED_MESSAGE : STALE_PANEL_MESSAGE;
-        await safeEphemeralReply(interaction, content, game);
-        return false;
-    }
-    await refreshItemPanel(interaction, game, userId);
-    await publishPublicPanel(game, {
-        embeds: [makeEmbed([
-            `🔪 **<@${userId}> 把手锯架在了枪管上。**`,
-            '',
-            '下一次真正扣下扳机时：',
-            '',
-            '**🔴 实弹伤害提升至 2 点。**',
-            '',
-            '空包弹也会消耗这次强化。',
-        ].join('\n'))],
-        components: [],
-    }, 'saw-use', { invalidatePrevious: false });
-    return true;
-}
-
-async function useHandcuff(interaction, game, userId, turnToken) {
-    const outcome = await claimItemEffect(game, userId, turnToken, 'handcuff');
-    if (!outcome.ok) {
-        const content = outcome.reason === 'handcuff_stacked' ? HANDCUFF_STACKED_MESSAGE : STALE_PANEL_MESSAGE;
-        await safeEphemeralReply(interaction, content, game);
-        return false;
-    }
-    await refreshItemPanel(interaction, game, userId);
-    await publishPublicPanel(game, {
-        embeds: [makeEmbed([
-            `⛓️ **<@${userId}> 把 <@${outcome.effect.targetId}> 的一只手铐在了桌边。**`,
-            '',
-            `<@${outcome.effect.targetId}> 的**下一次行动机会将被跳过。**`,
-        ].join('\n'))],
-        components: [],
-    }, 'handcuff-use', { invalidatePrevious: false });
-    return true;
-}
-
-// ── 投降 ────────────────────────────────────────────────────────────────────
-
-async function handleSurrenderButton(interaction, game, turnToken) {
-    const userId = interaction.user?.id;
-    let rejection = null;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') rejection = EXPIRED_MESSAGE;
-        else if (!game.participantIds.includes(userId)) rejection = EXPIRED_MESSAGE;
-        else if (game.turnToken !== turnToken) rejection = STALE_PANEL_MESSAGE;
-    });
-    if (rejection) {
-        await safeEphemeralReply(interaction, rejection, game);
-        return false;
-    }
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`mystery_devil_roulette_surrender_confirm:${game.id}:${turnToken}:yes`)
-            .setLabel('🏳️ 确认投降')
-            .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-            .setCustomId(`mystery_devil_roulette_surrender_confirm:${game.id}:${turnToken}:no`)
-            .setLabel('🔫 继续游戏')
-            .setStyle(ButtonStyle.Primary)
-    );
-    await sendPrivate(interaction, {
-        embeds: [makeEmbed(SURRENDER_CONFIRM_PROMPT)],
-        components: [row],
-    }, game);
-    return true;
-}
-
-async function handleSurrenderConfirm(interaction, game, turnToken, confirm) {
-    const userId = interaction.user?.id;
-    if (confirm !== 'yes' && confirm !== 'no') {
-        await safeEphemeralReply(interaction, STALE_PANEL_MESSAGE, game);
-        return false;
-    }
-    let rejection = null;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') rejection = EXPIRED_MESSAGE;
-        else if (!game.participantIds.includes(userId)) rejection = EXPIRED_MESSAGE;
-        else if (game.turnToken !== turnToken) rejection = STALE_PANEL_MESSAGE;
-    });
-    if (rejection) {
-        await safeEphemeralReply(interaction, rejection, game);
-        return false;
-    }
-    if (confirm === 'no') {
-        await safeEphemeralReply(interaction, SURRENDER_CANCEL_MESSAGE, game);
-        return true;
-    }
-
-    let concluded = false;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') return;
-        if (game.turnToken !== turnToken) return;
-        concluded = true;
-    });
-    if (!concluded) {
-        await safeEphemeralReply(interaction, STALE_PANEL_MESSAGE, game);
-        return false;
-    }
-
-    const loserId = userId;
-    const winnerId = opponentOf(game, loserId);
-    const introLines = [
-        `🏳️ **<@${loserId}> 把枪放下了。**`,
-        '',
-        '他选择离开赌桌。',
-    ];
-    await safeEphemeralReply(interaction, '🏳️ **你已投降。**', game);
-    await concludeGame(game, { winnerId, loserId, introLines });
-    return true;
-}
-
-// ── 回合超时：自动射对手 ─────────────────────────────────────────────────────
-
-async function handleTurnTimeout(game) {
-    let snapshot = null;
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') return;
-        snapshot = { actorId: game.currentTurn, turnToken: game.turnToken };
-    });
-    if (!snapshot) return false;
-    await performShot(game, {
-        actorId: snapshot.actorId,
-        target: 'opponent',
-        auto: true,
-        turnToken: snapshot.turnToken,
-    });
-    return true;
-}
-
-// ── 成员失效 ────────────────────────────────────────────────────────────────
-
-async function handleDevilRouletteMemberInvalidated(game, userId, reason) {
+async function handleDevilRouletteMemberInvalidated(game, userId) {
     if (!game || game.type !== 'devil_roulette') return false;
+    // 成员仍在公会缓存 → 只是昵称/资料更新，非真正离开，忽略。
+    if (game.guild?.members?.cache?.has(userId)) return false;
     let outcome = null;
     await gameManager.runExclusive(game, () => {
-        if (
-            game.ended
-            || !['inviting', 'playing'].includes(game.state)
-            || !game.participantIds.includes(userId)
-        ) return;
-        if (game.state === 'inviting') {
-            game.state = 'ended';
-            clearTimer(game, game.invitationTimer);
-            game.invitationTimer = null;
+        if (game.status === 'challenge') {
+            game.status = 'ended';
+            game.lastEvent = '🧯 有人离开了这间屋子，本局取消。';
             outcome = 'invite_cancel';
             return;
         }
-        outcome = 'forfeit';
+        if (game.status === 'playing' && game.state && game.participants.includes(userId)) {
+            game.status = 'ended';
+            game.finalWinnerId = game.state.other(userId);
+            game.lastEvent = `🏳️ **${game.shortName(userId)}** 从椅子上消失了，本局判负。`;
+            outcome = 'forfeit';
+        }
     });
     if (!outcome) return false;
-    if (outcome === 'invite_cancel') {
-        await publishPublicPanel(game, {
-            embeds: [makeEmbed('🧯 **邀请已经失效。**\n\n有参与者离开了服务器，本局取消。')],
-            components: [],
-        }, 'invite-invalidated');
-        await cleanupDevilRouletteGame(game);
-        return true;
-    }
-
-    const winnerId = opponentOf(game, userId);
-    clearTurnTimer(game);
-    await gameManager.runExclusive(game, () => {
-        if (game.ended || game.state !== 'playing') return;
-        game.state = 'ended';
-        game.winnerId = winnerId;
-        game.loserId = userId;
-    });
-    const description = [
-        '## 👿 恶魔轮盘结束',
-        '',
-        `🏆 <@${winnerId}> **获胜**`,
-        '',
-        `<@${userId}> 已经离开服务器，无法继续本局。`,
-        '',
-        '本局**不执行败者处罚**。',
-    ].join('\n');
-    const finalMessage = await publishPublicPanel(
-        game,
-        { embeds: [makeEmbed(description)], components: [] },
-        'member-left-final',
-        { track: false }
-    );
-    game.finalMessage = finalMessage;
-    await cleanupDevilRouletteGame(game);
+    if (outcome === 'forfeit') game.onGameEndedLocked(); // 判负终局同路：惩罚按钮 + 自动施罚
+    await game.renderLocked();
     return true;
 }
 
-// ── 交互分发 ────────────────────────────────────────────────────────────────
+// ── 重启中止 ──────────────────────────────────────────────────────────────────
 
-async function handleDevilRouletteInteraction(interaction, parts) {
-    const parsed = parseParts(parts);
-    const game = parsed.gameId && gameManager.getGame(parsed.gameId);
-    if (!await deferEphemeralComponent(interaction, game)) return false;
-    if (!game || game.type !== 'devil_roulette') {
-        await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
-        return false;
-    }
-    if (parsed.action === 'accept') return handleAcceptButton(interaction, game);
-    if (parsed.action === 'reject') return handleRejectButton(interaction, game);
-    if (parsed.action === 'cancel') return handleCancelButton(interaction, game);
-    if (parsed.action === 'rules') return handleRulesButton(interaction, game);
-    if (parsed.action === 'shoot') {
-        return handleShootButton(interaction, game, parsed.turnToken, parsed.argument);
-    }
-    if (parsed.action === 'items') return handleItemsButton(interaction, game, parsed.turnToken);
-    if (parsed.action === 'item') return handleItemButton(interaction, game, parsed.turnToken, parsed.argument);
-    if (parsed.action === 'surrender') return handleSurrenderButton(interaction, game, parsed.turnToken);
-    if (parsed.action === 'surrender_confirm') {
-        return handleSurrenderConfirm(interaction, game, parsed.turnToken, parsed.argument);
-    }
-    await safeEphemeralReply(interaction, EXPIRED_MESSAGE, game);
-    return false;
+function cleanup(game) {
+    if (!game || game.released) return Promise.resolve();
+    game.released = true;
+    game.status = 'ended';
+    game.cancelTimerLocked();
+    game.disableAllComponents();
+    game.deletePersisted?.();
+    return gameManager.cleanupGame(game);
 }
 
-// ── 重启中止 ────────────────────────────────────────────────────────────────
-
-const activeGames = new Set();
-
-function registerActiveGame(game) {
-    activeGames.add(game);
-}
-
-// 从 gameManager 的角度无法枚举游戏，这里在创建时登记，cleanup 时移除。
-async function shutdownAll() {
-    const games = [...activeGames];
-    for (const game of games) {
+// 恶魔轮盘对局收尾：挂到 game.onShutdown，由 mysteryGameManager.shutdownAllGames 统一驱动
+// （原生做法，和加压轮盘同一机制）。删掉本局面板（不留"已失效"死按钮），快照保留供下次启动续接；
+// 全局冲刷快照写队列（幂等操作，多局并行收尾时重复调用无害）。
+function attachDevilShutdown(game) {
+    game.onShutdown = async () => {
+        game.cancelTimerLocked?.();
+        for (const entry of [...(game.panels || [])]) {
+            const msg = entry?.message;
+            if (!msg || typeof msg.delete !== 'function') continue;
+            await msg.delete().catch(error => logDiscordFailure(game, 'shutdown-delete-panel', error));
+        }
+        game.panels = [];
+        game.itemPanelEntry = null;
         try {
-            let aborted = false;
-            await gameManager.runExclusive(game, () => {
-                if (game.ended || !['inviting', 'playing'].includes(game.state)) return;
-                game.state = 'ended';
-                clearTimer(game, game.invitationTimer);
-                clearTurnTimer(game);
-                aborted = true;
-            });
-            if (!aborted) continue;
-            if (game.state === 'ended' && game.winnerId) continue; // 已结算，不覆盖结果
-            try {
-                await game.channel?.send({
-                    embeds: [makeEmbed([
-                        '## ⚠️ 恶魔轮盘已中止',
-                        '',
-                        'Bot 发生重启，本局无法继续。',
-                        '',
-                        '**双方均不计胜负，也不会执行任何处罚。**',
-                        '',
-                        '可以重新发起一局。',
-                    ].join('\n'))],
-                    components: [],
-                });
-            } catch (error) {
-                logDiscordFailure(game, 'shutdown-notice', error);
-            }
+            await resumeStore.flush();
         } catch (error) {
-            logDiscordFailure(game, 'shutdown', error);
+            logDiscordFailure(null, 'resume-flush', error);
+        }
+    };
+    return game;
+}
+
+// 启动时把上次没打完的恶魔轮盘对局接回来（断连接续）。
+async function restoreActiveGames(client) {
+    let snapshots = [];
+    try {
+        snapshots = await resumeStore.list();
+    } catch (error) {
+        logDiscordFailure(null, 'resume-list', error);
+        return 0;
+    }
+    let restored = 0;
+    for (const snap of snapshots) {
+        try {
+            if (!snap || snap.v !== 1 || !snap.id || !snap.guildId || !snap.channelId) continue;
+            if (snap.mode !== 'pvp') { // 仅支持 PvP 快照；其余（异常/损坏数据）直接清掉。
+                resumeStore.remove(snap.id);
+                continue;
+            }
+            if (gameManager.getGame(snap.id)) continue; // 已恢复
+            const guild = client.guilds?.cache?.get(snap.guildId)
+                || await client.guilds.fetch(snap.guildId).catch(() => null);
+            if (!guild) {
+                // 机器人已不在该服，快照失去意义，清掉。
+                resumeStore.remove(snap.id);
+                continue;
+            }
+            const channel = guild.channels?.cache?.get(snap.channelId)
+                || await guild.channels.fetch(snap.channelId).catch(() => null);
+            if (!channel || typeof channel.send !== 'function') {
+                resumeStore.remove(snap.id);
+                continue;
+            }
+            const game = DevilRouletteGame.restore(snap, { guild, channel });
+            // 与正常开局一致：把完整实例交给 gameManager（它克隆成普通对象），再补回类原型，
+            // 否则 getGame 拿到的是无方法/无 state 的裸对象，点击一律"已失效"。
+            const reg = gameManager.createGame(game);
+            if (!reg.ok) continue; // 锁冲突（启动时理论上不会），快照留着下次再试
+            Object.setPrototypeOf(reg.game, DevilRouletteGame.prototype);
+            const restoredGame = reg.game;
+            restoredGame.onMemberInvalidated = async invalidMember => {
+                const invalidUserId = invalidMember?.id || invalidMember?.user?.id;
+                if (invalidUserId) await handleDevilRouletteMemberInvalidated(restoredGame, invalidUserId);
+            };
+            attachDevilShutdown(restoredGame); // 原生收尾：恢复的对局同样挂 onShutdown
+            // 预取对局成员进 guild 缓存：重启后 members.cache 是空的，不补的话
+            // 面板上的玩家名会退化成「玩家<id>」（plainName 只读缓存）。
+            for (const pid of restoredGame.participants) {
+                if (!pid) continue;
+                await guild.members.fetch(pid).catch(() => {});
+            }
+            // 清掉上次进程残留的旧面板（优雅退出已由 onShutdown 删掉，这里兜底非优雅退出的漏网），
+            // 避免频道里留下点了就"已失效"的死面板；随后 renderLocked 发新面板续接。
+            for (const msgId of Array.isArray(snap.panelIds) ? snap.panelIds : []) {
+                if (!msgId) continue;
+                await channel.messages.delete(msgId).catch(() => {});
+            }
+            await restoredGame.renderLocked();
+            restored += 1;
+        } catch (error) {
+            logDiscordFailure(null, 'resume-restore', error, snap?.id);
         }
     }
-    await Promise.allSettled(games.map(game => cleanupDevilRouletteGame(game)));
+    if (restored > 0) {
+        console.log(`[DevilRoulette] 断连接续：恢复 ${restored} 场未完成的对局。`);
+    }
+    return restored;
 }
 
 module.exports = {
     startDevilRoulette,
     handleDevilRouletteInteraction,
-    handleDevilRouletteMemberInvalidated,
-    registerActiveGame,
-    shutdownAll,
-    // For testing
-    buildChamber,
-    rollChamberSize,
-    rollChamberComposition,
-    rollItem,
-    drawItems,
-    claimItemEffect,
-    performShot,
-    ITEM_WEIGHTS,
-    ITEM_ORDER,
-    INVITATION_DURATION_MS,
-    TURN_DURATION_MS,
-    MAX_HP,
-    MAX_INVENTORY,
-    ITEMS_PER_RELOAD,
+    restoreActiveGames,
+    // 供 interactionHandler 路由 rename modal 提交。
+    RENAME_MODAL_PREFIX,
 };
