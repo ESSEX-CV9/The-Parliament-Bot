@@ -9,6 +9,7 @@ const { getShitReactionCount } = require('./reactionTracker');
 const { getSelfModerationVoteEndTime, DELETE_THRESHOLD, MUTE_DURATIONS, getCurrentTimeMode, computeSeriousBase, SERIOUS_MUTE_STABILITY_CONFIG, getSeriousMuteTotalDurationMinutes } = require('../../../core/config/timeconfig');
 const { getRecentSeriousMuteCount } = require('./seriousMuteHistory');
 const { formatDuration } = require('../utils/timeCalculator');
+const { isProtectedStarterMessage, THREAD_STARTER_PROTECTED_MESSAGE } = require('../utils/messageProtection');
 
 // 右键「禁言此极端不适发言用户」弹窗的 customId 前缀。
 // 必须以 selfmod_modal_ 开头，才能命中 interactionCreate 中已有的模态窗口路由分支。
@@ -359,9 +360,14 @@ async function validateTargetMessage(client, parsed) {
         }
         
         // 获取消息
-        const message = await channel.messages.fetch(messageId);
+        const message = await channel.messages.fetch({ message: messageId, force: true });
         if (!message) {
             return { success: false, error: '找不到目标消息，可能已被删除。' };
+        }
+
+        // 所有投票入口共用此校验，包括会附带删除消息的普通/严肃禁言。
+        if (isProtectedStarterMessage(message)) {
+            return { success: false, error: THREAD_STARTER_PROTECTED_MESSAGE };
         }
         
         // 检查消息是否是机器人发送的

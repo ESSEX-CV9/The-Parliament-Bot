@@ -4,6 +4,7 @@ const { calculateAdditionalMuteDuration, formatDuration } = require('../utils/ti
 const { MUTE_DURATIONS, SERIOUS_MUTE_STABILITY_CONFIG, getSeriousMuteTotalDurationMinutes } = require('../../../core/config/timeconfig');
 const { archiveDeletedMessage } = require('./archiveService');
 const { getRecentSeriousMuteCount, appendSeriousMuteEvent } = require('./seriousMuteHistory');
+const { isProtectedStarterMessage, THREAD_STARTER_PROTECTED_MESSAGE } = require('../utils/messageProtection');
 
 /**
  * 执行删除消息惩罚
@@ -44,6 +45,16 @@ async function executeDeleteMessage(client, voteData) {
         
         // 删除消息并归档
         const deleteResult = await deleteAndArchiveMessage(client, voteData);
+
+        if (deleteResult.protected) {
+            await updateSelfModerationVote(guildId, targetMessageId, 'delete', {
+                status: 'failed',
+                executed: false,
+                error: deleteResult.error,
+                failedAt: new Date().toISOString()
+            });
+            return deleteResult;
+        }
         
         // 更新投票状态
         await updateSelfModerationVote(guildId, targetMessageId, 'delete', {
@@ -100,7 +111,7 @@ async function deleteAndArchiveMessage(client, voteData) {
             throw new Error(`找不到频道: ${targetChannelId}`);
         }
         
-        const message = await channel.messages.fetch(targetMessageId);
+        const message = await channel.messages.fetch({ message: targetMessageId, force: true });
         if (!message) {
             // 消息在执行过程中被删除了
             console.log(`消息 ${targetMessageId} 在执行过程中被删除`);
@@ -113,6 +124,17 @@ async function deleteAndArchiveMessage(client, voteData) {
             };
         }
         
+        // 执行时再次保护，覆盖旧投票、提前删除和到期后的兜底删除。
+        if (isProtectedStarterMessage(message)) {
+            return {
+                success: false,
+                action: 'delete',
+                protected: true,
+                error: THREAD_STARTER_PROTECTED_MESSAGE,
+                archived: false
+            };
+        }
+
         // 在删除前先进行归档
         const messageInfo = {
             content: message.content,
@@ -140,7 +162,10 @@ async function deleteAndArchiveMessage(client, voteData) {
         }
         
         // 删除消息前先检查消息是否还存在
-        const messageStillExists = await channel.messages.fetch(targetMessageId).catch(() => null);
+        const messageStillExists = await channel.messages.fetch({ message: targetMessageId, force: true }).catch(error => {
+            if (error.code === 10008) return null; // Unknown Message
+            throw error;
+        });
         if (!messageStillExists) {
             console.log(`消息 ${targetMessageId} 已被删除，跳过删除操作`);
             return {
@@ -153,6 +178,17 @@ async function deleteAndArchiveMessage(client, voteData) {
             };
         }
         
+        // 归档期间原消息也可能被用于创建线程，不能用旧缓存绕过保护。
+        if (isProtectedStarterMessage(messageStillExists)) {
+            return {
+                success: false,
+                action: 'delete',
+                protected: true,
+                error: THREAD_STARTER_PROTECTED_MESSAGE,
+                archived: archiveResult
+            };
+        }
+
         // 删除消息
         await messageStillExists.delete();
         console.log(`成功删除消息: ${targetMessageId}，归档状态: ${archiveResult}`);
@@ -426,8 +462,8 @@ async function executeMuteUser(client, voteData) {
                 
                 // 更新投票状态，记录消息删除
                 await updateSelfModerationVote(guildId, targetMessageId, recordType, {
-                    messageDeletedOnMuteStart: true,
-                    messageDeletedAt: new Date().toISOString(),
+                    messageDeletedOnMuteStart: messageDeleteResult.success,
+                    messageDeletedAt: messageDeleteResult.success ? new Date().toISOString() : null,
                     messageArchived: messageDeleteResult.archived,
                     messageDeleteResult: messageDeleteResult.success
                 });
@@ -622,7 +658,7 @@ async function deleteMessageAfterVoteEnd(client, voteData) {
         await updateSelfModerationVote(guildId, targetMessageId, recordType, {
             messageDeleted: deleteResult.success,
             messageArchived: deleteResult.archived,
-            messageDeletedAt: new Date().toISOString()
+            messageDeletedAt: deleteResult.success ? new Date().toISOString() : null
         });
         
         console.log(`投票结束后删除消息结果: 成功=${deleteResult.success}, 归档=${deleteResult.archived}`);
