@@ -2,6 +2,7 @@
 
 const fs = require('fs').promises;
 const path = require('path');
+const { sanitizeFileName } = require('../utils/fileNameUtils');
 
 /**
  * 生成消息数据JSON（不包含AI总结）
@@ -35,7 +36,8 @@ async function saveToTempFile(messagesData, channelName) {
         
         // 生成文件名
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const fileName = `${channelName}-messages-${timestamp}.json`;
+        const safeChannelName = sanitizeFileName(channelName);
+        const fileName = `${safeChannelName}-messages-${timestamp}.json`;
         const filePath = path.join(tempDir, fileName);
         
         // 写入文件

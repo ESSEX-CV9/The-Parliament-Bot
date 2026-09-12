@@ -21,6 +21,7 @@ backupdata/
 backupdata/
 .limcode/
 .claude/
+deploy/
 data/mystery/bombCooldowns.json
 data/mystery/bombCooldowns.corrupt-*.json
 data/mystery/bombCooldowns.*.tmp

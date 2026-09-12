@@ -2,6 +2,7 @@
 
 const fs = require('fs').promises;
 const path = require('path');
+const { sanitizeFileName } = require('./fileNameUtils');
 
 /**
  * 格式化AI总结为Discord消息格式
@@ -182,7 +183,7 @@ ${Object.entries(aiSummary.participant_stats.message_distribution)
     .map(([user, count]) => `${user}: ${count} 条消息`)
     .join('\n')}`;
     
-    const fileName = `${channelInfo.name}_总结_${timestamp}.txt`;
+    const fileName = `${sanitizeFileName(channelInfo.name)}_总结_${timestamp}.txt`;
     const tempDir = path.join(process.cwd(), 'temp');
     
     // 确保临时目录存在
