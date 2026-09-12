@@ -82,6 +82,10 @@ const {
   handlePresetModal,
   handlePresetSelect,
 } = require('../../modules/channelSummary/services/presetInteractionHandler');
+const {
+  handleDiscussionPresetButton,
+  handleDiscussionPresetModal,
+} = require('../../modules/channelSummary/services/discussionPresetInteractionHandler');
 
 const INTERACTION_DEBUG_LOG = String(process.env.INTERACTION_DEBUG_LOG || '').toLowerCase() === 'true';
 
@@ -161,6 +165,10 @@ async function interactionCreateHandler(interaction) {
         
         // 处理按钮点击
         if (interaction.isButton()) {
+            if (interaction.customId.startsWith('discussion_preset_')) {
+                await handleDiscussionPresetButton(interaction);
+                return;
+            }
             // === 机器人消息管理（优先短路，避免与其它模块前缀冲突） ===
             if (interaction.customId.startsWith(BOT_MESSAGE_CUSTOM_ID_PREFIX)) {
                 await handleBotMessageInteraction(interaction);
@@ -540,6 +548,10 @@ async function interactionCreateHandler(interaction) {
         
         // 处理模态窗口提交
         if (interaction.isModalSubmit()) {
+            if (interaction.customId.startsWith('discussion_preset_edit_modal_')) {
+                await handleDiscussionPresetModal(interaction);
+                return;
+            }
             // === 机器人消息管理（优先短路，避免与其它模块前缀冲突） ===
             if (interaction.customId.startsWith(BOT_MESSAGE_CUSTOM_ID_PREFIX)) {
                 await handleBotMessageInteraction(interaction);
