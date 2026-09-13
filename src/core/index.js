@@ -111,6 +111,8 @@ const cleanupManagerCommand = require('../modules/autoCleanup/commands/cleanupMa
 // 频道总结系统命令
 const summarizeChannelCommand = require('../modules/channelSummary/commands/summarizeChannel');
 const summaryPresetCommand = require('../modules/channelSummary/commands/summaryPreset');
+const discussionSummaryPresetCommand = require('../modules/channelSummary/commands/discussionSummaryPreset');
+const callEveryoneCommand = require('../shared/commands/callEveryone');
 
 // 投票系统命令
 const createVoteCommand = require('../modules/voting/commands/createVote');
@@ -299,6 +301,8 @@ client.commands.set(cleanupManagerCommand.data.name, cleanupManagerCommand);
 // 频道总结系统命令
 client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);
 client.commands.set(summaryPresetCommand.data.name, summaryPresetCommand);
+client.commands.set(discussionSummaryPresetCommand.data.name, discussionSummaryPresetCommand);
+client.commands.set(callEveryoneCommand.data.name, callEveryoneCommand);
 
 // 投票系统命令
 client.commands.set(createVoteCommand.data.name, createVoteCommand);

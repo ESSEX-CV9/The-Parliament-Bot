@@ -274,10 +274,11 @@ async function executeSummary(interaction, params) {
   );
   const summaryParts = splitLongText(plainTextSummary);
 
-  await interaction.channel.send(
-    `📋 **频道内容总结** (由 ${interaction.user.displayName} 发起)\n` +
+  await interaction.channel.send({
+    content: `📋 **频道内容总结** (由 ${interaction.user.displayName} 发起)\n` +
       `⏰ 时间范围: ${startTimeStr} 至 ${endTimeStr}`,
-  );
+    allowedMentions: { parse: [], repliedUser: false },
+  });
 
   for (let i = 0; i < summaryParts.length; i++) {
     const part = summaryParts[i];
@@ -297,13 +298,14 @@ async function executeSummary(interaction, params) {
         await interaction.channel.send({
           content: `${part}\n\n📄 **完整总结已保存为文件**`,
           files: [textAttachment],
+          allowedMentions: { parse: [], repliedUser: false },
         });
       } catch (fileError) {
         console.warn("创建文本文件失败:", fileError);
-        await interaction.channel.send(part);
+        await interaction.channel.send({ content: part, allowedMentions: { parse: [], repliedUser: false } });
       }
     } else {
-      await interaction.channel.send(part);
+      await interaction.channel.send({ content: part, allowedMentions: { parse: [], repliedUser: false } });
     }
 
     if (i < summaryParts.length - 1) {
