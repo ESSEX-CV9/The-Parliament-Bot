@@ -153,6 +153,9 @@ const { startPunishmentSystem } = require('../modules/punishment');
 const punishCommand = require('../modules/punishment/commands/punish');
 const disciplineCommand = require('../modules/punishment/commands/discipline');
 const disciplineConfigCommand = require('../modules/punishment/commands/disciplineConfig');
+const fourWordConfigCommand = require('../modules/punishment/commands/fourWordConfig');
+const fourWordPunishContextCommand = require('../modules/punishment/commands/fourWordPunishContext');
+const fourWordRestoreContextCommand = require('../modules/punishment/commands/fourWordRestoreContext');
 
 // 机器人消息管理系统（编辑 bot 已发出的常驻消息）
 const { startBotMessageSystem } = require('../modules/botMessage');
@@ -335,6 +338,9 @@ client.commands.set(roleSyncConfigCommand.data.name, roleSyncConfigCommand);
 client.commands.set(punishCommand.data.name, punishCommand);
 client.commands.set(disciplineCommand.data.name, disciplineCommand);
 client.commands.set(disciplineConfigCommand.data.name, disciplineConfigCommand);
+client.commands.set(fourWordConfigCommand.data.name, fourWordConfigCommand);
+client.commands.set(fourWordPunishContextCommand.data.name, fourWordPunishContextCommand);
+client.commands.set(fourWordRestoreContextCommand.data.name, fourWordRestoreContextCommand);
 
 // 机器人消息管理系统命令
 client.commands.set(botMessageCommand.data.name, botMessageCommand);

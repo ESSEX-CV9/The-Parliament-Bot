@@ -548,6 +548,11 @@ async function interactionCreateHandler(interaction) {
         
         // 处理模态窗口提交
         if (interaction.isModalSubmit()) {
+            if (interaction.customId.startsWith('fourword:punish:')) {
+                const { handlePunishModal } = require('../../modules/punishment/services/fourWordService');
+                await handlePunishModal(interaction);
+                return;
+            }
             if (interaction.customId.startsWith('discussion_preset_edit_modal_')) {
                 await handleDiscussionPresetModal(interaction);
                 return;
