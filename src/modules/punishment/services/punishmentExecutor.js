@@ -399,38 +399,54 @@ async function executeUnban(client, interaction, { userId, reason, sync }) {
 
 // ========== 禁言 ==========
 
-async function executeMute(client, interaction, { targetMember, durationMs, durationLabel, reason, warnDuration, sync }) {
+async function executeMute(client, interaction, { targetMember, durationMs, durationLabel, reason, warnDuration, sync, requireWarning = false, expectedWarnRoleId }) {
     const guild = interaction.guild;
+    const state = { timeoutApplied: false, warnRoleAdded: false, recordIds: [] };
 
     if (durationMs > MAX_TIMEOUT_MS) {
         await interaction.editReply('❌ 禁言时长不能超过 28 天');
-        return;
+        return { ...state, success: false, error: '禁言时长不能超过 28 天' };
     }
 
     try {
         await targetMember.timeout(durationMs, reason || undefined);
+        state.timeoutApplied = true;
     } catch (err) {
         await interaction.editReply(`❌ 禁言失败: ${err.message}`);
-        return;
+        return { ...state, success: false, error: err.message };
     }
 
-    const expiresAt = new Date(Date.now() + durationMs).toISOString();
-    const recordResult = insertPunishmentRecord({
-        guildId: guild.id,
-        targetUserId: targetMember.id,
-        executorId: interaction.user.id,
-        type: 'mute',
-        reason,
-        durationMs,
-        expiresAt,
-    });
-    const punishmentId = toPunishmentId(recordResult);
-
+    let punishmentId;
     let warnRoleAdded = false;
-    if (warnDuration) {
-        const warnResult = await addWarnRoleToMember(client, guild, targetMember, warnDuration.ms, warnDuration.label, reason, interaction.user.id);
-        warnRoleAdded = warnResult.success;
+    try {
+        const expiresAt = new Date(Date.now() + durationMs).toISOString();
+        const recordResult = insertPunishmentRecord({
+            guildId: guild.id,
+            targetUserId: targetMember.id,
+            executorId: interaction.user.id,
+            type: 'mute',
+            reason,
+            durationMs,
+            expiresAt,
+        });
+        punishmentId = toPunishmentId(recordResult);
+        state.recordIds.push(punishmentId);
+
+        if (warnDuration) {
+            if (requireWarning && getWarnRoleForGuild(guild.id) !== expectedWarnRoleId) throw new Error('警告身份组配置已变化，请重新执行。');
+            const warnResult = await addWarnRoleToMember(client, guild, targetMember, warnDuration.ms, warnDuration.label, reason, interaction.user.id, requireWarning ? expectedWarnRoleId : undefined);
+            warnRoleAdded = warnResult.success;
+            state.warnRoleAdded = warnRoleAdded;
+            if (warnResult.punishmentId) state.recordIds.push(warnResult.punishmentId);
+            if (requireWarning && getWarnRoleForGuild(guild.id) !== expectedWarnRoleId) throw new Error('警告身份组配置已变化，请重新执行。');
+        }
+    } catch (error) {
+        if (!requireWarning) throw error;
+        state.warnRoleAdded = state.warnRoleAdded || error.warnRoleAdded === true;
+        return { ...state, success: false, error: error.message };
     }
+    // Only four-word callers require both core actions to succeed before announcing.
+    if (requireWarning && !warnRoleAdded) return { ...state, success: false, error: '警告身份组添加失败' };
 
     let syncResults = [];
     if (sync) {
@@ -441,36 +457,45 @@ async function executeMute(client, interaction, { targetMember, durationMs, dura
         }
     }
 
-    await sendAnnouncement(client, guild.id, {
-        type: 'mute',
-        targetUserId: targetMember.id,
-        executorId: interaction.user.id,
-        reason,
-        punishmentId,
-        durationLabel,
-        warnDurationLabel: warnDuration?.label || null,
-        scopeGuildNames: buildScopeGuildNames(guild, syncResults),
-    });
+    try {
+        await sendAnnouncement(client, guild.id, {
+            type: 'mute',
+            targetUserId: targetMember.id,
+            executorId: interaction.user.id,
+            reason,
+            punishmentId,
+            durationLabel,
+            warnDurationLabel: warnDuration?.label || null,
+            scopeGuildNames: buildScopeGuildNames(guild, syncResults),
+        });
 
-    const noticeResult = await sendLocalNotice(client, interaction, {
-        type: 'mute',
-        targetUserId: targetMember.id,
-        executorId: interaction.user.id,
-        reason,
-        punishmentId,
-        durationLabel,
-        // 只在警告身份组确实加上时才写进说明，避免与实际结果不符
-        warnDurationLabel: warnRoleAdded ? warnDuration.label : null,
-    });
+        const noticeResult = await sendLocalNotice(client, interaction, {
+            type: 'mute',
+            targetUserId: targetMember.id,
+            executorId: interaction.user.id,
+            reason,
+            punishmentId,
+            durationLabel,
+            // 只在警告身份组确实加上时才写进说明，避免与实际结果不符
+            warnDurationLabel: warnRoleAdded ? warnDuration.label : null,
+        });
 
-    await interaction.editReply(
-        `✅ 已禁言用户 <@${targetMember.id}> (\`${targetMember.id}\`)\n` +
-        `时长: ${durationLabel}` +
-        (warnRoleAdded ? `\n已同时添加警告身份组 (${warnDuration.label})` : '') +
-        (reason ? `\n原因: ${reason}` : '') +
-        formatSyncResults(syncResults) +
-        formatLocalNotice(noticeResult)
-    );
+        await interaction.editReply(
+            `✅ 已禁言用户 <@${targetMember.id}> (\`${targetMember.id}\`)\n` +
+            `时长: ${durationLabel}` +
+            (warnRoleAdded ? `\n已同时添加警告身份组 (${warnDuration.label})` : '') +
+            (reason ? `\n原因: ${reason}` : '') +
+            formatSyncResults(syncResults) +
+            formatLocalNotice(noticeResult)
+        );
+    } catch (error) {
+        if (!requireWarning) throw error;
+        console.error('[Punishment] 四字处罚通知失败（核心处罚已完成）:', error);
+        await interaction.editReply('处罚已成功，但原处罚通知发送失败，请检查日志。').catch(replyError => {
+            console.error('[Punishment] 四字处罚回执发送失败:', replyError);
+        });
+    }
+    return { ...state, success: true, punishmentId, warnRoleAdded };
 }
 
 // ========== 警告身份组 ==========
@@ -518,8 +543,8 @@ async function executeWarnRole(client, interaction, { targetMember, durationMs, 
  * 内部辅助：为成员添加警告身份组并写入 DB
  * @returns {{ success: boolean, punishmentId: string | null }}
  */
-async function addWarnRoleToMember(client, guild, targetMember, durationMs, durationLabel, reason, executorId) {
-    const warnRoleId = getWarnRoleForGuild(guild.id);
+async function addWarnRoleToMember(client, guild, targetMember, durationMs, durationLabel, reason, executorId, checkedRoleId) {
+    const warnRoleId = checkedRoleId || getWarnRoleForGuild(guild.id);
     if (!warnRoleId) return { success: false, punishmentId: null };
 
     try {
@@ -529,21 +554,27 @@ async function addWarnRoleToMember(client, guild, targetMember, durationMs, dura
         return { success: false, punishmentId: null };
     }
 
-    const expiresAt = new Date(Date.now() + durationMs).toISOString();
-    const recordResult = insertPunishmentRecord({
-        guildId: guild.id,
-        targetUserId: targetMember.id,
-        executorId,
-        type: 'warn_role',
-        reason,
-        durationMs,
-        expiresAt,
-    });
+    try {
+        const expiresAt = new Date(Date.now() + durationMs).toISOString();
+        const recordResult = insertPunishmentRecord({
+            guildId: guild.id,
+            targetUserId: targetMember.id,
+            executorId,
+            type: 'warn_role',
+            reason,
+            durationMs,
+            expiresAt,
+        });
 
-    return {
-        success: true,
-        punishmentId: toPunishmentId(recordResult),
-    };
+        return {
+            success: true,
+            punishmentId: toPunishmentId(recordResult),
+        };
+    } catch (error) {
+        // Let the four-word caller undo a role added before a record write failed.
+        error.warnRoleAdded = true;
+        throw error;
+    }
 }
 
 // ========== 解除禁言 ==========

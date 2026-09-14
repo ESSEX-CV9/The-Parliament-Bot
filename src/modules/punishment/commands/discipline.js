@@ -8,8 +8,8 @@ const { executeMute, executeWarnRole, executeUnmute } = require('../services/pun
 const { getPunishmentRecords, getDisciplineAllowedRoles, getDisciplineLimits } = require('../services/punishmentDatabase');
 
 const data = new SlashCommandBuilder()
-    .setName('风纪')
-    .setDescription('风纪委员处罚工具（受限版）')
+    .setName('中层')
+    .setDescription('中层委员处罚工具（受限版）')
     .setDefaultMemberPermissions(0)
     .addSubcommand(sub => sub
         .setName('处罚')
@@ -70,7 +70,7 @@ async function execute(interaction) {
 
                 const limits = getDisciplineLimits(interaction.guild.id);
                 if (duration.ms > limits.maxMuteMs) {
-                    await interaction.editReply(`❌ 禁言时长超过上限，风纪禁言最长为 ${limits.maxMuteLabel}`);
+                    await interaction.editReply(`❌ 禁言时长超过上限，中层禁言最长为 ${limits.maxMuteLabel}`);
                     return;
                 }
 
@@ -82,7 +82,7 @@ async function execute(interaction) {
                         return;
                     }
                     if (warnDuration.ms > limits.maxWarnMs) {
-                        await interaction.editReply(`❌ 警告时长超过上限，风纪警告最长为 ${limits.maxWarnLabel}`);
+                        await interaction.editReply(`❌ 警告时长超过上限，中层警告最长为 ${limits.maxWarnLabel}`);
                         return;
                     }
                 }
@@ -117,7 +117,7 @@ async function execute(interaction) {
 
                 const limits = getDisciplineLimits(interaction.guild.id);
                 if (duration.ms > limits.maxWarnMs) {
-                    await interaction.editReply(`❌ 警告时长超过上限，风纪警告最长为 ${limits.maxWarnLabel}`);
+                    await interaction.editReply(`❌ 警告时长超过上限，中层警告最长为 ${limits.maxWarnLabel}`);
                     return;
                 }
 

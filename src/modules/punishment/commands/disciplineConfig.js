@@ -11,12 +11,12 @@ const {
 const MAX_TIMEOUT_MS = 28 * 24 * 3600 * 1000; // Discord timeout 上限 28 天
 
 const data = new SlashCommandBuilder()
-    .setName('风纪配置')
-    .setDescription('配置风纪指令（可用身份组与时长上限）')
+    .setName('中层配置')
+    .setDescription('配置中层指令（可用身份组与时长上限）')
     .setDefaultMemberPermissions(0)
     .addSubcommand(sub => sub
         .setName('身份组')
-        .setDescription('管理可以使用 /风纪 指令的身份组')
+        .setDescription('管理可以使用 /中层 指令的身份组')
         .addStringOption(opt => opt
             .setName('操作')
             .setDescription('添加、移除或查看列表')
@@ -30,13 +30,13 @@ const data = new SlashCommandBuilder()
     )
     .addSubcommand(sub => sub
         .setName('上限')
-        .setDescription('设置风纪禁言/警告的时长上限（至少填一项）')
+        .setDescription('设置中层禁言/警告的时长上限（至少填一项）')
         .addStringOption(opt => opt.setName('禁言上限').setDescription('如 2h 或 3d（禁言不超过 28 天）').setRequired(false))
         .addStringOption(opt => opt.setName('警告上限').setDescription('如 7d 或 12h').setRequired(false))
     )
     .addSubcommand(sub => sub
         .setName('查看')
-        .setDescription('查看当前风纪配置')
+        .setDescription('查看当前中层配置')
     );
 
 async function execute(interaction) {
@@ -59,11 +59,11 @@ async function execute(interaction) {
                 if (action === 'list') {
                     const roleIds = getDisciplineAllowedRoles(guildId);
                     if (roleIds.length === 0) {
-                        await interaction.editReply('当前没有配置任何风纪身份组（仅管理员可用 /风纪）');
+                        await interaction.editReply('当前没有配置任何中层身份组（仅管理员可用 /中层）');
                         return;
                     }
                     const lines = roleIds.map(id => `• <@&${id}> (\`${id}\`)`);
-                    await interaction.editReply('**风纪可用身份组：**\n' + lines.join('\n'));
+                    await interaction.editReply('**中层可用身份组：**\n' + lines.join('\n'));
                     return;
                 }
 
@@ -75,19 +75,19 @@ async function execute(interaction) {
                 const roleIds = getDisciplineAllowedRoles(guildId);
                 if (action === 'add') {
                     if (roleIds.includes(role.id)) {
-                        await interaction.editReply(`ℹ️ <@&${role.id}> 已在风纪可用名单中`);
+                        await interaction.editReply(`ℹ️ <@&${role.id}> 已在中层可用名单中`);
                         return;
                     }
                     roleIds.push(role.id);
                     setDisciplineAllowedRoles(guildId, roleIds);
-                    await interaction.editReply(`✅ 已将 <@&${role.id}> 加入风纪可用名单`);
+                    await interaction.editReply(`✅ 已将 <@&${role.id}> 加入中层可用名单`);
                 } else if (action === 'remove') {
                     if (!roleIds.includes(role.id)) {
-                        await interaction.editReply(`ℹ️ <@&${role.id}> 不在风纪可用名单中`);
+                        await interaction.editReply(`ℹ️ <@&${role.id}> 不在中层可用名单中`);
                         return;
                     }
                     setDisciplineAllowedRoles(guildId, roleIds.filter(id => id !== role.id));
-                    await interaction.editReply(`✅ 已将 <@&${role.id}> 移出风纪可用名单`);
+                    await interaction.editReply(`✅ 已将 <@&${role.id}> 移出中层可用名单`);
                 }
                 break;
             }
@@ -129,7 +129,7 @@ async function execute(interaction) {
                 setDisciplineLimits(guildId, updates);
                 const limits = getDisciplineLimits(guildId);
                 await interaction.editReply(
-                    `✅ 已更新风纪时长上限：\n禁言上限: ${limits.maxMuteLabel}\n警告上限: ${limits.maxWarnLabel}`
+                    `✅ 已更新中层时长上限：\n禁言上限: ${limits.maxMuteLabel}\n警告上限: ${limits.maxWarnLabel}`
                 );
                 break;
             }
@@ -139,10 +139,10 @@ async function execute(interaction) {
 
                 const rolesText = roleIds.length > 0
                     ? roleIds.map(id => `<@&${id}>`).join('、')
-                    : '未配置（仅管理员可用 /风纪）';
+                    : '未配置（仅管理员可用 /中层）';
 
                 const embed = new EmbedBuilder()
-                    .setTitle('风纪配置')
+                    .setTitle('中层配置')
                     .setColor(0x5865F2)
                     .addFields(
                         { name: '可用身份组', value: rolesText, inline: false },
