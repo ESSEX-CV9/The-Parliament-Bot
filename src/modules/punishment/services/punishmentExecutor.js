@@ -1,3 +1,4 @@
+const { sendAnnouncement } = require('./punishmentAnnouncement');
 const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const {
     insertPunishmentRecord,
@@ -60,126 +61,6 @@ function buildScopeGuildNames(guild, syncResults) {
 
     if (nameSet.size === 0) return '当前服务器';
     return Array.from(nameSet).join('、');
-}
-
-function getOriginalPunishmentTypeLabel(type) {
-    switch (type) {
-        case 'mute': return '禁言';
-        case 'ban': return '永久封禁';
-        case 'warn_role': return '警告处罚';
-        default: return type || '未知';
-    }
-}
-
-function buildAnnouncementEmbed({
-    type,
-    targetUserId,
-    executorId,
-    reason,
-    durationLabel,
-    warnDurationLabel,
-    scopeGuildNames,
-    punishmentId,
-    originalPunishment,
-    targetAvatarUrl,
-}) {
-    const embed = new EmbedBuilder()
-        .setTitle(TITLES[type] || '处罚公告')
-        .setColor(COLORS[type] || 0x5865F2)
-        .setTimestamp();
-
-    if (targetAvatarUrl) {
-        embed.setThumbnail(targetAvatarUrl);
-    }
-
-    const safeReason = clampText(reason, 1024);
-    const safeScope = clampText(scopeGuildNames || '当前服务器', 1024);
-
-    if (type === 'mute') {
-        embed.addFields(
-            { name: '时长', value: durationLabel || '未提供', inline: true },
-            { name: '成员', value: `<@${targetUserId}>`, inline: true },
-            { name: '管理员', value: `<@${executorId}>`, inline: true },
-            { name: '原因', value: safeReason, inline: false },
-            { name: '警告时长', value: warnDurationLabel || '无', inline: true },
-            { name: '处罚范围', value: safeScope, inline: true },
-        );
-    } else if (type === 'ban') {
-        embed.addFields(
-            { name: '成员', value: `<@${targetUserId}>`, inline: true },
-            { name: '管理员', value: `<@${executorId}>`, inline: true },
-            { name: '\u200b', value: '\u200b', inline: true },
-            { name: '原因', value: safeReason, inline: false },
-            { name: '处罚范围', value: safeScope, inline: false },
-        );
-    } else if (type === 'warn_role') {
-        embed.addFields(
-            { name: '时长', value: durationLabel || '未提供', inline: true },
-            { name: '成员', value: `<@${targetUserId}>`, inline: true },
-            { name: '管理员', value: `<@${executorId}>`, inline: true },
-            { name: '原因', value: safeReason, inline: false },
-            { name: '处罚范围', value: safeScope, inline: false },
-        );
-    } else if (type === 'unban' || type === 'unmute') {
-        const originalType = originalPunishment?.type
-            ? getOriginalPunishmentTypeLabel(originalPunishment.type)
-            : '未知';
-        const originalId = originalPunishment?.id
-            ? `\`${String(originalPunishment.id)}\``
-            : '未知（未找到原处罚记录）';
-
-        embed.addFields(
-            { name: '成员', value: `<@${targetUserId}>`, inline: true },
-            { name: '管理员', value: `<@${executorId}>`, inline: true },
-            { name: '\u200b', value: '\u200b', inline: true },
-            { name: '原因', value: safeReason, inline: false },
-            { name: '处罚类型', value: originalType, inline: true },
-            { name: '原处罚ID', value: originalId, inline: true },
-            { name: '撤销范围', value: safeScope, inline: true },
-        );
-    } else {
-        embed.addFields(
-            { name: '成员', value: `<@${targetUserId}>`, inline: true },
-            { name: '管理员', value: `<@${executorId}>`, inline: true },
-            { name: '原因', value: safeReason, inline: false },
-        );
-    }
-
-    embed.setFooter({ text: `处罚ID: ${punishmentId || '未知'}` });
-    return embed;
-}
-
-// ========== 公告 ==========
-
-async function sendAnnouncement(client, guildId, payload) {
-    const channelIds = getAnnouncementChannels(guildId);
-    if (!channelIds || channelIds.length === 0) return;
-
-    try {
-        const targetUser = await client.users.fetch(payload.targetUserId).catch(() => null);
-        const targetAvatarUrl = targetUser?.displayAvatarURL({ size: 256 });
-
-        const embed = buildAnnouncementEmbed({
-            ...payload,
-            targetAvatarUrl,
-        });
-
-        for (const channelId of channelIds) {
-            try {
-                const channel = await client.channels.fetch(channelId).catch(() => null);
-                if (!channel || !channel.isTextBased()) {
-                    console.warn(`[Punishment] 公告频道不可用 guild=${guildId} channel=${channelId}`);
-                    continue;
-                }
-
-                await channel.send({ embeds: [embed] });
-            } catch (err) {
-                console.error(`[Punishment] 发送公告失败 guild=${guildId} channel=${channelId}:`, err.message);
-            }
-        }
-    } catch (err) {
-        console.error(`[Punishment] 构建处罚公告失败 guild=${guildId}:`, err);
-    }
 }
 
 // ========== 现场说明（在执行指令的频道里留一条简单 embed） ==========
@@ -314,7 +195,7 @@ async function executeBan(client, interaction, { targetUser, reason, sync }) {
 
     let syncResults = [];
     if (sync) {
-        syncResults = await syncBan(client, guild.id, targetUser.id, reason);
+        syncResults = await syncBan(client, guild.id, targetUser.id, reason, { executorId: interaction.user.id });
     }
 
     const noticePayload = {
@@ -326,6 +207,7 @@ async function executeBan(client, interaction, { targetUser, reason, sync }) {
     };
 
     await sendAnnouncement(client, guild.id, {
+        fromSync: false,
         ...noticePayload,
         scopeGuildNames: buildScopeGuildNames(guild, syncResults),
     });
@@ -370,7 +252,7 @@ async function executeUnban(client, interaction, { userId, reason, sync }) {
 
     let syncResults = [];
     if (sync) {
-        syncResults = await syncUnban(client, guild.id, userId, reason);
+        syncResults = await syncUnban(client, guild.id, userId, reason, { executorId: interaction.user.id });
     }
 
     const noticePayload = {
@@ -382,6 +264,7 @@ async function executeUnban(client, interaction, { userId, reason, sync }) {
     };
 
     await sendAnnouncement(client, guild.id, {
+        fromSync: false,
         ...noticePayload,
         originalPunishment,
         scopeGuildNames: buildScopeGuildNames(guild, syncResults),
@@ -450,15 +333,25 @@ async function executeMute(client, interaction, { targetMember, durationMs, dura
 
     let syncResults = [];
     if (sync) {
-        syncResults = await syncMute(client, guild.id, targetMember.id, durationMs, reason);
+        // Defer mute announcements until the independent warning synchronization finishes.
+        const pending = [];
+        syncResults = await syncMute(client, guild.id, targetMember.id, durationMs, reason, { executorId: interaction.user.id, durationLabel, pending });
         if (warnDuration) {
-            const warnSyncResults = await syncWarnRole(client, guild.id, targetMember.id, warnDuration.ms, reason);
+            const coveredGuildIds = new Set(syncResults.filter(r => r.success).map(r => r.guildId));
+            const warnSyncResults = await syncWarnRole(client, guild.id, targetMember.id, warnDuration.ms, reason, {
+                executorId: interaction.user.id, durationLabel: warnDuration.label, coveredGuildIds,
+            });
+            for (const item of pending) {
+                if (warnSyncResults.some(r => r.success && r.guildId === item.guildId)) item.payload.warnDurationLabel = warnDuration.label;
+            }
             syncResults = syncResults.concat(warnSyncResults.map(r => ({ ...r, note: '警告身份组' })));
         }
+        for (const item of pending) await sendAnnouncement(client, item.guildId, item.payload);
     }
 
     try {
         await sendAnnouncement(client, guild.id, {
+            fromSync: false,
             type: 'mute',
             targetUserId: targetMember.id,
             executorId: interaction.user.id,
@@ -511,7 +404,7 @@ async function executeWarnRole(client, interaction, { targetMember, durationMs, 
 
     let syncResults = [];
     if (sync) {
-        syncResults = await syncWarnRole(client, guild.id, targetMember.id, durationMs, reason);
+        syncResults = await syncWarnRole(client, guild.id, targetMember.id, durationMs, reason, { executorId: interaction.user.id, durationLabel });
     }
 
     const noticePayload = {
@@ -524,6 +417,7 @@ async function executeWarnRole(client, interaction, { targetMember, durationMs, 
     };
 
     await sendAnnouncement(client, guild.id, {
+        fromSync: false,
         ...noticePayload,
         scopeGuildNames: buildScopeGuildNames(guild, syncResults),
     });
@@ -620,7 +514,7 @@ async function executeUnmute(client, interaction, { targetMember, reason, sync }
 
     let syncResults = [];
     if (sync) {
-        syncResults = await syncUnmute(client, guild.id, targetMember.id, reason);
+        syncResults = await syncUnmute(client, guild.id, targetMember.id, reason, { executorId: interaction.user.id });
     }
 
     const noticePayload = {
@@ -633,6 +527,7 @@ async function executeUnmute(client, interaction, { targetMember, reason, sync }
     };
 
     await sendAnnouncement(client, guild.id, {
+        fromSync: false,
         ...noticePayload,
         originalPunishment,
         scopeGuildNames: buildScopeGuildNames(guild, syncResults),

@@ -67,6 +67,16 @@ function initializePunishmentDatabase() {
 
         CREATE INDEX IF NOT EXISTS idx_pac_source ON punishment_announcement_channels(source_guild_id);
 
+        CREATE TABLE IF NOT EXISTS punishment_archive_channels (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_guild_id TEXT NOT NULL,
+            channel_id      TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            UNIQUE(source_guild_id, channel_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_parc_source ON punishment_archive_channels(source_guild_id);
+
         CREATE TABLE IF NOT EXISTS punishment_warn_role_config (
             guild_id    TEXT PRIMARY KEY,
             role_id     TEXT NOT NULL,
@@ -130,6 +140,17 @@ function initializePunishmentDatabase() {
     `);
     stmts.listAnnouncementChannels = db.prepare(`
         SELECT channel_id FROM punishment_announcement_channels WHERE source_guild_id = ? ORDER BY id ASC
+    `);
+    stmts.addArchiveChannel = db.prepare(`
+        INSERT INTO punishment_archive_channels (source_guild_id, channel_id, created_at)
+        VALUES (@sourceGuildId, @channelId, @createdAt)
+        ON CONFLICT(source_guild_id, channel_id) DO NOTHING
+    `);
+    stmts.removeArchiveChannel = db.prepare(`
+        DELETE FROM punishment_archive_channels WHERE source_guild_id = ? AND channel_id = ?
+    `);
+    stmts.listArchiveChannels = db.prepare(`
+        SELECT channel_id FROM punishment_archive_channels WHERE source_guild_id = ? ORDER BY id ASC
     `);
     stmts.findLatestActivePunishment = db.prepare(`
         SELECT * FROM punishment_records WHERE guild_id = ? AND target_user_id = ? AND type = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1
@@ -213,6 +234,22 @@ function removeAnnouncementChannel(sourceGuildId, channelId) {
 
 function listAnnouncementChannels(sourceGuildId) {
     return stmts.listAnnouncementChannels.all(sourceGuildId).map(row => row.channel_id);
+}
+
+function addArchiveChannel(sourceGuildId, channelId) {
+    return stmts.addArchiveChannel.run({ sourceGuildId, channelId, createdAt: nowIso() });
+}
+
+function removeArchiveChannel(sourceGuildId, channelId) {
+    return stmts.removeArchiveChannel.run(sourceGuildId, channelId);
+}
+
+function listArchiveChannels(sourceGuildId) {
+    return stmts.listArchiveChannels.all(sourceGuildId).map(row => row.channel_id);
+}
+
+function getArchiveChannels(sourceGuildId) {
+    return listArchiveChannels(sourceGuildId);
 }
 
 function getAnnouncementChannels(sourceGuildId) {
@@ -303,6 +340,10 @@ module.exports = {
     addSyncTarget,
     removeSyncTarget,
     listSyncTargets,
+    addArchiveChannel,
+    removeArchiveChannel,
+    listArchiveChannels,
+    getArchiveChannels,
     addAnnouncementChannel,
     removeAnnouncementChannel,
     listAnnouncementChannels,

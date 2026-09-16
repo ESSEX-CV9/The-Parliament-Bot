@@ -7,6 +7,9 @@ const {
     addSyncTarget,
     removeSyncTarget,
     listSyncTargets,
+    addArchiveChannel,
+    removeArchiveChannel,
+    getArchiveChannels,
     addAnnouncementChannel,
     removeAnnouncementChannel,
     getAnnouncementChannels,
@@ -70,6 +73,28 @@ const data = new SlashCommandBuilder()
         .addChannelOption(opt => opt
             .setName('频道')
             .setDescription('公告频道（当前服务器内可选）')
+            .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+            .setRequired(false))
+        .addStringOption(opt => opt
+            .setName('频道id')
+            .setDescription('跨服务器频道请填写频道ID')
+            .setRequired(false))
+    )
+    .addSubcommand(sub => sub
+        .setName('配置留痕频道')
+        .setDescription('添加、移除或查看处罚留痕频道（支持跨服频道ID）')
+        .addStringOption(opt => opt
+            .setName('操作')
+            .setDescription('添加、移除或查看列表')
+            .setRequired(true)
+            .addChoices(
+                { name: '添加', value: 'add' },
+                { name: '移除', value: 'remove' },
+                { name: '查看列表', value: 'list' },
+            ))
+        .addChannelOption(opt => opt
+            .setName('频道')
+            .setDescription('留痕频道（当前服务器内可选）')
             .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
             .setRequired(false))
         .addStringOption(opt => opt
@@ -259,6 +284,59 @@ async function execute(interaction) {
                     addAnnouncementChannel(interaction.guild.id, channelId);
                     const guildName = channel.guild?.name || '未知服务器';
                     await interaction.editReply(`✅ 已添加处罚公告频道: <#${channelId}> (\`${channelId}\`)\n所属服务器: ${guildName}`);
+                }
+                break;
+            }
+            case '配置留痕频道': {
+                const action = interaction.options.getString('操作');
+                const selectedChannel = interaction.options.getChannel('频道');
+                const channelIdInput = interaction.options.getString('频道id');
+
+                if (action === 'list') {
+                    const channelIds = getArchiveChannels(interaction.guild.id);
+                    if (channelIds.length === 0) {
+                        await interaction.editReply('当前没有配置任何处罚留痕频道');
+                        return;
+                    }
+
+                    const lines = [];
+                    for (const channelId of channelIds) {
+                        const channel = await client.channels.fetch(channelId).catch(() => null);
+                        if (channel && channel.isTextBased()) {
+                            const guildName = channel.guild?.name || '未知服务器';
+                            lines.push(`✅ <#${channelId}> (\`${channelId}\`) - ${guildName}`);
+                        } else {
+                            lines.push(`⚠️ \`${channelId}\` - 无法访问或非文本频道`);
+                        }
+                    }
+
+                    await interaction.editReply('**处罚留痕频道列表：**\n' + lines.join('\n'));
+                    return;
+                }
+
+                const channelId = (channelIdInput || selectedChannel?.id || '').trim();
+                if (!channelId) {
+                    await interaction.editReply('❌ 请提供频道或频道ID');
+                    return;
+                }
+
+                if (action === 'remove') {
+                    const result = removeArchiveChannel(interaction.guild.id, channelId);
+                    await interaction.editReply(result.changes > 0 ? `✅ 已移除处罚留痕频道: \`${channelId}\`` : `ℹ️ 该频道未在留痕配置列表中: \`${channelId}\``);
+                } else if (action === 'add') {
+                    const channel = await client.channels.fetch(channelId).catch(() => null);
+                    if (!channel) {
+                        await interaction.editReply('❌ 无法获取该频道，请确认机器人已加入频道所属服务器');
+                        return;
+                    }
+                    if (!channel.isTextBased()) {
+                        await interaction.editReply('❌ 仅支持文本频道作为处罚留痕频道');
+                        return;
+                    }
+
+                    addArchiveChannel(interaction.guild.id, channelId);
+                    const guildName = channel.guild?.name || '未知服务器';
+                    await interaction.editReply(`✅ 已添加处罚留痕频道: <#${channelId}> (\`${channelId}\`)\n所属服务器: ${guildName}`);
                 }
                 break;
             }
