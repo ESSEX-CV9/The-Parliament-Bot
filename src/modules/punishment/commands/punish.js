@@ -376,6 +376,11 @@ async function execute(interaction) {
                 }
 
                 if (action === 'add') {
+                    if (targetGuildId === interaction.guild.id) {
+                        await interaction.editReply('❌ 不能将当前服务器设置为自己的同步目标');
+                        return;
+                    }
+
                     const targetGuild = await client.guilds.fetch(targetGuildId).catch(() => null);
                     if (!targetGuild) {
                         await interaction.editReply('❌ 无法获取目标服务器，请确认机器人已加入该服务器');
