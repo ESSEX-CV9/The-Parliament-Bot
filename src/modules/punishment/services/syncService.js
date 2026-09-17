@@ -6,11 +6,17 @@ const {
     insertPunishmentRecord,
 } = require('./punishmentDatabase');
 
+function getExternalSyncTargets(sourceGuildId, capability) {
+    return getSyncTargets(sourceGuildId).filter(target =>
+        String(target.target_guild_id) !== String(sourceGuildId) && target[capability]
+    );
+}
+
 /**
  * 跨服务器同步封禁
  */
 async function syncBan(client, sourceGuildId, userId, reason, announcement = {}) {
-    const targets = getSyncTargets(sourceGuildId).filter(t => t.sync_ban);
+    const targets = getExternalSyncTargets(sourceGuildId, 'sync_ban');
     const results = [];
 
     for (const target of targets) {
@@ -50,7 +56,7 @@ async function syncBan(client, sourceGuildId, userId, reason, announcement = {})
  * 跨服务器同步解封
  */
 async function syncUnban(client, sourceGuildId, userId, reason, announcement = {}) {
-    const targets = getSyncTargets(sourceGuildId).filter(t => t.sync_ban);
+    const targets = getExternalSyncTargets(sourceGuildId, 'sync_ban');
     const results = [];
 
     for (const target of targets) {
@@ -93,7 +99,7 @@ async function syncUnban(client, sourceGuildId, userId, reason, announcement = {
  * 跨服务器同步禁言
  */
 async function syncMute(client, sourceGuildId, userId, durationMs, reason, announcement = {}) {
-    const targets = getSyncTargets(sourceGuildId).filter(t => t.sync_mute);
+    const targets = getExternalSyncTargets(sourceGuildId, 'sync_mute');
     const results = [];
     const MAX_TIMEOUT_MS = 28 * 24 * 3600 * 1000;
 
@@ -145,7 +151,7 @@ async function syncMute(client, sourceGuildId, userId, durationMs, reason, annou
  * 跨服务器同步警告身份组
  */
 async function syncWarnRole(client, sourceGuildId, userId, durationMs, reason, announcement = {}) {
-    const targets = getSyncTargets(sourceGuildId).filter(t => t.sync_warn_role);
+    const targets = getExternalSyncTargets(sourceGuildId, 'sync_warn_role');
     const results = [];
 
     for (const target of targets) {
@@ -198,7 +204,7 @@ async function syncWarnRole(client, sourceGuildId, userId, durationMs, reason, a
  * 跨服务器同步解除禁言
  */
 async function syncUnmute(client, sourceGuildId, userId, reason, announcement = {}) {
-    const targets = getSyncTargets(sourceGuildId).filter(t => t.sync_mute);
+    const targets = getExternalSyncTargets(sourceGuildId, 'sync_mute');
     const results = [];
 
     for (const target of targets) {
