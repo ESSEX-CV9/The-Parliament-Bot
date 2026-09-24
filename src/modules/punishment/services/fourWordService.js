@@ -22,13 +22,22 @@ async function validate(interaction, targetId, punish) {
     if (!checkDisciplinePermission(operator, config.allowedRoleIds)) throw new Error('您没有权限使用四字处罚或四字恢复。');
     if (!config.normalRoleId || !config.penaltyRoleId) throw new Error('请先配置正常身份组和处罚身份组。');
     if (config.normalRoleId === config.penaltyRoleId) throw new Error('正常身份组和处罚身份组不能相同。');
+    // Roles can gain Administrator after they were configured; refresh both before any member mutation.
+    await guild.roles.fetch();
+    const fourWordRoles = new Map();
+    for (const [name, id] of [['正常身份组', config.normalRoleId], ['处罚身份组', config.penaltyRoleId]]) {
+        const role = await guild.roles.fetch(id);
+        if (!role) throw new Error(`身份组 ${id} 不存在。`);
+        if (role.permissions.has(PermissionFlagsBits.Administrator)) {
+            throw new Error(`四字配置无效：${name}拥有「管理员（Administrator）」权限，请先修改身份组权限或重新配置。`);
+        }
+        fourWordRoles.set(id, role);
+    }
     const target = await guild.members.fetch({ user: targetId, force: true }).catch(() => null);
     if (!target) throw new Error('目标成员不存在或已离开服务器。');
     const me = await guild.members.fetchMe();
     if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) throw new Error('机器人缺少管理身份组权限。');
     if (!target.manageable) throw new Error('机器人无法管理目标成员，请检查成员身份组层级。');
-    // Refresh the full role list before comparing positions.
-    await guild.roles.fetch();
     const roleIds = [config.normalRoleId, config.penaltyRoleId];
     let warnRoleId;
     if (punish) {
@@ -54,7 +63,7 @@ async function validate(interaction, targetId, punish) {
         if (currentWarnRoleId && roleIds.includes(currentWarnRoleId)) throw new Error('四字身份组与原警告身份组重叠，请先修正配置，避免修改警告状态。');
     }
     for (const id of roleIds) {
-        const role = await guild.roles.fetch(id);
+        const role = fourWordRoles.get(id) || await guild.roles.fetch(id);
         if (!role) throw new Error(`身份组 ${id} 不存在。`);
         if (role.managed || role.id === guild.id) throw new Error(`身份组 ${id} 是托管身份组或 @everyone，无法操作。`);
         if (me.roles.highest.comparePositionTo(role) <= 0) throw new Error(`机器人身份组层级必须高于身份组 ${id}。`);
@@ -82,7 +91,7 @@ async function openPunishModal(interaction) {
     }
 }
 
-async function run(interaction, targetId, punish) {
+async function run(interaction, targetId, punish, reason = null) {
     await interaction.deferReply({ ephemeral: true });
     const key = `${interaction.guild?.id}:${targetId}`;
     if (running.has(key)) return respond(interaction, '该成员的四字操作正在处理中，请稍后重试。');
@@ -102,7 +111,7 @@ async function run(interaction, targetId, punish) {
             if (punish) {
                 core = await executeMute(interaction.client, interaction, {
                     targetMember: target, durationMs: config.muteDuration.ms, durationLabel: config.muteDuration.label,
-                    reason: interaction.fields.getTextInputValue('reason').trim() || null,
+                    reason,
                     warnDuration: config.warnDuration, sync: false, requireWarning: true, expectedWarnRoleId: warnRoleId,
                 });
                 if (!core?.success) throw Object.assign(new Error(core?.error || '核心处罚失败。'), { punishmentState: core });
@@ -142,9 +151,10 @@ async function run(interaction, targetId, punish) {
 async function handlePunishModal(interaction) {
     const targetId = interaction.customId.slice(MODAL_PREFIX.length);
     if (!/^\d{17,20}$/.test(targetId)) return respond(interaction, '❌ 四字处罚目标无效。');
-    return run(interaction, targetId, true);
+    return run(interaction, targetId, true, interaction.fields.getTextInputValue('reason').trim() || null);
 }
 
-async function restore(interaction) { return run(interaction, interaction.targetId, false); }
+async function punish(interaction, targetId, reason) { return run(interaction, targetId, true, reason); }
+async function restore(interaction, targetId = interaction.targetId) { return run(interaction, targetId, false); }
 
-module.exports = { MODAL_PREFIX, openPunishModal, handlePunishModal, restore };
+module.exports = { MODAL_PREFIX, openPunishModal, handlePunishModal, punish, restore };

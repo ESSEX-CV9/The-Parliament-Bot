@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, ChannelType } = require('discord.js');
+const { SlashCommandBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
 const { checkAdminPermission } = require('../../../core/utils/permissionManager');
 const { parseDuration } = require('../utils/timeParser');
 const { getWarnRoleForGuild } = require('../services/punishmentDatabase');
@@ -40,6 +40,9 @@ async function execute(interaction) {
             if (!role) continue;
             if (role.managed || role.id === guildId) throw new Error('不能使用托管身份组或 @everyone。');
             if (role.id === getWarnRoleForGuild(guildId)) throw new Error('不能与原警告身份组相同。');
+            if (role.permissions.has(PermissionFlagsBits.Administrator)) {
+                throw new Error(`${name}不能拥有「管理员（Administrator）」权限。`);
+            }
             updates[key] = role.id;
         }
         if ((updates.normalRoleId || updates.penaltyRoleId) &&
