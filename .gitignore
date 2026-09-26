@@ -21,7 +21,9 @@ backupdata/
 backupdata/
 .limcode/
 .claude/
+# Deployment scripts are versioned; only their runtime output stays local.
 deploy/
+deploy/*.log
 data/mystery/bombCooldowns.json
 data/mystery/bombCooldowns.corrupt-*.json
 data/mystery/bombCooldowns.*.tmp
