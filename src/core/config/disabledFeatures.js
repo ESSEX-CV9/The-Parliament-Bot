@@ -1,6 +1,6 @@
 // 这些功能已从旧 Bot 停用；拒绝 Discord 缓存中的旧命令及历史面板。
 // 恢复功能时应统一恢复接入注释与此拦截规则，不能只恢复命令注册。
-const DISABLED_FEATURE_MESSAGE = '⛔ 此功能已在这个 Bot 停用，请使用相应的新 Bot 或联系管理员。';
+const DISABLED_FEATURE_MESSAGE = '⛔ 此功能已在这个 Bot 停用，请联系管理员了解后续安排。';
 const disabledCommandPrefixes = ['神秘指令', '提案', '频道冲水', '上庭'];
 const disabledCommands = new Set(['加压轮盘测试', '审核议案']);
 const disabledManagement = new Set(['神秘名字库', '神秘频道设置', '重置游戏数据']);
