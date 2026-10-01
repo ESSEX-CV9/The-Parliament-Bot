@@ -25,8 +25,12 @@ const {
 
 const { clientReadyHandler } = require('./events/clientReady')
 const { interactionCreateHandler } = require('./events/interactionCreate')
-const { startProposalChecker } = require('../modules/proposal/services/proposalChecker');
-const { startCourtChecker } = require('../modules/court/services/courtChecker');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { startProposalChecker } = require('../modules/proposal/services/proposalChecker');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { startCourtChecker } = require('../modules/court/services/courtChecker');
+
 const { startSelfModerationChecker } = require('../modules/selfModeration/services/moderationChecker');
 const { startAttachmentCleanupScheduler } = require('../modules/selfModeration/services/archiveService');
 const { startVoteChecker } = require('../modules/voting/services/voteChecker');
@@ -52,20 +56,38 @@ const pingCommand = require('../shared/commands/ping');
 const setCheckChannelCommand = require('../shared/commands/setCheckChannel');
 
 // 提案系统命令
-const setupFormCommand = require('../modules/proposal/commands/setupForm');
-const deleteEntryCommand = require('../modules/proposal/commands/deleteEntry');
-const withdrawProposalCommand = require('../modules/proposal/commands/withdrawProposal');
-const setFormPermissionsCommand = require('../modules/proposal/commands/setFormPermissions');
-const setSupportPermissionsCommand = require('../modules/proposal/commands/setSupportPermissions');
-const reviewProposalCommand = require('../modules/proposal/commands/reviewProposal');
-const setProposalReviewersCommand = require('../modules/proposal/commands/setProposalReviewers');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const setupFormCommand = require('../modules/proposal/commands/setupForm');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const deleteEntryCommand = require('../modules/proposal/commands/deleteEntry');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const withdrawProposalCommand = require('../modules/proposal/commands/withdrawProposal');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const setFormPermissionsCommand = require('../modules/proposal/commands/setFormPermissions');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const setSupportPermissionsCommand = require('../modules/proposal/commands/setSupportPermissions');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const reviewProposalCommand = require('../modules/proposal/commands/reviewProposal');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const setProposalReviewersCommand = require('../modules/proposal/commands/setProposalReviewers');
+
 
 // 审核系统命令（已合并为 /创作者审核）
 const creatorReviewCommand = require('../modules/creatorReview/commands/creatorReview');
 
 // 法庭系统命令
-const setAllowCourtRoleCommand = require('../modules/court/commands/setAllowCourtRole');
-const applyToCourtCommand = require('../modules/court/commands/applyToCourt');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const setAllowCourtRoleCommand = require('../modules/court/commands/setAllowCourtRole');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const applyToCourtCommand = require('../modules/court/commands/applyToCourt');
+
 
 // 自助管理系统命令
 const deleteShitMessageCommand = require('../modules/selfModeration/commands/deleteShitMessage');
@@ -104,9 +126,15 @@ const listBooklistsCommand = require('../modules/contest/commands/listBooklists'
 const manageSyncExclusionCommand = require('../modules/contest/commands/manageSyncExclusion');
 
 // 自动清理系统命令（合并后）
-const keywordManagerCommand = require('../modules/autoCleanup/commands/keywordManager');
-const exemptManagerCommand = require('../modules/autoCleanup/commands/exemptManager');
-const cleanupManagerCommand = require('../modules/autoCleanup/commands/cleanupManager');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const keywordManagerCommand = require('../modules/autoCleanup/commands/keywordManager');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const exemptManagerCommand = require('../modules/autoCleanup/commands/exemptManager');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const cleanupManagerCommand = require('../modules/autoCleanup/commands/cleanupManager');
+
 
 // 频道总结系统命令
 const summarizeChannelCommand = require('../modules/channelSummary/commands/summarizeChannel');
@@ -172,14 +200,28 @@ const viewMyControlledInviteStatusCommand = require('../modules/controlledInvite
 const { startSafetySetupSystem } = require('../modules/safetySetup');
 
 // 神秘指令娱乐系统
-const mysteryCommand = require('../modules/mystery/commands/mysteryCommand');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const mysteryCommand = require('../modules/mystery/commands/mysteryCommand');
+
 const manageCommand = require('../modules/mystery/commands/manageCommand');
-const mysteryGameStatsCommand = require('../modules/mystery/commands/gameStatsCommand');
-const mysterySettingsCommand = require('../modules/mystery/commands/mysterySettingsCommand');
-const { mysteryGuildMemberRemoveHandler } = require('../modules/mystery/events/guildMemberRemove');
-const { mysteryGuildMemberUpdateHandler } = require('../modules/mystery/events/guildMemberUpdate');
-const mysteryNicknameLock = require('../modules/mystery/services/mysteryNicknameLock');
-const mysteryGameManager = require('../modules/mystery/services/mysteryGameManager');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const mysteryGameStatsCommand = require('../modules/mystery/commands/gameStatsCommand');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const mysterySettingsCommand = require('../modules/mystery/commands/mysterySettingsCommand');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { mysteryGuildMemberRemoveHandler } = require('../modules/mystery/events/guildMemberRemove');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { mysteryGuildMemberUpdateHandler } = require('../modules/mystery/events/guildMemberUpdate');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const mysteryNicknameLock = require('../modules/mystery/services/mysteryNicknameLock');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const mysteryGameManager = require('../modules/mystery/services/mysteryGameManager');
+
 
 const DISCORD_REST_TIMEOUT_MS = (() => {
     const n = Number(process.env.DISCORD_REST_TIMEOUT_MS);
@@ -246,20 +288,38 @@ client.commands.set(pingCommand.data.name, pingCommand);
 client.commands.set(setCheckChannelCommand.data.name, setCheckChannelCommand);
 
 // 提案系统命令
-client.commands.set(setupFormCommand.data.name, setupFormCommand);
-client.commands.set(deleteEntryCommand.data.name, deleteEntryCommand);
-client.commands.set(withdrawProposalCommand.data.name, withdrawProposalCommand);
-client.commands.set(setFormPermissionsCommand.data.name, setFormPermissionsCommand);
-client.commands.set(setSupportPermissionsCommand.data.name, setSupportPermissionsCommand);
-client.commands.set(reviewProposalCommand.data.name, reviewProposalCommand);
-client.commands.set(setProposalReviewersCommand.data.name, setProposalReviewersCommand);
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(setupFormCommand.data.name, setupFormCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(deleteEntryCommand.data.name, deleteEntryCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(withdrawProposalCommand.data.name, withdrawProposalCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(setFormPermissionsCommand.data.name, setFormPermissionsCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(setSupportPermissionsCommand.data.name, setSupportPermissionsCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(reviewProposalCommand.data.name, reviewProposalCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(setProposalReviewersCommand.data.name, setProposalReviewersCommand);
+
 
 // 审核系统命令（已合并为 /创作者审核）
 client.commands.set(creatorReviewCommand.data.name, creatorReviewCommand);
 
 // 法庭系统命令
-client.commands.set(setAllowCourtRoleCommand.data.name, setAllowCourtRoleCommand);
-client.commands.set(applyToCourtCommand.data.name, applyToCourtCommand);
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(setAllowCourtRoleCommand.data.name, setAllowCourtRoleCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(applyToCourtCommand.data.name, applyToCourtCommand);
+
 
 // 自助管理系统命令
 client.commands.set(deleteShitMessageCommand.data.name, deleteShitMessageCommand);
@@ -296,9 +356,15 @@ client.commands.set(listBooklistsCommand.data.name, listBooklistsCommand);
 client.commands.set(manageSyncExclusionCommand.data.name, manageSyncExclusionCommand);
 
 // 自动清理系统命令（合并后）
-client.commands.set(keywordManagerCommand.data.name, keywordManagerCommand);
-client.commands.set(exemptManagerCommand.data.name, exemptManagerCommand);
-client.commands.set(cleanupManagerCommand.data.name, cleanupManagerCommand);
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(keywordManagerCommand.data.name, keywordManagerCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(exemptManagerCommand.data.name, exemptManagerCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(cleanupManagerCommand.data.name, cleanupManagerCommand);
+
 
 // 频道总结系统命令
 client.commands.set(summarizeChannelCommand.data.name, summarizeChannelCommand);
@@ -354,17 +420,25 @@ client.commands.set(viewMyControlledInviteStatusCommand.data.name, viewMyControl
 client.commands.set(manageCommand.data.name, manageCommand);
 
 // 神秘指令娱乐系统
-client.commands.set(mysteryCommand.data.name, mysteryCommand);
-client.commands.set(mysteryGameStatsCommand.data.name, mysteryGameStatsCommand);
-client.commands.set(mysterySettingsCommand.data.name, mysterySettingsCommand);
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(mysteryCommand.data.name, mysteryCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(mysteryGameStatsCommand.data.name, mysteryGameStatsCommand);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.commands.set(mysterySettingsCommand.data.name, mysterySettingsCommand);
+
 
 // 加压轮盘测试指令：仅在 .env 里设置 MYSTERY_TEST_COMMANDS=true 时才注册，
 // 避免测试用的虚拟机器人局出现在正式服务器的指令列表里。
-if (String(process.env.MYSTERY_TEST_COMMANDS).toLowerCase() === 'true') {
-    const pressureTestCommand = require('../modules/mystery/commands/pressureTestCommand');
-    client.commands.set(pressureTestCommand.data.name, pressureTestCommand);
-    console.log('🧪 加压轮盘测试指令已注册（MYSTERY_TEST_COMMANDS=true）');
-}
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// if (String(process.env.MYSTERY_TEST_COMMANDS).toLowerCase() === 'true') {
+    // const pressureTestCommand = require('../modules/mystery/commands/pressureTestCommand');
+    // client.commands.set(pressureTestCommand.data.name, pressureTestCommand);
+    // console.log('🧪 加压轮盘测试指令已注册（MYSTERY_TEST_COMMANDS=true）');
+// }
+
 
 client.once(Events.ClientReady, async (readyClient) => {
     try {
@@ -381,11 +455,19 @@ client.once(Events.ClientReady, async (readyClient) => {
     }
     printTimeConfig();
     
-    startProposalChecker(readyClient);
-    console.log('✅ 提案检查器已启动');
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // startProposalChecker(readyClient);
+
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // console.log('✅ 提案检查器已启动');
+
     
-    startCourtChecker(readyClient);
-    console.log('✅ 法庭系统检查器已启动');
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // startCourtChecker(readyClient);
+
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // console.log('✅ 法庭系统检查器已启动');
+
     
     startSelfModerationChecker(readyClient);
     console.log('✅ 自助管理检查器已启动');
@@ -397,13 +479,19 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log('✅ 投票检查器已启动');
     
     // 初始化自动清理系统
-    console.log('✅ 自动清理系统已启动');
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // console.log('✅ 自动清理系统已启动');
+
 
     startActivityTracker();
 
     // 统一恢复未结束的 Mystery 昵称锁（coward + duel），避免重启后昵称永久卡住
-    await mysteryNicknameLock.initialize(readyClient);
-    console.log('✅ Mystery 昵称锁恢复完成');
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // await mysteryNicknameLock.initialize(readyClient);
+
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // console.log('✅ Mystery 昵称锁恢复完成');
+
 
     // SelfRole 申请过期检查器（预留名额释放/旧数据兼容迁移）
     startSelfRoleApplicationChecker(readyClient);
@@ -434,7 +522,9 @@ client.once(Events.ClientReady, async (readyClient) => {
 
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
-    console.log('🧹 自动消息清理系统已加载');
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // console.log('🧹 自动消息清理系统已加载');
+
     console.log('📝 机器人消息管理系统已加载');
 })
 
@@ -447,8 +537,12 @@ client.on(Events.GuildMemberAdd, controlledInviteGuildMemberAddHandler);
 client.on(Events.GuildMemberRemove, roleSyncGuildMemberRemoveHandler);
 client.on(Events.GuildMemberUpdate, roleSyncGuildMemberUpdateHandler);
 client.on(Events.GuildRoleDelete, roleSyncGuildRoleDeleteHandler);
-client.on(Events.GuildMemberRemove, mysteryGuildMemberRemoveHandler);
-client.on(Events.GuildMemberUpdate, mysteryGuildMemberUpdateHandler);
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.on(Events.GuildMemberRemove, mysteryGuildMemberRemoveHandler);
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// client.on(Events.GuildMemberUpdate, mysteryGuildMemberUpdateHandler);
+
 
 function normalizeDiscordToken(raw) {
     if (!raw) return '';
@@ -482,17 +576,19 @@ async function gracefulShutdown(signal) {
     }, SHUTDOWN_TIMEOUT_MS);
     killer.unref?.();
 
-    try {
-        // 加压轮盘存快照 + 恶魔轮盘删面板 + 其他游戏清锁摘按钮（游戏各自挂 onShutdown）。
-        const result = await mysteryGameManager.shutdownAllGames({
-            timeoutMs: SHUTDOWN_TIMEOUT_MS - 2000,
-        });
-        if (result.total > 0) {
-            console.log(`🎮 神秘游戏收尾完成：${result.done}/${result.total} 场。`);
-        }
-    } catch (error) {
-        console.error('❌ 神秘游戏收尾失败：', error);
-    }
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // try {
+        // // 加压轮盘存快照 + 恶魔轮盘删面板 + 其他游戏清锁摘按钮（游戏各自挂 onShutdown）。
+        // const result = await mysteryGameManager.shutdownAllGames({
+            // timeoutMs: SHUTDOWN_TIMEOUT_MS - 2000,
+        // });
+        // if (result.total > 0) {
+            // console.log(`🎮 神秘游戏收尾完成：${result.done}/${result.total} 场。`);
+        // }
+    // } catch (error) {
+        // console.error('❌ 神秘游戏收尾失败：', error);
+    // }
+
 
     try {
         await client.destroy();

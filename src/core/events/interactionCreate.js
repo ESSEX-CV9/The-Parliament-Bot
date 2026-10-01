@@ -1,13 +1,24 @@
 // src/core/events/interactionCreate.js
 const { PermissionFlagsBits, MessageFlags } = require('discord.js');
-const { createFormModal } = require('../../modules/proposal/components/formModal');
+const { isDisabledInteraction, DISABLED_FEATURE_MESSAGE } = require('../config/disabledFeatures');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { createFormModal } = require('../../modules/proposal/components/formModal');
+
 const { createReviewModal } = require('../../modules/creatorReview/components/reviewModal');
-const { processFormSubmission } = require('../../modules/proposal/services/formService');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { processFormSubmission } = require('../../modules/proposal/services/formService');
+
 const { processReviewSubmission } = require('../../modules/creatorReview/services/reviewService');
-const { processVote } = require('../../modules/proposal/services/voteTracker');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { processVote } = require('../../modules/proposal/services/voteTracker');
+
 // 法庭相关处理
-const { processCourtSupport } = require('../../modules/court/services/courtVoteTracker');
-const { processCourtVote } = require('../../modules/court/services/courtVotingSystem');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { processCourtSupport } = require('../../modules/court/services/courtVoteTracker');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { processCourtVote } = require('../../modules/court/services/courtVotingSystem');
+
 // 自助管理相关处理
 const { processSelfModerationInteraction } = require('../../modules/selfModeration/services/moderationService');
 const { handleSelfRoleButton, handleSelfRoleSelect, handleReasonModalSubmit } = require('../../modules/selfRole/services/selfRoleService');
@@ -57,24 +68,34 @@ const { processSubmissionManagement, processSubmissionAction, processDeleteConfi
 const { createRejectionModal } = require('../../modules/contest/components/rejectionModal');
 
 // 议案编辑相关处理
-const { processEditProposal, processEditProposalSubmission } = require('../../modules/proposal/services/proposalEditService');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { processEditProposal, processEditProposalSubmission } = require('../../modules/proposal/services/proposalEditService');
+
 
 // 机器人消息管理（编辑已发出的常驻消息）
 const {
     handleBotMessageInteraction,
     BOT_MESSAGE_CUSTOM_ID_PREFIX,
 } = require('../../modules/botMessage');
-const {
-    handleMysteryInteraction,
-    MYSTERY_CUSTOM_ID_PREFIX,
-} = require('../../modules/mystery/services/interactionHandler');
-const {
-    handleNamePoolInteraction,
-    NAME_POOL_CUSTOM_ID_PREFIX,
-} = require('../../modules/mystery/services/namePoolManager');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const {
+    // handleMysteryInteraction,
+    // MYSTERY_CUSTOM_ID_PREFIX,
+// } = require('../../modules/mystery/services/interactionHandler');
 
-const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
-const { getFormPermissionSettings } = require('../../core/utils/database');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const {
+    // handleNamePoolInteraction,
+    // NAME_POOL_CUSTOM_ID_PREFIX,
+// } = require('../../modules/mystery/services/namePoolManager');
+
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { checkFormPermission, getFormPermissionDeniedMessage } = require('../../core/utils/permissionManager');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { getFormPermissionSettings } = require('../../core/utils/database');
+
 
 // 频道总结预设交互处理
 const {
@@ -98,6 +119,14 @@ const {
 
 async function interactionCreateHandler(interaction) {
     try {
+        // 历史命令 / 面板也不能继续执行已停用模块。
+        if (isDisabledInteraction(interaction)) {
+            if (interaction.isAutocomplete()) await interaction.respond([]);
+            else if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ content: DISABLED_FEATURE_MESSAGE, flags: MessageFlags.Ephemeral });
+            }
+            return;
+        }
         if (INTERACTION_DEBUG_LOG) {
             const gid = interaction.guild?.id || 'dm';
             const uid = interaction.user?.id || 'unknown';
@@ -175,59 +204,71 @@ async function interactionCreateHandler(interaction) {
                 return;
             }
 
-            if (interaction.customId.startsWith(NAME_POOL_CUSTOM_ID_PREFIX)) {
-                await handleNamePoolInteraction(interaction);
-                return;
-            }
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // if (interaction.customId.startsWith(NAME_POOL_CUSTOM_ID_PREFIX)) {
+                // await handleNamePoolInteraction(interaction);
+                // return;
+            // }
 
-            if (interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)) {
-                await handleMysteryInteraction(interaction);
-                return;
-            }
 
-            if (interaction.customId === 'open_form') {
-                // 检查表单使用权限
-                const formPermissionSettings = await getFormPermissionSettings(interaction.guild.id);
-                const hasFormPermission = checkFormPermission(interaction.member, formPermissionSettings);
-                
-                if (!hasFormPermission) {
-                    // 获取身份组名称用于错误消息
-                    let allowedRoleNames = [];
-                    if (formPermissionSettings && formPermissionSettings.allowedRoles) {
-                        for (const roleId of formPermissionSettings.allowedRoles) {
-                            try {
-                                const role = await interaction.guild.roles.fetch(roleId);
-                                if (role) allowedRoleNames.push(role.name);
-                            } catch (error) {
-                                // 忽略错误，继续处理其他身份组
-                            }
-                        }
-                    }
-                    
-                    return interaction.reply({
-                        content: getFormPermissionDeniedMessage(allowedRoleNames),
-                        flags: MessageFlags.Ephemeral
-                    });
-                }
-                
-                // 打开表单模态窗口
-                const modal = createFormModal();
-                await interaction.showModal(modal);
-            } else if (interaction.customId === 'open_review_form') {
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // if (interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)) {
+                // await handleMysteryInteraction(interaction);
+                // return;
+            // }
+
+
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // if (interaction.customId === 'open_form') {
+                // // 检查表单使用权限
+                // const formPermissionSettings = await getFormPermissionSettings(interaction.guild.id);
+                // const hasFormPermission = checkFormPermission(interaction.member, formPermissionSettings);
+
+                // if (!hasFormPermission) {
+                    // // 获取身份组名称用于错误消息
+                    // let allowedRoleNames = [];
+                    // if (formPermissionSettings && formPermissionSettings.allowedRoles) {
+                        // for (const roleId of formPermissionSettings.allowedRoles) {
+                            // try {
+                                // const role = await interaction.guild.roles.fetch(roleId);
+                                // if (role) allowedRoleNames.push(role.name);
+                            // } catch (error) {
+                                // // 忽略错误，继续处理其他身份组
+                            // }
+                        // }
+                    // }
+
+                    // return interaction.reply({
+                        // content: getFormPermissionDeniedMessage(allowedRoleNames),
+                        // flags: MessageFlags.Ephemeral
+                    // });
+                // }
+
+                // // 打开表单模态窗口
+                // const modal = createFormModal();
+                // await interaction.showModal(modal);
+            // } else
+            if (interaction.customId === 'open_review_form') {
                 // 打开审核表单模态窗口
                 const modal = createReviewModal();
                 await interaction.showModal(modal);
-            } else if (interaction.customId.startsWith('support_')) {
-                // 处理支持按钮（原有的提案系统）
-                await processVote(interaction);
-            } else if (interaction.customId.startsWith('court_support_')) {
-                // 处理法庭申请支持按钮
-                await processCourtSupport(interaction);
-            } else if (interaction.customId.startsWith('court_vote_support_') ||
-                       interaction.customId.startsWith('court_vote_oppose_')) {
-                // 处理法庭投票按钮
-                await processCourtVote(interaction);
-            } else if (interaction.customId.startsWith('selfmod_')) {
+            } // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // else if (interaction.customId.startsWith('support_')) {
+                // // 处理支持按钮（原有的提案系统）
+                // await processVote(interaction);
+            // } else
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // else if (interaction.customId.startsWith('court_support_')) {
+                // // 处理法庭申请支持按钮
+                // await processCourtSupport(interaction);
+            // } else
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // else if (interaction.customId.startsWith('court_vote_support_') ||
+                       // interaction.customId.startsWith('court_vote_oppose_')) {
+                // // 处理法庭投票按钮
+                // await processCourtVote(interaction);
+            // } else
+            else if (interaction.customId.startsWith('selfmod_')) {
                 // 处理自助管理按钮
                 await processSelfModerationInteraction(interaction);
             }
@@ -284,10 +325,12 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId.startsWith('contest_edit_')) {
                 // 编辑申请按钮
                 await processEditApplication(interaction);
-            } else if (interaction.customId.startsWith('proposal_edit_')) {
-                // 编辑议案按钮
-                await processEditProposal(interaction);
-            } else if (interaction.customId.startsWith('contest_confirm_')) {
+            } // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // else if (interaction.customId.startsWith('proposal_edit_')) {
+                // // 编辑议案按钮
+                // await processEditProposal(interaction);
+            // } else
+            else if (interaction.customId.startsWith('contest_confirm_')) {
                 // 确认建立频道按钮 - 显示选择界面
                 const applicationId = interaction.customId.replace('contest_confirm_', '');
                 const applicationData = await getContestApplication(applicationId);
@@ -563,20 +606,26 @@ async function interactionCreateHandler(interaction) {
                 return;
             }
 
-            if (interaction.customId.startsWith(NAME_POOL_CUSTOM_ID_PREFIX)) {
-                await handleNamePoolInteraction(interaction);
-                return;
-            }
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // if (interaction.customId.startsWith(NAME_POOL_CUSTOM_ID_PREFIX)) {
+                // await handleNamePoolInteraction(interaction);
+                // return;
+            // }
 
-            if (interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)) {
-                await handleMysteryInteraction(interaction);
-                return;
-            }
 
-            if (interaction.customId === 'form_submission') {
-                // 表单提交处理
-                await processFormSubmission(interaction);
-            } else if (interaction.customId === 'review_submission') {
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // if (interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)) {
+                // await handleMysteryInteraction(interaction);
+                // return;
+            // }
+
+
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // if (interaction.customId === 'form_submission') {
+                // // 表单提交处理
+                // await processFormSubmission(interaction);
+            // } else
+            if (interaction.customId === 'review_submission') {
                 // 审核提交处理
                 await processReviewSubmission(interaction);
             } else if (interaction.customId.startsWith('selfmod_modal_')) {
@@ -595,10 +644,12 @@ async function interactionCreateHandler(interaction) {
             } else if (interaction.customId === 'contest_edit_application') {
                 // 编辑申请表单提交
                 await processEditApplicationSubmission(interaction);
-            } else if (interaction.customId.startsWith('proposal_edit_submission_')) {
-                // 编辑议案表单提交
-                await processEditProposalSubmission(interaction);
-            } else if (interaction.customId.startsWith('contest_confirm_channel_')) {
+            } // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // else if (interaction.customId.startsWith('proposal_edit_submission_')) {
+                // // 编辑议案表单提交
+                // await processEditProposalSubmission(interaction);
+            // } else
+            else if (interaction.customId.startsWith('contest_confirm_channel_')) {
                 // 确认建立频道表单提交
                 await processChannelConfirmation(interaction);
             } else if (interaction.customId.startsWith('contest_submission_')) {
@@ -633,21 +684,25 @@ async function interactionCreateHandler(interaction) {
         
         // 处理选择菜单（包含 String/Role/Channel 等所有 SelectMenu）
         if (interaction.isAnySelectMenu()) {
-            if (
-                interaction.isStringSelectMenu()
-                && interaction.customId.startsWith(NAME_POOL_CUSTOM_ID_PREFIX)
-            ) {
-                await handleNamePoolInteraction(interaction);
-                return;
-            }
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // if (
+                // interaction.isStringSelectMenu()
+                // && interaction.customId.startsWith(NAME_POOL_CUSTOM_ID_PREFIX)
+            // ) {
+                // await handleNamePoolInteraction(interaction);
+                // return;
+            // }
 
-            if (
-                interaction.isStringSelectMenu()
-                && interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)
-            ) {
-                await handleMysteryInteraction(interaction);
-                return;
-            }
+
+            // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+            // if (
+                // interaction.isStringSelectMenu()
+                // && interaction.customId.startsWith(MYSTERY_CUSTOM_ID_PREFIX)
+            // ) {
+                // await handleMysteryInteraction(interaction);
+                // return;
+            // }
+
 
             if (interaction.customId.startsWith('submission_action_')) {
                 // 稿件管理操作选择
