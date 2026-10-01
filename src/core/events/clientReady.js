@@ -4,8 +4,12 @@ const {
     REST,
     Routes,
 } = require('discord.js');
-const { restorePressureGames } = require('../../modules/mystery/services/pressureRouletteGame');
-const { restoreActiveGames: restoreDevilRouletteGames } = require('../../modules/mystery/services/devilRouletteGame');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { restorePressureGames } = require('../../modules/mystery/services/pressureRouletteGame');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { restoreActiveGames: restoreDevilRouletteGames } = require('../../modules/mystery/services/devilRouletteGame');
+
 
 function normalizeDiscordToken(raw) {
     if (!raw) return '';
@@ -125,18 +129,22 @@ async function clientReadyHandler(client){
 
     // 把上次没打完的加压轮盘接回来。放在命令注册之后，并且单独兜底：
     // 恢复几场游戏失败不该把整个机器人的启动带崩。
-    try {
-        await restorePressureGames(client);
-    } catch (error) {
-        console.error('❌ [MysteryPressure] 对局恢复流程异常（已跳过，不影响启动）：', error);
-    }
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // try {
+        // await restorePressureGames(client);
+    // } catch (error) {
+        // console.error('❌ [MysteryPressure] 对局恢复流程异常（已跳过，不影响启动）：', error);
+    // }
+
 
     // 恶魔轮盘断连接续：把上次没打完的对局恢复回来（快照在每次渲染时落盘）。
-    try {
-        await restoreDevilRouletteGames(client);
-    } catch (error) {
-        console.error('❌ [DevilRoulette] 对局恢复流程异常（已跳过，不影响启动）：', error);
-    }
+    // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+    // try {
+        // await restoreDevilRouletteGames(client);
+    // } catch (error) {
+        // console.error('❌ [DevilRoulette] 对局恢复流程异常（已跳过，不影响启动）：', error);
+    // }
+
 }
 
 module.exports = {

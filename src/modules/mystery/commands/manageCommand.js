@@ -3,28 +3,42 @@ const {
     checkAdminPermission,
     getPermissionDeniedMessage,
 } = require('../../../core/utils/permissionManager');
-const { openNamePoolManager } = require('../services/namePoolManager');
-const { openChannelAccessManager } = require('../services/channelAccessManager');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { openNamePoolManager } = require('../services/namePoolManager');
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const { openChannelAccessManager } = require('../services/channelAccessManager');
+
 const { executeCloseDoor } = require('../../safetySetup/commands/closeDoor');
 const { executeOpenDoor } = require('../../safetySetup/commands/openDoor');
-const {
-    resetPressureUser,
-    resetPressureGuild,
-} = require('../utils/mysteryStatsDatabase');
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const {
+    // resetPressureUser,
+    // resetPressureGuild,
+// } = require('../utils/mysteryStatsDatabase');
 
-const SUBCOMMAND_RESET_STATS = '重置游戏数据';
-const RESET_CONFIRM_KEYWORD = '确认清空';
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const SUBCOMMAND_RESET_STATS = '重置游戏数据';
+
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// const RESET_CONFIRM_KEYWORD = '确认清空';
+
 
 function buildData() {
     return new SlashCommandBuilder()
         .setName('管理')
-        .setDescription('管理服务器与神秘指令设置')
-        .addSubcommand(subcommand => subcommand
-            .setName('神秘名字库')
-            .setDescription('管理全 Bot 共用的神秘昵称名字库'))
-        .addSubcommand(subcommand => subcommand
-            .setName('神秘频道设置')
-            .setDescription('管理神秘指令可使用的频道白名单和黑名单'))
+        .setDescription('管理服务器邀请暂停与恢复')
+        // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+        // .addSubcommand(subcommand => subcommand
+            // .setName('神秘名字库')
+            // .setDescription('管理全 Bot 共用的神秘昵称名字库'))
+
+        // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+        // .addSubcommand(subcommand => subcommand
+            // .setName('神秘频道设置')
+            // .setDescription('管理神秘指令可使用的频道白名单和黑名单'))
+
         .addSubcommand(subcommand => subcommand
             .setName('关门')
             .setDescription('暂停服务器邀请并交由 Bot 自动续期托管')
@@ -35,64 +49,68 @@ function buildData() {
         .addSubcommand(subcommand => subcommand
             .setName('开门')
             .setDescription('停止邀请暂停托管并恢复服务器邀请'))
-        .addSubcommand(subcommand => subcommand
-            .setName(SUBCOMMAND_RESET_STATS)
-            .setDescription('清空本服的加压轮盘游戏数据（不可撤销）')
-            .addUserOption(option => option
-                .setName('用户')
-                .setDescription('只清空这个人的数据；留空则清空全服')
-                .setRequired(false))
-            .addStringOption(option => option
-                .setName('确认')
-                .setDescription(`清空全服数据时必填，输入「${RESET_CONFIRM_KEYWORD}」`)
-                .setRequired(false)));
+        // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+        // .addSubcommand(subcommand => subcommand
+            // .setName(SUBCOMMAND_RESET_STATS)
+            // .setDescription('清空本服的加压轮盘游戏数据（不可撤销）')
+            // .addUserOption(option => option
+                // .setName('用户')
+                // .setDescription('只清空这个人的数据；留空则清空全服')
+                // .setRequired(false))
+            // .addStringOption(option => option
+                // .setName('确认')
+                // .setDescription(`清空全服数据时必填，输入「${RESET_CONFIRM_KEYWORD}」`)
+                // .setRequired(false)))
+;
 }
 
 // 清空是不可撤销的，所以全服清空必须再打一次确认词；
 // 只清单个人的数据影响面小，不额外拦。
-async function executeResetStats(interaction) {
-    const target = interaction.options.getUser('用户');
-    const guildId = interaction.guild.id;
+// 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+// async function executeResetStats(interaction) {
+    // const target = interaction.options.getUser('用户');
+    // const guildId = interaction.guild.id;
 
-    if (target) {
-        const removed = resetPressureUser(guildId, target.id);
-        await interaction.reply({
-            content: removed
-                ? `🗑️ 已清空 <@${target.id}> 的加压轮盘游戏数据。`
-                : `ℹ️ <@${target.id}> 本来就没有加压轮盘数据，无需清空。`,
-            flags: MessageFlags.Ephemeral,
-            allowedMentions: { parse: [] },
-        });
-        return;
-    }
+    // if (target) {
+        // const removed = resetPressureUser(guildId, target.id);
+        // await interaction.reply({
+            // content: removed
+                // ? `🗑️ 已清空 <@${target.id}> 的加压轮盘游戏数据。`
+                // : `ℹ️ <@${target.id}> 本来就没有加压轮盘数据，无需清空。`,
+            // flags: MessageFlags.Ephemeral,
+            // allowedMentions: { parse: [] },
+        // });
+        // return;
+    // }
 
-    if (interaction.options.getString('确认') !== RESET_CONFIRM_KEYWORD) {
-        await interaction.reply({
-            content: [
-                '⚠️ **这会清空本服所有人的加压轮盘游戏数据，且无法撤销。**',
-                '',
-                `确认请重新执行本指令，并在「确认」选项里填入：\`${RESET_CONFIRM_KEYWORD}\``,
-                '只想清空某一个人的话，填「用户」选项即可。',
-            ].join('\n'),
-            flags: MessageFlags.Ephemeral,
-        });
-        return;
-    }
+    // if (interaction.options.getString('确认') !== RESET_CONFIRM_KEYWORD) {
+        // await interaction.reply({
+            // content: [
+                // '⚠️ **这会清空本服所有人的加压轮盘游戏数据，且无法撤销。**',
+                // '',
+                // `确认请重新执行本指令，并在「确认」选项里填入：\`${RESET_CONFIRM_KEYWORD}\``,
+                // '只想清空某一个人的话，填「用户」选项即可。',
+            // ].join('\n'),
+            // flags: MessageFlags.Ephemeral,
+        // });
+        // return;
+    // }
 
-    const removed = resetPressureGuild(guildId);
-    console.warn(`[MysteryStats] 全服数据已被清空 (guild=${guildId}, operator=${interaction.user.id}, rows=${removed})`);
-    await interaction.reply({
-        content: `🗑️ 已清空本服 **${removed}** 名玩家的加压轮盘游戏数据。`,
-        flags: MessageFlags.Ephemeral,
-    });
-}
+    // const removed = resetPressureGuild(guildId);
+    // console.warn(`[MysteryStats] 全服数据已被清空 (guild=${guildId}, operator=${interaction.user.id}, rows=${removed})`);
+    // await interaction.reply({
+        // content: `🗑️ 已清空本服 **${removed}** 名玩家的加压轮盘游戏数据。`,
+        // flags: MessageFlags.Ephemeral,
+    // });
+// }
+
 
 function createManageCommand({
-    openNamePoolManager: openNames = openNamePoolManager,
-    openChannelAccessManager: openChannels = openChannelAccessManager,
+    // 已停用：openNamePoolManager: openNames = openNamePoolManager,
+    // 已停用：openChannelAccessManager: openChannels = openChannelAccessManager,
     executeCloseDoor: closeDoor = executeCloseDoor,
     executeOpenDoor: openDoor = executeOpenDoor,
-    executeResetStats: resetStats = executeResetStats,
+    // 已停用：executeResetStats: resetStats = executeResetStats,
     checkPermission = checkAdminPermission,
     permissionDeniedMessage = getPermissionDeniedMessage,
 } = {}) {
@@ -115,17 +133,23 @@ function createManageCommand({
         }
 
         const subcommand = interaction.options.getSubcommand(false);
-        if (subcommand === '神秘名字库') {
-            await openNames(interaction);
-        } else if (subcommand === '神秘频道设置') {
-            await openChannels(interaction);
-        } else if (subcommand === '关门') {
+        // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+        // if (subcommand === '神秘名字库') {
+            // await openNames(interaction);
+        // } else
+        // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+        // if (subcommand === '神秘频道设置') {
+            // await openChannels(interaction);
+        // } else
+        if (subcommand === '关门') {
             await closeDoor(interaction);
         } else if (subcommand === '开门') {
             await openDoor(interaction);
-        } else if (subcommand === SUBCOMMAND_RESET_STATS) {
-            await resetStats(interaction);
-        } else {
+        } // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
+        // else if (subcommand === SUBCOMMAND_RESET_STATS) {
+            // await resetStats(interaction);
+        // } else
+        else {
             await interaction.reply({
                 content: '❌ 未知的管理指令。',
                 flags: MessageFlags.Ephemeral,
