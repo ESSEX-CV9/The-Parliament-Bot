@@ -289,28 +289,13 @@ async function interactionCreateHandler(interaction) {
             // === 赛事系统按钮处理 ===
             else if (interaction.customId.startsWith('contest_application') && !interaction.customId.startsWith('contest_edit_')) {
                 // 赛事申请按钮（支持旧格式 contest_application 和新格式 contest_application_{trackId}）
-                const contestSettings = await getContestSettings(interaction.guild.id);
-                const hasPermission = checkContestApplicationPermission(interaction.member, contestSettings);
-                
-                if (!hasPermission) {
-                    let allowedRoleNames = [];
-                    if (contestSettings && contestSettings.applicationPermissionRoles) {
-                        for (const roleId of contestSettings.applicationPermissionRoles) {
-                            try {
-                                const role = await interaction.guild.roles.fetch(roleId);
-                                if (role) allowedRoleNames.push(role.name);
-                            } catch (error) {
-                                // 忽略错误
-                            }
-                        }
-                    }
-                    
+                if (!interaction.guild) {
                     return interaction.reply({
-                        content: getApplicationPermissionDeniedMessage(allowedRoleNames),
+                        content: '❌ 赛事申请只能在服务器中使用。',
                         flags: MessageFlags.Ephemeral
                     });
                 }
-                
+                const contestSettings = await getContestSettings(interaction.guild.id);
                 // 提取轨道ID
                 let trackId;
                 if (interaction.customId.startsWith('contest_application_')) {
@@ -318,6 +303,21 @@ async function interactionCreateHandler(interaction) {
                 } else {
                     // 旧格式按钮，使用默认轨道
                     trackId = contestSettings?.defaultTrackId || 'default';
+                }
+
+                if (!contestSettings?.tracks?.[trackId]) {
+                    return interaction.reply({
+                        content: `❌ 赛事系统未配置完整或轨道 \`${trackId}\` 不存在，请联系管理员设置。`,
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+
+                if (!checkContestApplicationPermission(interaction.member, contestSettings)) {
+                    return interaction.reply({
+                        content: getApplicationPermissionDeniedMessage(contestSettings.applicationPermissionRoles),
+                        flags: MessageFlags.Ephemeral,
+                        allowedMentions: { parse: [] }
+                    });
                 }
                 
                 const modal = createContestApplicationModal(trackId);

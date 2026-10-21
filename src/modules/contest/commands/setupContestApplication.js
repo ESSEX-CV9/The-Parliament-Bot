@@ -1,6 +1,6 @@
 // src/modules/contest/commands/setupContestApplication.js
 const { SlashCommandBuilder, MessageFlags, ChannelType } = require('discord.js');
-const { saveContestSettings, getContestSettings, createTrack, updateTrack, getTrack } = require('../utils/contestDatabase');
+const { saveContestSettings, getContestSettings, createTrack, updateTrack } = require('../utils/contestDatabase');
 const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../core/utils/permissionManager');
 const { ensureContestStatusTags } = require('../utils/forumTagManager');
 
@@ -34,6 +34,10 @@ const data = new SlashCommandBuilder()
     .addStringOption(option =>
         option.setName('轨道名称')
             .setDescription('自定义轨道显示名称')
+            .setRequired(false))
+    .addRoleOption(option =>
+        option.setName('前置身份组')
+            .setDescription('申请赛事所需身份组（全服生效；不填则保留现有配置）')
             .setRequired(false));
 
 async function execute(interaction) {
@@ -65,6 +69,7 @@ async function execute(interaction) {
         const itemsPerPage = interaction.options.getInteger('每页作品数') || 6;
         const trackId = interaction.options.getString('轨道id');
         const trackName = interaction.options.getString('轨道名称');
+        const prerequisiteRole = interaction.options.getRole('前置身份组');
         
         // 验证频道类型
         if (reviewForum.type !== ChannelType.GuildForum) {
@@ -142,104 +147,45 @@ async function execute(interaction) {
 
             // ========== 多轨道系统逻辑 ==========
             let settings = await getContestSettings(interaction.guild.id);
-            let finalTrackId;
-            let isNewTrack = false;
-            let trackDisplayName;
+            const firstTrack = !settings || Object.keys(settings.tracks || {}).length === 0;
+            const finalTrackId = trackId || (firstTrack ? 'default' : settings.defaultTrackId);
 
-            if (!trackId) {
-                // 未指定轨道ID - 操作默认轨道
-                if (!settings || !settings.tracks || Object.keys(settings.tracks).length === 0) {
-                    // 无轨道，创建default轨道
-                    await interaction.editReply({ content: '⏳ 首次设置，创建默认轨道...' });
-                    
-                    const newTrack = await createTrack(interaction.guild.id, 'default', {
-                        name: trackName || '默认轨道',
-                        reviewForumId: reviewForum.id,
-                        contestCategoryId: contestCategory.id,
-                        allowedForumIds: allowedForumIds,
-                        tagMap: tagMap
-                    });
-                    
-                    finalTrackId = 'default';
-                    trackDisplayName = newTrack.name;
-                    isNewTrack = true;
-                    
-                    // 设置全局配置
-                    settings = await getContestSettings(interaction.guild.id);
-                    settings.itemsPerPage = itemsPerPage;
-                    await saveContestSettings(settings);
-                } else {
-                    // 已有轨道，更新defaultTrackId指向的轨道
-                    finalTrackId = settings.defaultTrackId;
-                    await interaction.editReply({ content: `⏳ 更新轨道: ${finalTrackId}...` });
-                    
-                    const updatedTrack = await updateTrack(interaction.guild.id, finalTrackId, {
-                        name: trackName || settings.tracks[finalTrackId].name,
-                        reviewForumId: reviewForum.id,
-                        contestCategoryId: contestCategory.id,
-                        allowedForumIds: allowedForumIds,
-                        tagMap: tagMap
-                    });
-                    
-                    trackDisplayName = updatedTrack.name;
-                    
-                    // 更新全局配置
-                    settings.itemsPerPage = itemsPerPage;
-                    await saveContestSettings(settings);
-                }
-            } else {
-                // 指定了轨道ID
-                const existingTrack = await getTrack(interaction.guild.id, trackId);
-                
-                if (existingTrack) {
-                    // 轨道已存在，更新
-                    await interaction.editReply({ content: `⏳ 更新已有轨道: ${trackId}...` });
-                    
-                    const updatedTrack = await updateTrack(interaction.guild.id, trackId, {
-                        name: trackName || existingTrack.name,
-                        reviewForumId: reviewForum.id,
-                        contestCategoryId: contestCategory.id,
-                        allowedForumIds: allowedForumIds,
-                        tagMap: tagMap
-                    });
-                    
-                    finalTrackId = trackId;
-                    trackDisplayName = updatedTrack.name;
-                } else {
-                    // 轨道不存在，创建新轨道
-                    await interaction.editReply({ content: `⏳ 创建新轨道: ${trackId}...` });
-                    
-                    // 确保有基础设置
-                    if (!settings) {
-                        settings = {
-                            guildId: interaction.guild.id,
-                            defaultTrackId: 'default',
-                            tracks: {},
-                            itemsPerPage: itemsPerPage,
-                            reviewerRoles: [],
-                            applicationPermissionRoles: []
-                        };
-                        await saveContestSettings(settings);
-                    }
-                    
-                    const newTrack = await createTrack(interaction.guild.id, trackId, {
-                        name: trackName || `轨道 ${trackId}`,
-                        reviewForumId: reviewForum.id,
-                        contestCategoryId: contestCategory.id,
-                        allowedForumIds: allowedForumIds,
-                        tagMap: tagMap
-                    });
-                    
-                    finalTrackId = trackId;
-                    trackDisplayName = newTrack.name;
-                    isNewTrack = true;
-                }
-                
-                // 更新全局配置
-                settings = await getContestSettings(interaction.guild.id);
-                settings.itemsPerPage = itemsPerPage;
+            // createTrack requires an initialized settings record, including on
+            // the first default-track setup. The first explicit track is default.
+            if (!settings) {
+                settings = {
+                    guildId: interaction.guild.id,
+                    defaultTrackId: finalTrackId,
+                    tracks: {},
+                    itemsPerPage,
+                    reviewerRoles: [],
+                    applicationPermissionRoles: []
+                };
                 await saveContestSettings(settings);
             }
+
+            const existingTrack = settings.tracks[finalTrackId];
+            const isNewTrack = !existingTrack;
+            await interaction.editReply({ content: `⏳ ${isNewTrack ? '创建' : '更新'}轨道: ${finalTrackId}...` });
+            const trackData = {
+                name: trackName || existingTrack?.name || (finalTrackId === 'default' ? '默认轨道' : `轨道 ${finalTrackId}`),
+                reviewForumId: reviewForum.id,
+                contestCategoryId: contestCategory.id,
+                allowedForumIds,
+                tagMap
+            };
+            const savedTrack = isNewTrack
+                ? await createTrack(interaction.guild.id, finalTrackId, trackData)
+                : await updateTrack(interaction.guild.id, finalTrackId, trackData);
+            const trackDisplayName = savedTrack.name;
+
+            // Track helpers save independently. Always re-read before saving
+            // global options, otherwise a stale snapshot restores old tracks.
+            settings = await getContestSettings(interaction.guild.id);
+            if (firstTrack) settings.defaultTrackId = finalTrackId;
+            settings.itemsPerPage = itemsPerPage;
+            if (prerequisiteRole) settings.applicationPermissionRoles = [prerequisiteRole.id];
+            await saveContestSettings(settings);
             
             console.log(`轨道配置完成 - ID: ${finalTrackId}, 名称: ${trackDisplayName}`);
 
@@ -273,8 +219,18 @@ async function execute(interaction) {
             }
             
             const operationType = isNewTrack ? '创建' : '更新';
+            const prerequisiteRoles = settings.applicationPermissionRoles;
+            let prerequisiteDescription;
+            if (prerequisiteRoles !== undefined && (!Array.isArray(prerequisiteRoles) ||
+                !prerequisiteRoles.every(id => typeof id === 'string' && id.length > 0))) {
+                prerequisiteDescription = '配置无效，请使用 `/赛事-设置申请权限` 重新设置或清除';
+            } else {
+                prerequisiteDescription = prerequisiteRoles?.length
+                    ? prerequisiteRoles.map(id => `<@&${id}>（ID：\`${id}\`）`).join('、') + '（持有任一身份组；管理员也需满足）'
+                    : '不限制，所有成员均可申请';
+            }
             await interaction.editReply({
-                content: `✅ **赛事申请系统设置完成！**\n\n**操作类型：** ${operationType}轨道\n**轨道信息：**\n• **轨道ID：** \`${finalTrackId}\`\n• **轨道名称：** ${trackDisplayName}\n• **是否为默认轨道：** ${settings.defaultTrackId === finalTrackId ? '是' : '否'}\n\n**配置信息：**\n• **申请入口频道：** ${interaction.channel}\n• **审批论坛：** ${reviewForum}\n• **赛事分类：** ${contestCategory}\n• **每页作品数：** ${itemsPerPage}\n• **许可论坛数量：** ${allowedForumIds.length} 个\n• **入口消息ID：** \`${entryMessage.id}\`\n• **按钮ID：** \`contest_application_${finalTrackId}\`\n\n用户现在可以点击按钮申请举办赛事。\n\n**下一步：**\n• 使用 \`/赛事-管理轨道\` 管理多个轨道\n• 使用 \`/赛事-设置审核员\` 设置审核权限\n• 使用 \`/赛事-设置申请权限\` 设置申请权限（可选）`
+                content: `✅ **赛事申请系统设置完成！**\n\n**操作类型：** ${operationType}轨道\n**轨道信息：**\n• **轨道ID：** \`${finalTrackId}\`\n• **轨道名称：** ${trackDisplayName}\n• **是否为默认轨道：** ${settings.defaultTrackId === finalTrackId ? '是' : '否'}\n\n**配置信息：**\n• **申请入口频道：** ${interaction.channel}\n• **审批论坛：** ${reviewForum}\n• **赛事分类：** ${contestCategory}\n• **全服申请前置身份组：** ${prerequisiteDescription}\n• **每页作品数：** ${itemsPerPage}\n• **许可论坛数量：** ${allowedForumIds.length} 个\n• **入口消息ID：** \`${entryMessage.id}\`\n• **按钮ID：** \`contest_application_${finalTrackId}\`\n\n用户现在可以点击按钮申请举办赛事。\n\n**下一步：**\n• 使用 \`/赛事-管理轨道\` 管理多个轨道\n• 使用 \`/赛事-设置赛事审核员身份组\` 设置审核权限\n• 使用 \`/赛事-设置申请权限\` 设置申请权限（可选）`
             });
             
             console.log(`赛事申请系统设置完成 - 消息ID: ${entryMessage.id}, 操作者: ${interaction.user.tag}`);

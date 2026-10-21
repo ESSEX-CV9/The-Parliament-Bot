@@ -4,13 +4,22 @@ const {
     getNextApplicationId, 
     saveContestApplication,
     updateContestApplication,
-    getContestApplication 
+    getContestApplication,
+    getContestSettings
 } = require('../utils/contestDatabase');
 const { ensureContestStatusTags, updateThreadStatusTag } = require('../utils/forumTagManager');
+const { checkContestApplicationPermission, getApplicationPermissionDeniedMessage } = require('../utils/contestPermissions');
 
 async function processContestApplication(interaction) {
     try {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        if (!interaction.guild) {
+            return interaction.editReply({ content: '❌ 赛事申请只能在服务器中使用。' });
+        }
+
+        // 提交交互携带当前成员身份组；重新读取配置，避免沿用打开表单时的资格。
+        const settings = await getContestSettings(interaction.guild.id);
         
         console.log(`处理赛事申请 - 用户: ${interaction.user.tag}`);
         
@@ -26,13 +35,24 @@ async function processContestApplication(interaction) {
             console.log(`检测到新格式按钮，轨道ID: ${trackId}`);
         } else {
             // 旧格式，使用默认轨道
-            const { getContestSettings } = require('../utils/contestDatabase');
-            const tempSettings = await getContestSettings(interaction.guild.id);
-            trackId = tempSettings?.defaultTrackId || 'default';
+            trackId = settings?.defaultTrackId || 'default';
             console.log(`检测到旧格式按钮，使用默认轨道: ${trackId}`);
         }
         
-        // 获取表单数据
+        if (!settings || !settings.tracks || !settings.tracks[trackId]) {
+            return interaction.editReply({
+                content: `❌ 赛事系统未配置完整或轨道 \`${trackId}\` 不存在，请联系管理员设置。`
+            });
+        }
+
+        if (!checkContestApplicationPermission(interaction.member, settings)) {
+            return interaction.editReply({
+                content: getApplicationPermissionDeniedMessage(settings.applicationPermissionRoles),
+                allowedMentions: { parse: [] }
+            });
+        }
+
+        // 鉴权通过后才读取表单、创建审核帖和保存申请。
         const formData = {
             title: interaction.fields.getTextInputValue('contest_title'),
             theme: interaction.fields.getTextInputValue('contest_theme'),
@@ -40,15 +60,6 @@ async function processContestApplication(interaction) {
             awards: interaction.fields.getTextInputValue('contest_awards'),
             notes: interaction.fields.getTextInputValue('contest_notes') || ''
         };
-        
-        const { getContestSettings } = require('../utils/contestDatabase');
-        const settings = await getContestSettings(interaction.guild.id);
-        
-        if (!settings || !settings.tracks || !settings.tracks[trackId]) {
-            return interaction.editReply({
-                content: `❌ 赛事系统未配置完整或轨道 \`${trackId}\` 不存在，请联系管理员设置。`
-            });
-        }
         
         // 从轨道获取审批论坛ID
         const track = settings.tracks[trackId];

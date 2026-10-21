@@ -104,6 +104,7 @@ const getArchiveViewPermissionCommand = require('../modules/selfModeration/comma
 
 // 赛事系统命令
 const setupContestApplicationCommand = require('../modules/contest/commands/setupContestApplication');
+const setContestApplicationPermissionCommand = require('../modules/contest/commands/setContestApplicationPermission');
 const manageTrackCommand = require('../modules/contest/commands/manageTrack');
 const setContestReviewersCommand = require('../modules/contest/commands/setContestReviewers');
 const reviewContestApplicationCommand = require('../modules/contest/commands/reviewContestApplication');
@@ -334,6 +335,7 @@ client.commands.set(getArchiveViewPermissionCommand.data.name, getArchiveViewPer
 
 // 赛事系统命令
 client.commands.set(setupContestApplicationCommand.data.name, setupContestApplicationCommand);
+client.commands.set(setContestApplicationPermissionCommand.data.name, setContestApplicationPermissionCommand);
 client.commands.set(manageTrackCommand.data.name, manageTrackCommand);
 client.commands.set(setContestReviewersCommand.data.name, setContestReviewersCommand);
 client.commands.set(reviewContestApplicationCommand.data.name, reviewContestApplicationCommand);
