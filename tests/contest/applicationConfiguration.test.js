@@ -49,6 +49,9 @@ function fixture() {
         '../../../core/utils/permissionManager': permissions,
         '../utils/forumTagManager': { ensureContestStatusTags: async () => ({ PENDING: 'tag' }) }
     };
+    const { checkContestApplicationPermission } = load('src/modules/contest/utils/contestPermissions.js', {
+        '../../../core/utils/permissionManager': permissions
+    });
     const setup = load('src/modules/contest/commands/setupContestApplication.js', dependencies);
     const effects = { replies: [], edits: [], entries: [], deferred: [] };
     function interaction({ guildId = GUILD, trackId, role = null, subcommand = '查看', access = 'admin' } = {}) {
@@ -88,9 +91,72 @@ function fixture() {
             reviewerRoles: ['reviewer'], applicationPermissionRoles: [ROLE, OLD_ROLE], otherSetting: 'preserved'
         });
     }
-    return { database, setup, interaction, effects, seed,
+    return { database, setup, interaction, effects, seed, checkContestApplicationPermission,
         command: () => load('src/modules/contest/commands/setContestApplicationPermission.js', dependencies) };
 }
+
+test('old-schema migration preserves restrictions and only defaults an absent role field', async t => {
+    for (const [name, roles, allowed] of [
+        ['null', null, false], ['false', false, false], ['zero', 0, false], ['empty string', '', false],
+        ['missing', undefined, true], ['empty array', [], true], ['legacy array', [ROLE, OLD_ROLE], false]
+    ]) {
+        await t.test(name, async () => {
+            const f = fixture();
+            const legacy = { guildId: GUILD, reviewForumId: 'forum-old', contestCategoryId: 'category-old' };
+            if (name !== 'missing') legacy.applicationPermissionRoles = roles;
+            await f.database.saveContestSettings(legacy);
+            const settings = await f.database.getContestSettings(GUILD);
+            assert.equal(settings.tracks.default.reviewForumId, 'forum-old');
+            assert.equal(settings.tracks.default.contestCategoryId, 'category-old');
+            const admin = f.interaction({ access: 'admin' }).member;
+            assert.equal(f.checkContestApplicationPermission(admin, settings), allowed,
+                'migration must not let an administrator bypass malformed or legacy restrictions');
+            const expected = name === 'missing' ? [] : roles;
+            assert.equal(JSON.stringify(settings.applicationPermissionRoles), JSON.stringify(expected));
+            assert.equal(JSON.stringify((await f.database.getContestSettings(GUILD)).applicationPermissionRoles), JSON.stringify(expected),
+                'the migrated value must also persist on disk');
+            if (name === 'legacy array') {
+                admin.roles.cache.set(OLD_ROLE, { id: OLD_ROLE });
+                assert.equal(f.checkContestApplicationPermission(admin, settings), true, 'legacy roles retain any-of semantics');
+            }
+        });
+    }
+});
+
+test('view rejects malformed role IDs before the SDK can interpret null as fetch-all', async t => {
+    const client = new discord.Client({ intents: [] });
+    const requests = [];
+    // Keep the real RoleManager.fetch overload; isolate only the REST boundary.
+    client.rest.get = async route => { requests.push(route); return []; };
+    const manager = new discord.RoleManager({ id: GUILD, client });
+    const fetchAll = await manager.fetch(null, { force: true });
+    assert.ok(fetchAll instanceof discord.Collection);
+    assert.ok(fetchAll, 'even an empty fetch-all collection is truthy');
+    assert.deepEqual(requests, [`/guilds/${GUILD}/roles`]);
+
+    for (const [name, roles] of [
+        ['null', [null]], ['empty string', ['']], ['zero', [0]], ['false', [false]],
+        ['object', [{}]], ['mixed list', [ROLE, null]]
+    ]) {
+        await t.test(name, async () => {
+            const f = fixture();
+            await f.seed();
+            const settings = await f.database.getContestSettings(GUILD);
+            settings.applicationPermissionRoles = roles;
+            await f.database.saveContestSettings(settings);
+            const before = JSON.stringify(await f.database.getContestSettings(GUILD));
+            const interaction = f.interaction();
+            interaction.guild.roles = manager;
+            requests.length = 0;
+            await f.command().execute(interaction);
+            const content = f.effects.edits.at(-1).content;
+            assert.match(content, /配置无效.*重新设置或清除/);
+            assert.doesNotMatch(content, /任一身份组即可|<@&null>|不限制/);
+            assert.deepEqual(requests, [], 'validate the entire list before fetching any role');
+            assert.equal(JSON.stringify(await f.database.getContestSettings(GUILD)), before);
+        });
+    }
+});
 
 test('setup command registers an optional guild-wide prerequisite role', () => {
     const f = fixture();

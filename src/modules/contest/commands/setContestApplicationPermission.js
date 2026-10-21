@@ -46,7 +46,7 @@ async function execute(interaction) {
         if (roleIds === undefined || (Array.isArray(roleIds) && roleIds.length === 0)) {
             return interaction.editReply({ content: '全服赛事申请当前不限制前置身份组，所有成员均可申请。' });
         }
-        if (!Array.isArray(roleIds)) {
+        if (!Array.isArray(roleIds) || !roleIds.every(id => typeof id === 'string' && id.length > 0)) {
             return interaction.editReply({ content: '❌ 前置身份组配置无效，请重新设置或清除；当前配置未改动。' });
         }
         const descriptions = await Promise.all(roleIds.map(async id => {
