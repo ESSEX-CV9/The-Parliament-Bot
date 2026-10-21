@@ -5,7 +5,6 @@ const { checkAdminPermission, getPermissionDeniedMessage } = require('../../../c
 const data = new SlashCommandBuilder()
     .setName('赛事-设置申请权限')
     .setDescription('管理全服赛事申请的前置身份组')
-    .setDefaultMemberPermissions(0)
     .addSubcommand(command => command
         .setName('设置')
         .setDescription('替换全服赛事申请的前置身份组')
