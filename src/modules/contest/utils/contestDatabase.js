@@ -104,7 +104,7 @@ function migrateToTrackSystem(oldSettings) {
         // 全局共用配置
         itemsPerPage: oldSettings.itemsPerPage || 6,
         reviewerRoles: oldSettings.reviewerRoles || [],
-        applicationPermissionRoles: oldSettings.applicationPermissionRoles || [],
+        applicationPermissionRoles: oldSettings.applicationPermissionRoles === undefined ? [] : oldSettings.applicationPermissionRoles,
         
         // 保留旧字段用于向后兼容
         reviewForumId: oldSettings.reviewForumId,

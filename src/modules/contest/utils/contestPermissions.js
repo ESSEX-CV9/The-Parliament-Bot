@@ -6,25 +6,28 @@ const { checkAdminPermission } = require('../../../core/utils/permissionManager'
  */
 function checkContestApplicationPermission(member, contestSettings) {
     try {
+        if (!member?.user || !member.guild || typeof member.roles?.cache?.has !== 'function' ||
+            !contestSettings || typeof contestSettings !== 'object' || Array.isArray(contestSettings)) {
+            return false;
+        }
+
         console.log(`检查赛事申请权限 - 用户: ${member.user.tag}`);
 
-        // 管理员总是有权限
-        if (checkAdminPermission(member)) {
-            console.log(`✅ 管理员权限 - ${member.user.tag}`);
-            return true;
+        const allowedRoles = contestSettings?.applicationPermissionRoles;
+        // 旧配置没有此字段时视为未设置；损坏的配置不能当作无限制。
+        if (allowedRoles !== undefined && (!Array.isArray(allowedRoles) ||
+            !allowedRoles.every(roleId => typeof roleId === 'string' && roleId.length > 0))) {
+            return false;
         }
 
         // 如果没有设置申请权限，默认所有人都可以申请
-        if (!contestSettings || !contestSettings.applicationPermissionRoles || contestSettings.applicationPermissionRoles.length === 0) {
+        if (allowedRoles === undefined || allowedRoles.length === 0) {
             console.log(`✅ 未设置权限限制，默认允许 - ${member.user.tag}`);
             return true;
         }
 
-        // 检查是否有指定身份组
-        const userRoleIds = member.roles.cache.map(role => role.id);
-        const hasPermission = contestSettings.applicationPermissionRoles.some(roleId =>
-            userRoleIds.includes(roleId)
-        );
+        // 申请资格统一按身份组判断，管理员和服务器所有者同样需要持有。
+        const hasPermission = allowedRoles.some(roleId => member.roles.cache.has(roleId));
 
         console.log(`申请权限检查结果: ${hasPermission} - ${member.user.tag}`);
         return hasPermission;
@@ -140,16 +143,19 @@ function checkContestRoleManagePermission(member, contestChannelData, contestSet
 }
 
 /**
- * 获取申请权限不足的错误消息
+ * 获取申请权限不足的错误消息，参数为配置的身份组ID。
  */
 function getApplicationPermissionDeniedMessage(allowedRoles = []) {
-    let message = `❌ **权限不足**\n\n您没有权限申请举办赛事。\n\n**需要以下权限之一：**\n• 服务器管理员权限`;
+    let message = `❌ **权限不足**\n\n您没有权限申请举办赛事。`;
 
-    if (allowedRoles.length > 0) {
-        message += `\n• 以下身份组之一：${allowedRoles.map(role => `\`${role}\``).join('、')}`;
+    if (Array.isArray(allowedRoles) && allowedRoles.length > 0) {
+        const roleIds = allowedRoles.filter(roleId => typeof roleId === 'string' && roleId.length > 0);
+        if (roleIds.length > 0) {
+            message += `\n\n**需要持有以下前置身份组之一：**\n${roleIds.map(roleId => `• <@&${roleId}>（ID：\`${roleId}\`）`).join('\n')}`;
+        }
     }
 
-    message += `\n\n请联系服务器管理员获取相应权限。`;
+    message += `\n\n管理员申请同样需要前置身份组。请联系服务器管理员检查申请资格；若身份组已删除或无法显示，请重新设置或清除前置身份组限制。`;
     return message;
 }
 
