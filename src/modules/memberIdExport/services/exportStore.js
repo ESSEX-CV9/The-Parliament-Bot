@@ -11,39 +11,54 @@ function validId(id) {
         && BigInt(id) <= 18446744073709551615n;
 }
 
+async function syncDirectory(directory) {
+    // Node.js 在 Windows 上不支持打开目录进行 fsync；文件数据仍单独同步。
+    if (process.platform === 'win32') return;
+    const handle = await fs.promises.open(directory, 'r');
+    try { await handle.sync(); }
+    finally { await handle.close(); }
+}
+
 // 同项目其他模块使用独立 SQLite；ID、计数、游标必须在同一事务中提交。
 class ExportStore {
     constructor(directory = DEFAULT_DIRECTORY) {
         this.directory = directory;
         fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
         fs.chmodSync(directory, 0o700);
-        const parent = fs.openSync(path.dirname(directory), 'r');
-        try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
+        if (process.platform !== 'win32') {
+            const parent = fs.openSync(path.dirname(directory), 'r');
+            try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
+        }
         this.db = new Database(path.join(directory, 'exports.sqlite'));
-        fs.chmodSync(path.join(directory, 'exports.sqlite'), 0o600);
-        this.db.pragma('journal_mode = WAL');
-        this.db.pragma('synchronous = FULL');
-        this.db.pragma('foreign_keys = ON');
-        this.db.pragma('busy_timeout = 5000');
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS jobs (
-                id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, status TEXT NOT NULL,
-                owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0,
-                updated_at INTEGER NOT NULL, finished_at INTEGER, payload TEXT NOT NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS one_active_export ON jobs(guild_id)
-                WHERE status IN ('queued', 'running', 'finalizing');
-            CREATE TABLE IF NOT EXISTS members (
-                ordinal INTEGER PRIMARY KEY,
-                job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-                id TEXT NOT NULL, UNIQUE(job_id, id)
-            );
-            CREATE INDEX IF NOT EXISTS member_pages ON members(job_id, ordinal);
-            CREATE TABLE IF NOT EXISTS downloads (
-                token TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-                expires_at INTEGER NOT NULL
-            );
-        `);
+        try {
+            fs.chmodSync(path.join(directory, 'exports.sqlite'), 0o600);
+            this.db.pragma('journal_mode = WAL');
+            this.db.pragma('synchronous = FULL');
+            this.db.pragma('foreign_keys = ON');
+            this.db.pragma('busy_timeout = 5000');
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, status TEXT NOT NULL,
+                    owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL, finished_at INTEGER, payload TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_active_export ON jobs(guild_id)
+                    WHERE status IN ('queued', 'running', 'finalizing');
+                CREATE TABLE IF NOT EXISTS members (
+                    ordinal INTEGER PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    id TEXT NOT NULL, UNIQUE(job_id, id)
+                );
+                CREATE INDEX IF NOT EXISTS member_pages ON members(job_id, ordinal);
+                CREATE TABLE IF NOT EXISTS downloads (
+                    token TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    expires_at INTEGER NOT NULL
+                );
+            `);
+        } catch (error) {
+            this.db.close();
+            throw error;
+        }
     }
 
     decode(row) { return row ? JSON.parse(row.payload) : null; }
@@ -213,4 +228,4 @@ class ExportStore {
     close() { if (this.db.open) this.db.close(); }
 }
 
-module.exports = { ExportStore, DEFAULT_DIRECTORY, validId };
+module.exports = { ExportStore, DEFAULT_DIRECTORY, validId, syncDirectory };

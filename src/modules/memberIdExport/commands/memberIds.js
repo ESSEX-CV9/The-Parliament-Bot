@@ -39,11 +39,15 @@ function createMemberIdsCommand({
                 case '检查': {
                     const result = await service.check(guildId);
                     return interaction.editReply({ content: [
+                        `Bot 运行平台：${result.platform === 'win32' ? 'Windows' : result.platform === 'linux' ? 'Linux' : result.platform || '未知'}`,
                         `GuildMembers Intent 本地配置：${result.intentConfigured ? '已启用' : '未启用'}`,
                         `官方成员列表 REST 实测：${result.restAccessible ? '可访问（仅请求 1 名成员）' : '失败'}`,
                         result.error || '',
                         `服务器人数估计：${result.estimate ?? '不可用'}${result.estimate !== null ? '（Discord approximate_member_count，非精确快照）' : ''}`,
                         result.estimateError ? `人数估计获取失败：${result.estimateError}` : '',
+                        `本地导出存储：${result.storageReady ? '已就绪' : '不可用'}`,
+                        result.storageError || '',
+                        result.directorySyncSupported === false ? '当前 Windows 环境不支持目录元数据 fsync；文件数据同步及校验仍执行，但断电后的目录项持久性受系统限制。' : '',
                         '代码中启用 Intent 不代表开发者后台已经批准；请结合本次 REST 实测和后台 Server Members Intent 设置确认。',
                         '检查未执行全量导出。',
                     ].filter(Boolean).join('\n') });

@@ -7,9 +7,13 @@ const { ExportStore, DEFAULT_DIRECTORY } = require('./exportStore');
 const { buildFile, verifyFile, splitFile } = require('./exportFiles');
 
 function describeError(error) {
-    if (/^(成员列表|任务|文件|附件|导出|Bot)/.test(error?.message || '')) return error.message;
+    if (/^(成员列表|任务|文件|附件|导出|Bot|本地存储)/.test(error?.message || '')) return error.message;
     const code = /^[A-Z_0-9]{1,50}$/.test(String(error?.code)) ? error.code : '未知';
     const status = Number(error?.status || error?.httpStatus) || '未知';
+    const storageSyscalls = ['open', 'mkdir', 'chmod', 'fsync', 'fdatasync', 'write', 'read', 'rename', 'unlink', 'rmdir', 'scandir', 'stat', 'lstat', 'access', 'close', 'ftruncate'];
+    if (status === '未知' && (String(code).startsWith('SQLITE_') || storageSyscalls.includes(error?.syscall))) {
+        return `本地存储操作失败（code ${code}${storageSyscalls.includes(error?.syscall) ? `，操作 ${error.syscall}` : ''}）；请检查 data/member-id-export 的目录归属、读写权限及文件系统支持情况`;
+    }
     return `Discord REST 请求失败（HTTP ${status}，code ${code}）${status === 401 || status === 403 ? '；请检查 Bot 授权及开发者后台 Server Members Intent 批准状态' : ''}`;
 }
 
@@ -19,7 +23,8 @@ class ExportService {
         requestTimeoutMs = 120000, maxRetries = 5, sleep: wait = sleep,
     } = {}) {
         this.client = client;
-        this.store = new ExportStore(directory);
+        this.directory = directory;
+        this._store = null;
         this.owner = randomUUID();
         this.retentionMs = retentionMs;
         this.requestTimeoutMs = requestTimeoutMs;
@@ -30,6 +35,11 @@ class ExportService {
         this.downloads = new Set();
     }
 
+    get store() {
+        if (!this._store) this._store = new ExportStore(this.directory);
+        return this._store;
+    }
+
     latest(guildId) { return this.store.latest(guildId); }
     create(guildId) { return this.store.create(guildId); }
 
@@ -37,14 +47,14 @@ class ExportService {
         if (this.poller) return;
         this.poller = setInterval(() => this.kick(), 30000);
         this.poller.unref();
-        this.cleaner = setInterval(() => this.cleanup().catch(() => console.error('[MemberIdExport] 自动清理失败')), 60 * 60 * 1000);
+        this.cleaner = setInterval(() => this.cleanup().catch(error => console.error('[MemberIdExport] 自动清理失败：', describeError(error))), 60 * 60 * 1000);
         this.cleaner.unref();
         this.kick();
-        void this.cleanup().catch(() => console.error('[MemberIdExport] 启动清理失败'));
+        void this.cleanup().catch(error => console.error('[MemberIdExport] 启动清理失败：', describeError(error)));
     }
 
     kick() {
-        if (!this.stopping) void this.drain().catch(() => console.error('[MemberIdExport] 后台任务调度失败，稍后重试'));
+        if (!this.stopping) void this.drain().catch(error => console.error('[MemberIdExport] 后台任务调度失败，稍后重试：', describeError(error)));
     }
 
     async request(route, query, signal = this.controller.signal) {
@@ -77,6 +87,7 @@ class ExportService {
         const result = {
             intentConfigured: this.client.options.intents.has(GatewayIntentBits.GuildMembers),
             restAccessible: false, estimate: null, error: null, estimateError: null,
+            storageReady: false, storageError: null, directorySyncSupported: process.platform !== 'win32', platform: process.platform,
         };
         try {
             const page = await this.request(Routes.guildMembers(guildId), new URLSearchParams({ limit: '1', after: '0' }));
@@ -87,6 +98,10 @@ class ExportService {
             const guild = await this.request(Routes.guild(guildId), new URLSearchParams({ with_counts: 'true' }));
             if (Number.isSafeInteger(guild.approximate_member_count)) result.estimate = guild.approximate_member_count;
         } catch (error) { result.estimateError = describeError(error); }
+        try {
+            this.store;
+            result.storageReady = true;
+        } catch (error) { result.storageError = describeError(error); }
         return result;
     }
 
@@ -255,7 +270,7 @@ class ExportService {
         this.controller.abort();
         if (this.running) await this.running;
         await Promise.all([...this.downloads].map(release => release()));
-        this.store.close();
+        if (this._store) this._store.close();
     }
 }
 

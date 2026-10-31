@@ -3,7 +3,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { setImmediate: yieldTurn } = require('node:timers/promises');
-const { validId } = require('./exportStore');
+const { validId, syncDirectory } = require('./exportStore');
 
 async function* lines(filename) {
     let pending = '';
@@ -32,12 +32,6 @@ async function verifyFile(filename) {
         count++;
     }
     return { sha256: hash.digest('hex'), count, bytes };
-}
-
-async function syncDirectory(directory) {
-    const handle = await fsp.open(directory, 'r');
-    try { await handle.sync(); }
-    finally { await handle.close(); }
 }
 
 async function buildFile(store, job) {
