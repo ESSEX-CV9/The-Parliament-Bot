@@ -170,8 +170,8 @@ class ExportService {
     }
 
     async download(guildId, maxBytes) {
-        const job = this.latest(guildId);
-        if (!job) throw new Error('任务不存在');
+        const job = this.store.latestCompleted(guildId);
+        if (!job) throw new Error('当前服务器暂无已完成的导出任务');
         if (job.guildId !== guildId || job.status !== 'completed' || !job.artifact) throw new Error('任务尚未完成或未通过校验');
         if (!Number.isSafeInteger(maxBytes) || maxBytes < 21) throw new Error('附件大小限制无效');
         const token = this.store.pin(guildId, job.id);

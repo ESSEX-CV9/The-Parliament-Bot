@@ -56,6 +56,11 @@ class ExportStore {
         return this.decode(this.db.prepare('SELECT payload FROM jobs WHERE guild_id=? ORDER BY rowid DESC LIMIT 1').get(guildId));
     }
 
+    latestCompleted(guildId) {
+        return this.decode(this.db.prepare(`SELECT payload FROM jobs WHERE guild_id=? AND status='completed'
+            ORDER BY finished_at DESC, rowid DESC LIMIT 1`).get(guildId));
+    }
+
     save(job, owner = null, leaseUntil = 0) {
         this.db.prepare(`UPDATE jobs SET status=?, owner=?, lease_until=?, updated_at=?, finished_at=?, payload=? WHERE id=?`)
             .run(job.status, owner, leaseUntil, job.updatedAt, job.finishedAt ?? null, JSON.stringify(job), job.id);
