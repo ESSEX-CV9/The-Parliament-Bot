@@ -11,6 +11,7 @@ const {
 
 const { executeCloseDoor } = require('../../safetySetup/commands/closeDoor');
 const { executeOpenDoor } = require('../../safetySetup/commands/openDoor');
+const { executeMemberIds } = require('../../memberIdExport/commands/memberIds');
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const {
     // resetPressureUser,
@@ -49,6 +50,13 @@ function buildData() {
         .addSubcommand(subcommand => subcommand
             .setName('开门')
             .setDescription('停止邀请暂停托管并恢复服务器邀请'))
+        .addSubcommandGroup(group => group
+            .setName('成员id')
+            .setDescription('检查、导出和下载当前服务器成员 ID')
+            .addSubcommand(subcommand => subcommand.setName('检查').setDescription('少量请求检查导出条件和人数估计'))
+            .addSubcommand(subcommand => subcommand.setName('开始').setDescription('创建或恢复当前服务器成员 ID 导出任务'))
+            .addSubcommand(subcommand => subcommand.setName('状态').setDescription('查询当前服务器最近的成员 ID 导出任务'))
+            .addSubcommand(subcommand => subcommand.setName('下载').setDescription('校验并私密下载已完成的成员 ID 文件')))
         // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
         // .addSubcommand(subcommand => subcommand
             // .setName(SUBCOMMAND_RESET_STATS)
@@ -110,6 +118,7 @@ function createManageCommand({
     // 已停用：openChannelAccessManager: openChannels = openChannelAccessManager,
     executeCloseDoor: closeDoor = executeCloseDoor,
     executeOpenDoor: openDoor = executeOpenDoor,
+    executeMemberIds: memberIds = executeMemberIds,
     // 已停用：executeResetStats: resetStats = executeResetStats,
     checkPermission = checkAdminPermission,
     permissionDeniedMessage = getPermissionDeniedMessage,
@@ -123,6 +132,10 @@ function createManageCommand({
                 flags: MessageFlags.Ephemeral,
             });
             return;
+        }
+        if (interaction.options.getSubcommandGroup(false) === '成员id') {
+            // 新操作使用相同公共鉴权规则，并强制刷新当前调用者权限。
+            return memberIds(interaction);
         }
         if (!checkPermission(interaction.member)) {
             await interaction.reply({

@@ -205,6 +205,8 @@ const { startSafetySetupSystem } = require('../modules/safetySetup');
 // const mysteryCommand = require('../modules/mystery/commands/mysteryCommand');
 
 const manageCommand = require('../modules/mystery/commands/manageCommand');
+const { getExportService } = require('../modules/memberIdExport/services/exportService');
+let memberIdExportService;
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const mysteryGameStatsCommand = require('../modules/mystery/commands/gameStatsCommand');
 
@@ -456,6 +458,12 @@ client.once(Events.ClientReady, async (readyClient) => {
         return;
     }
     printTimeConfig();
+    try {
+        memberIdExportService = getExportService(readyClient);
+        memberIdExportService.start();
+    } catch (error) {
+        console.error('[MemberIdExport] 初始化失败，其他模块继续启动；请检查 data/member-id-export 目录和磁盘空间。');
+    }
     
     // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
     // startProposalChecker(readyClient);
@@ -591,6 +599,12 @@ async function gracefulShutdown(signal) {
         // console.error('❌ 神秘游戏收尾失败：', error);
     // }
 
+
+    try {
+        if (memberIdExportService) await memberIdExportService.stop();
+    } catch (error) {
+        console.error('[MemberIdExport] 收尾失败，未完成任务将在租约到期后恢复。');
+    }
 
     try {
         await client.destroy();
