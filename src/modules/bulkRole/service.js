@@ -84,8 +84,9 @@ class Service {
     }
 
     start() {
-        if (this.poller) return;
-        this.store; // Fail synchronously at startup if storage is unavailable.
+        if (this.poller || this.stopping) return;
+        // Install polling before opening storage: kick() reports transient DB
+        // failures, and the next tick retries initialization and deferred jobs.
         this.poller = setInterval(() => this.kick(), 5000);
         this.poller.unref();
         this.kick();
