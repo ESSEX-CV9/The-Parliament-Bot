@@ -209,6 +209,7 @@ const { getExportService } = require('../modules/memberIdExport/services/exportS
 let memberIdExportService;
 const { getService: getBulkRoleService } = require('../modules/bulkRole/service');
 let bulkRoleService;
+const { startThreadModeration, stopThreadModeration } = require('../modules/threadModeration');
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const mysteryGameStatsCommand = require('../modules/mystery/commands/gameStatsCommand');
 
@@ -460,6 +461,8 @@ client.once(Events.ClientReady, async (readyClient) => {
         return;
     }
     printTimeConfig();
+    // 仅恢复独立数据库中未完成的帖子操作；不阻塞其他模块启动。
+    void startThreadModeration(readyClient);
     try {
         memberIdExportService = getExportService(readyClient);
         memberIdExportService.start();
@@ -619,6 +622,12 @@ async function gracefulShutdown(signal) {
         if (bulkRoleService) await bulkRoleService.stop();
     } catch (error) {
         console.error('[BulkRole] 收尾失败，未完成任务将在租约到期后重新校验并恢复。');
+    }
+
+    try {
+        await stopThreadModeration(client);
+    } catch (error) {
+        console.error('[ThreadModeration] 收尾失败，未完成记录将在下次启动核验。');
     }
 
     try {

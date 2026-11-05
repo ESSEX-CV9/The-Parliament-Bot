@@ -13,6 +13,7 @@ const { executeCloseDoor } = require('../../safetySetup/commands/closeDoor');
 const { executeOpenDoor } = require('../../safetySetup/commands/openDoor');
 const { executeMemberIds } = require('../../memberIdExport/commands/memberIds');
 const { addRoleGroup, executeBulkRole } = require('../../bulkRole/commands');
+const { addThreadCommands, executeThreadModeration } = require('../../threadModeration/commands');
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const {
     // resetPressureUser,
@@ -28,7 +29,7 @@ const { addRoleGroup, executeBulkRole } = require('../../bulkRole/commands');
 
 
 function buildData() {
-    return addRoleGroup(new SlashCommandBuilder()
+    return addThreadCommands(addRoleGroup(new SlashCommandBuilder()
         .setName('管理')
         .setDescription('管理服务器邀请暂停与恢复')
         // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
@@ -70,7 +71,7 @@ function buildData() {
                 // .setName('确认')
                 // .setDescription(`清空全服数据时必填，输入「${RESET_CONFIRM_KEYWORD}」`)
                 // .setRequired(false)))
-);
+));
 }
 
 // 清空是不可撤销的，所以全服清空必须再打一次确认词；
@@ -121,6 +122,7 @@ function createManageCommand({
     executeOpenDoor: openDoor = executeOpenDoor,
     executeMemberIds: memberIds = executeMemberIds,
     executeBulkRole: bulkRole = executeBulkRole,
+    executeThreadModeration: threadModeration = executeThreadModeration,
     // 已停用：executeResetStats: resetStats = executeResetStats,
     checkPermission = checkAdminPermission,
     permissionDeniedMessage = getPermissionDeniedMessage,
@@ -134,6 +136,11 @@ function createManageCommand({
                 flags: MessageFlags.Ephemeral,
             });
             return;
+        }
+        const threadGroup = interaction.options.getSubcommandGroup(false);
+        if (threadGroup === '锁帖配置' || (!threadGroup && ['锁帖', '解锁'].includes(interaction.options.getSubcommand(false)))) {
+            // 独立鉴权：额外身份组仅在锁帖/解锁服务内放行，绝不放行根管理权限。
+            return threadModeration(interaction);
         }
         if (interaction.options.getSubcommandGroup(false) === '身份组') {
             return bulkRole(interaction);
