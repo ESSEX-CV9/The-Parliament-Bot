@@ -21,6 +21,7 @@ function previewPayload(preview) {
             `实际需要修改人数：${preview.counts.change}`,
             `已经处于目标状态：${preview.counts.already}；不在服务器：${preview.counts.absent}；其他异常：${preview.counts.other}`,
             `确认有效期 5 分钟，<t:${Math.floor(preview.expiresAt / 1000)}:R> 失效。执行时会重新读取实际状态。`,
+            '如配置了跨服同步，变更会按现有规则联动其他服务器；本任务仅统计本服结果。',
             '只有您可以确认或取消。确认后使用后台任务执行；取消只停止尚未执行的部分，不撤销已完成修改。',
         ].join('\n'),
         components: [new ActionRowBuilder().addComponents(
@@ -48,6 +49,7 @@ function resultPayload({ job, rows }) {
             `任务 ID：\`${job.id}\`；状态：${STATES[job.status] || job.status}${job.cancelRequested && active ? '（已请求取消）' : ''}`,
             `操作：${job.action === 'add' ? '添加' : '移除'}；目标身份组：<@&${job.roleId}>`,
             `总人数：${rows.length}；成功（API 已确认）：${count('success')}`,
+            '本任务仅统计本服结果；跨服同步由原有同步机制独立处理。',
             `跳过：${count('already') + count('absent') + count('reconciled')}（已是目标状态 ${count('already')}，不在服务器 ${count('absent')}，不确定请求后核对已达目标 ${count('reconciled')}）`,
             `失败：${failed.length}；${active ? '尚未完成（未执行及请求中）' : '未执行'}：${pending.length}`,
             `失败原因分类：${reasonText}`,
