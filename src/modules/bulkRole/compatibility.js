@@ -48,9 +48,7 @@ function checkCompatibility(guildId, roleId, { dataDirectory = DATA_DIRECTORY, n
         });
         readDb(dataDirectory, 'punishment.sqlite', db => {
             const warn = db.prepare('SELECT role_id FROM punishment_warn_role_config WHERE guild_id=?').get(guildId);
-            const row = db.prepare("SELECT value FROM punishment_settings WHERE guild_id=? AND key='four_word_config'").get(guildId);
-            const config = row ? JSON.parse(row.value) : {};
-            if (warn?.role_id === roleId || [config.normalRoleId, config.penaltyRoleId].includes(roleId)) throw new Error('该身份组由处罚机制管理，拒绝批量操作。');
+            if (warn?.role_id === roleId) throw new Error('该身份组是处罚警告身份组，拒绝批量操作。');
         });
         const archive = readJson(path.join(dataDirectory, 'archiveSettings.json'));
         const review = readJson(path.join(dataDirectory, 'reviewSettings.json'));
