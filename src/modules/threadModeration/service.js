@@ -12,6 +12,16 @@ const sameVersion = (a, b) => sameState(a, b) && a.archiveTimestamp === b.archiv
 const sameSnapshot = (a, b) => sameVersion(a, b) && a.lastMessageId === b.lastMessageId;
 const desiredState = op => ({ locked: op.action === 'lock', archived: op.action === 'lock' });
 
+function responseSnapshot(response, op, desired) {
+    const metadata = response?.thread_metadata;
+    const timestamp = typeof metadata?.archive_timestamp === 'string' ? Date.parse(metadata.archive_timestamp) : NaN;
+    if (response?.id !== op.threadId || response.guild_id !== op.guildId || response.parent_id !== op.parentId
+        || typeof metadata?.locked !== 'boolean' || typeof metadata?.archived !== 'boolean' || !Number.isFinite(timestamp)
+        || !(response.last_message_id === null || typeof response.last_message_id === 'string')) return null;
+    const state = { locked: metadata.locked, archived: metadata.archived, archiveTimestamp: timestamp, lastMessageId: response.last_message_id };
+    return sameState(state, desired) ? state : null;
+}
+
 class Service {
     constructor(client, { store = new Store(), transport, checkPermission, now = Date.now, leaseMs = 120000 } = {}) {
         this.client = client;
@@ -25,23 +35,38 @@ class Service {
         this.threads = new Set();
         this.stopping = false;
         this.ready = null;
+        this.initializing = false;
     }
 
     start() {
         if (this.stopping) return Promise.reject(new SafetyError('锁帖模块正在停止。'));
+        if (this.ready && !this.initializing && !this.store.owns(this.owner, this.now())) {
+            if (this.requests.size) return Promise.reject(new SafetyError('锁帖租约失效，正在等待原请求结束后恢复。'));
+            this.ready = null;
+        }
         if (this.ready) return this.ready;
-        this.ready = (async () => {
-            if (!this.store.lease(this.owner, this.now(), this.leaseMs)) throw new SafetyError('锁帖模块正在由其他进程执行或等待重启租约到期，请稍后重试。');
+        // Keep the watchdog alive even if lease acquisition fails. Reacquire
+        // only after every request from the expired lease has settled, and run
+        // pending-operation reconciliation before exposing the service again.
+        if (!this.timer) {
             this.timer = setInterval(() => {
+                if (this.stopping) return;
                 try {
-                    // An expired lease is never renewed by an old worker.
-                    if (!this.store.owns(this.owner, this.now())) return;
-                    this.store.lease(this.owner, this.now(), this.leaseMs);
+                    if (this.store.owns(this.owner, this.now())) {
+                        this.store.lease(this.owner, this.now(), this.leaseMs);
+                    } else if (!this.initializing && !this.requests.size) {
+                        this.ready = null;
+                        void this.start().catch(error => console.error('[ThreadModeration] lease recovery failed:', describe(error)));
+                    }
                 } catch (error) { console.error('[ThreadModeration] worker lease renewal failed:', describe(error)); }
             }, Math.min(20000, this.leaseMs / 3));
             this.timer.unref?.();
+        }
+        this.initializing = true;
+        this.ready = (async () => {
+            if (!this.store.lease(this.owner, this.now(), this.leaseMs)) throw new SafetyError('锁帖模块正在由其他进程执行或等待重启租约到期，请稍后重试。');
             await this.recover();
-        })().catch(error => { clearInterval(this.timer); this.ready = null; throw error; });
+        })().catch(error => { this.ready = null; throw error; }).finally(() => { this.initializing = false; });
         return this.ready;
     }
 
@@ -128,16 +153,24 @@ class Service {
     async change(op, desired, phase) {
         const { thread } = await this.checked(op);
         const intent = { before: snapshot(thread), desired, reason: `${marker(op)}:${phase}` };
-        this.save(op, { phase: `${phase}_intent`, intent, stateUncertain: true, finalAttempted: phase === 'lock' || phase === 'unlock' || Boolean(op.finalAttempted) });
+        this.save(op, { phase: `${phase}_intent`, intent, stateUncertain: true, writeSnapshot: null, lastWriteReason: null,
+            finalAttempted: phase === 'lock' || phase === 'unlock' || Boolean(op.finalAttempted) });
         let error;
-        try { await this.transport.editThread(thread, { ...desired, reason: intent.reason }); }
+        let written = null;
+        try { written = responseSnapshot(await this.transport.editThread(thread, { ...desired, reason: intent.reason }), op, desired); }
         catch (caught) { error = caught; }
         if (error && definiteRejection(error)) this.save(op, { stateUncertain: false, lastWriteReason: null, intent: { ...intent, rejected: true } });
+        // Persist an immutable PATCH response before GET can observe a later
+        // administrator update. A readback alone never establishes ownership.
+        if (written) this.save(op, { writeSnapshot: written, expected: written, lastWriteReason: intent.reason });
         // A rejected/timeout request may still have been applied. Always read back.
         const actual = snapshot(await this.rawThread(op));
+        if (written && !sameVersion(actual, written)) {
+            this.save(op, { ownershipConflict: true });
+            throw new SafetyError('PATCH 响应与回读版本不一致，无法确认状态归属，需人工核验。');
+        }
         if (!sameState(actual, desired)) throw error || new SafetyError('Discord 未应用预期的帖子状态。');
-        this.save(op, { phase: `${phase}_verified`, expected: actual, intent: null, stateUncertain: false,
-            lastWriteReason: error && definiteRejection(error) ? null : intent.reason });
+        this.save(op, { phase: `${phase}_verified`, expected: written || actual, intent: null, stateUncertain: false });
     }
 
     async announce(op) {
@@ -157,7 +190,9 @@ class Service {
         const actual = snapshot(await this.rawThread(op));
         // Sending must not silently adopt someone else's thread state changes.
         if (!sameVersion(actual, op.expected || op.before)) throw new SafetyError('发送公示期间帖子状态发生变化。');
-        this.save(op, { expected: actual });
+        // Only our own known announcement may extend the checkpoint's message
+        // ID. Do not adopt a later GET's version or another member's reply.
+        this.save(op, { expected: { ...(op.expected || op.before), lastMessageId: message.id } });
     }
 
     async ownedChange(op, thread) {
@@ -166,7 +201,8 @@ class Service {
         // An unacknowledged intent has no trustworthy archiveTimestamp. Matching
         // booleans and an eventually-consistent audit entry cannot establish that
         // another administrator has not changed the thread since that request.
-        if (!sameSnapshot(current, expected) || !op.lastWriteReason) return false;
+        if (op.ownershipConflict || !op.writeSnapshot || !sameVersion(expected, op.writeSnapshot)
+            || !sameSnapshot(current, expected) || !op.lastWriteReason) return false;
         const bot = await thread.guild.members.fetch({ user: this.client.user.id, force: true, cache: false });
         if (!thread.permissionsFor(bot)?.has(P.ViewAuditLog)) return false;
         const logs = await thread.guild.fetchAuditLogs({ type: AuditLogEvent.ThreadUpdate, limit: 50 });
@@ -177,12 +213,12 @@ class Service {
     }
 
     async restore(op, thread) {
-        if (sameState(snapshot(thread), op.before)) return '原始锁定/归档状态未改变';
+        const expected = snapshot(thread);
+        if (sameState(expected, op.before)) return '原始锁定/归档状态未改变';
         // Revocation must stop state writes, including compensating writes.
         await this.safety.target(op);
         this.fence();
         if (!await this.ownedChange(op, thread)) return '无法证明状态仍由本操作持有，未覆盖后续操作';
-        const expected = snapshot(thread);
         const { thread: fresh } = await this.safety.target(op);
         this.fence();
         if (!sameSnapshot(expected, snapshot(fresh))) return '状态再次变化，未恢复';
@@ -202,7 +238,7 @@ class Service {
         const found = await findAnnouncement(thread, op, this.client.user.id);
         if (found.message) op.messageId = found.message.id;
         const successNotice = found.message?.embeds?.some(embed => embed.title === (op.action === 'lock' ? '🔒 子区已锁定' : '🔓 子区已解锁'));
-        if (op.finalAttempted && sameState(actual, desiredState(op)) && successNotice) {
+        if (!op.ownershipConflict && op.finalAttempted && sameState(actual, desiredState(op)) && successNotice) {
             return this.save(op, { status: 'succeeded', phase: 'completed', actual, messageId: found.message.id, recovery: '已核验公示和实际状态', feedback: '已核验公示和帖子实际状态，操作已完成。' });
         }
         const detail = describe(error);
@@ -213,7 +249,7 @@ class Service {
         actual = snapshot(await this.rawThread(op));
         this.fence();
         const corrected = await correctAnnouncement(found.message, op, actual, this.transport, () => this.fence());
-        const uncertain = !found.complete || ((op.stateUncertain || (op.sendAttempted && !op.sendRejected && !found.message))
+        const uncertain = op.ownershipConflict || !found.complete || ((op.stateUncertain || (op.sendAttempted && !op.sendRejected && !found.message))
             && (!restarting || this.now() - op.createdAt < this.leaseMs));
         const restored = sameState(actual, op.before);
         const status = restored && corrected && !uncertain ? 'failed' : 'review';
