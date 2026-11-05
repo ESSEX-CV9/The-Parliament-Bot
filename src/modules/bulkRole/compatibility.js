@@ -27,16 +27,8 @@ function readJson(filename) {
 
 function checkCompatibility(guildId, roleId, { dataDirectory = DATA_DIRECTORY, notificationFile = path.join(__dirname, '../voting/data/notification_roles.json') } = {}) {
     try {
-        readDb(dataDirectory, 'roleSync.sqlite', db => {
-            const mapping = db.prepare(`SELECT 1 FROM role_sync_map m JOIN sync_links l ON m.link_id=l.link_id
-                WHERE m.enabled=1 AND l.enabled=1 AND
-                ((l.source_guild_id=? AND m.source_role_id=?) OR (l.target_guild_id=? AND m.target_role_id=?)) LIMIT 1`)
-                .get(guildId, roleId, guildId, roleId);
-            const pending = db.prepare(`SELECT 1 FROM sync_jobs WHERE status IN ('pending','running','processing') AND
-                ((target_guild_id=? AND target_role_id=?) OR (source_guild_id=? AND source_role_id=?)) LIMIT 1`)
-                .get(guildId, roleId, guildId, roleId);
-            if (mapping || pending) throw new Error('该身份组参与有效跨服同步配置或未完成同步任务，无法隔离跨服影响，拒绝批量操作。');
-        });
+        // Synced roles are allowed. Existing member-update handlers retain full
+        // control of cross-guild propagation, queued jobs and circuit breakers.
         readDb(dataDirectory, 'selfRole.sqlite', db => {
             const row = db.prepare('SELECT roles FROM role_settings WHERE guild_id=?').get(guildId);
             const configs = row ? JSON.parse(row.roles) : [];
