@@ -1,5 +1,6 @@
 // src/core/events/interactionCreate.js
 const { PermissionFlagsBits, MessageFlags } = require('discord.js');
+const { PREFIX: BULK_ROLE_PREFIX, handleBulkRoleButton } = require('../../modules/bulkRole/commands');
 const { isDisabledInteraction, DISABLED_FEATURE_MESSAGE } = require('../config/disabledFeatures');
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const { createFormModal } = require('../../modules/proposal/components/formModal');
@@ -194,6 +195,10 @@ async function interactionCreateHandler(interaction) {
         
         // 处理按钮点击
         if (interaction.isButton()) {
+            if (interaction.customId.startsWith(BULK_ROLE_PREFIX)) {
+                await handleBulkRoleButton(interaction);
+                return;
+            }
             if (interaction.customId.startsWith('discussion_preset_')) {
                 await handleDiscussionPresetButton(interaction);
                 return;

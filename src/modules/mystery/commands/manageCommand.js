@@ -12,6 +12,7 @@ const {
 const { executeCloseDoor } = require('../../safetySetup/commands/closeDoor');
 const { executeOpenDoor } = require('../../safetySetup/commands/openDoor');
 const { executeMemberIds } = require('../../memberIdExport/commands/memberIds');
+const { addRoleGroup, executeBulkRole } = require('../../bulkRole/commands');
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const {
     // resetPressureUser,
@@ -27,7 +28,7 @@ const { executeMemberIds } = require('../../memberIdExport/commands/memberIds');
 
 
 function buildData() {
-    return new SlashCommandBuilder()
+    return addRoleGroup(new SlashCommandBuilder()
         .setName('管理')
         .setDescription('管理服务器邀请暂停与恢复')
         // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
@@ -69,7 +70,7 @@ function buildData() {
                 // .setName('确认')
                 // .setDescription(`清空全服数据时必填，输入「${RESET_CONFIRM_KEYWORD}」`)
                 // .setRequired(false)))
-;
+);
 }
 
 // 清空是不可撤销的，所以全服清空必须再打一次确认词；
@@ -119,6 +120,7 @@ function createManageCommand({
     executeCloseDoor: closeDoor = executeCloseDoor,
     executeOpenDoor: openDoor = executeOpenDoor,
     executeMemberIds: memberIds = executeMemberIds,
+    executeBulkRole: bulkRole = executeBulkRole,
     // 已停用：executeResetStats: resetStats = executeResetStats,
     checkPermission = checkAdminPermission,
     permissionDeniedMessage = getPermissionDeniedMessage,
@@ -132,6 +134,9 @@ function createManageCommand({
                 flags: MessageFlags.Ephemeral,
             });
             return;
+        }
+        if (interaction.options.getSubcommandGroup(false) === '身份组') {
+            return bulkRole(interaction);
         }
         if (interaction.options.getSubcommandGroup(false) === '成员id') {
             // 新操作使用相同公共鉴权规则，并强制刷新当前调用者权限。

@@ -207,6 +207,8 @@ const { startSafetySetupSystem } = require('../modules/safetySetup');
 const manageCommand = require('../modules/mystery/commands/manageCommand');
 const { getExportService } = require('../modules/memberIdExport/services/exportService');
 let memberIdExportService;
+const { getService: getBulkRoleService } = require('../modules/bulkRole/service');
+let bulkRoleService;
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const mysteryGameStatsCommand = require('../modules/mystery/commands/gameStatsCommand');
 
@@ -530,6 +532,13 @@ client.once(Events.ClientReady, async (readyClient) => {
     // 启动 Discord 安全措施邀请暂停托管
     await startSafetySetupSystem(readyClient);
 
+    try {
+        bulkRoleService = getBulkRoleService(readyClient);
+        bulkRoleService.start();
+    } catch (error) {
+        console.error('[BulkRole] 初始化失败，请检查独立任务数据库；其他模块继续运行。');
+    }
+
     console.log('\n🤖 机器人已完全启动，所有系统正常运行！');
     console.log('🏆 赛事管理系统已加载');
     // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
@@ -604,6 +613,12 @@ async function gracefulShutdown(signal) {
         if (memberIdExportService) await memberIdExportService.stop();
     } catch (error) {
         console.error('[MemberIdExport] 收尾失败，未完成任务将在租约到期后恢复。');
+    }
+
+    try {
+        if (bulkRoleService) await bulkRoleService.stop();
+    } catch (error) {
+        console.error('[BulkRole] 收尾失败，未完成任务将在租约到期后重新校验并恢复。');
     }
 
     try {
