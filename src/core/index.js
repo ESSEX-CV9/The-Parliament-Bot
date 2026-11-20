@@ -210,6 +210,11 @@ let memberIdExportService;
 const { getService: getBulkRoleService } = require('../modules/bulkRole/service');
 let bulkRoleService;
 const { startThreadModeration, stopThreadModeration } = require('../modules/threadModeration');
+
+// 频道归档与安全清理
+const { startChannelArchiveSystem, stopChannelArchiveSystem } = require('../modules/channelArchive');
+const archiveConfigCommand = require('../modules/channelArchive/commands/archiveConfig');
+const channelArchiveCommand = require('../modules/channelArchive/commands/channelArchive');
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const mysteryGameStatsCommand = require('../modules/mystery/commands/gameStatsCommand');
 
@@ -413,6 +418,10 @@ client.commands.set(disciplineConfigCommand.data.name, disciplineConfigCommand);
 client.commands.set(fourWordConfigCommand.data.name, fourWordConfigCommand);
 client.commands.set(fourWordCommand.data.name, fourWordCommand);
 
+// 频道归档与安全清理命令
+client.commands.set(archiveConfigCommand.data.name, archiveConfigCommand);
+client.commands.set(channelArchiveCommand.data.name, channelArchiveCommand);
+
 // 机器人消息管理系统命令
 client.commands.set(botMessageCommand.data.name, botMessageCommand);
 client.commands.set(editBotMessageContextCommand.data.name, editBotMessageContextCommand);
@@ -529,6 +538,13 @@ client.once(Events.ClientReady, async (readyClient) => {
     // 启动机器人消息管理系统
     await startBotMessageSystem(readyClient);
 
+    // 启动频道归档系统（恢复进行中的投票与归档任务）
+    try {
+        await startChannelArchiveSystem(readyClient);
+    } catch (error) {
+        console.error('[ChannelArchive] 初始化失败，其他模块继续运行：', error);
+    }
+
     // 启动分服受控邀请系统
     await startControlledInviteSystem(readyClient);
 
@@ -628,6 +644,12 @@ async function gracefulShutdown(signal) {
         await stopThreadModeration(client);
     } catch (error) {
         console.error('[ThreadModeration] 收尾失败，未完成记录将在下次启动核验。');
+    }
+
+    try {
+        stopChannelArchiveSystem();
+    } catch (error) {
+        console.error('[ChannelArchive] 收尾失败，未完成任务将在下次启动续传。');
     }
 
     try {

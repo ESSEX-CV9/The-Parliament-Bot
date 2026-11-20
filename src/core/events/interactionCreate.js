@@ -78,6 +78,9 @@ const {
     handleBotMessageInteraction,
     BOT_MESSAGE_CUSTOM_ID_PREFIX,
 } = require('../../modules/botMessage');
+
+// 频道归档投票交互
+const { handleChannelArchiveInteraction } = require('../../modules/channelArchive');
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const {
     // handleMysteryInteraction,
@@ -195,6 +198,11 @@ async function interactionCreateHandler(interaction) {
         
         // 处理按钮点击
         if (interaction.isButton()) {
+            // 频道归档投票：静态 customId，重启后仍可用
+            if (interaction.customId.startsWith('charc:')) {
+                await handleChannelArchiveInteraction(interaction);
+                return;
+            }
             if (interaction.customId.startsWith(BULK_ROLE_PREFIX)) {
                 await handleBulkRoleButton(interaction);
                 return;
