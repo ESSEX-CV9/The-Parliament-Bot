@@ -3,6 +3,7 @@
 const zlib = require('zlib');
 const { AttachmentBuilder, MessageFlags } = require('discord.js');
 const { buildContestExport } = require('../services/exportBuilder');
+const { parseMapping, publishPanels } = require('../services/panelPublisher');
 
 // 延迟加载数据层：contestDatabase 在加载时会初始化 data 目录，测试中不应触发。
 const contestDatabase = () => require('../../contest/utils/contestDatabase');
@@ -27,7 +28,50 @@ function createContestExportCommand({
     readSubmissions = () => contestDatabase().getAllContestSubmissions(),
     roleIds = getExportRoleIds(),
     now = () => new Date(),
+    downloadText = async url => {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`下载对照表失败（HTTP ${response.status}）`);
+        return response.text();
+    },
+    readContest = async id => contestDatabase().getAllContestChannels()[id] || null,
+    readContestSubmissions = async id => contestDatabase().getSubmissionsByChannel(id),
+    publish = publishPanels,
 } = {}) {
+    async function runPanels(interaction) {
+        const file = interaction.options.getAttachment('对照表', true);
+        if (file.size > 1024 * 1024) {
+            return interaction.editReply({ content: '❌ 对照表文件过大（上限 1MB）。' });
+        }
+        let entries;
+        try {
+            entries = parseMapping(await downloadText(file.url));
+        } catch (error) {
+            return interaction.editReply({ content: `❌ ${error.message}` });
+        }
+        console.log(`[ContestExport] 发布归档面板 guild=${interaction.guild.id} operator=${interaction.user.id} entries=${entries.length}`);
+        await interaction.editReply({ content: `开始发布投稿面板：共 ${entries.length} 个帖子……` });
+
+        const result = await publish(entries, {
+            guild: interaction.guild,
+            botId: interaction.client.user.id,
+            fetchChannel: id => interaction.client.channels.fetch(id),
+            readContest,
+            readSubmissions: readContestSubmissions,
+            onProgress: async (done, total) => {
+                if (done % 10 === 0 && done < total) {
+                    await interaction.editReply({ content: `发布投稿面板中：${done} / ${total}` });
+                }
+            },
+        });
+
+        const lines = [
+            `投稿面板发布完成：已发 ${result.sent.length}，跳过 ${result.skipped.length}（已有面板），失败 ${result.failed.length}。`,
+            ...result.failed.slice(0, 15).map(item => `- 帖子 ${item.threadId}：${item.reason}`),
+            result.failed.length > 15 ? `……另有 ${result.failed.length - 15} 个失败` : null,
+        ].filter(Boolean);
+        return interaction.editReply({ content: lines.join('\n').slice(0, 1900), allowedMentions: { parse: [] } });
+    }
+
     async function authorized(interaction) {
         try {
             // 强制刷新调用者，避免缓存里过期的身份组放行。
@@ -44,7 +88,11 @@ function createContestExportCommand({
         if (!await authorized(interaction)) {
             return interaction.editReply({ content: '❌ 你没有导出赛事数据的权限。' });
         }
-        if (interaction.options.getSubcommand(false) !== '导出') {
+        const subcommand = interaction.options.getSubcommand(false);
+        if (subcommand === '归档面板') {
+            return runPanels(interaction);
+        }
+        if (subcommand !== '导出') {
             return interaction.editReply({ content: '❌ 未知的赛事操作。' });
         }
 

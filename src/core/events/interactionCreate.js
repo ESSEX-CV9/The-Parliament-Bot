@@ -81,6 +81,8 @@ const {
 
 // 频道归档投票交互
 const { handleChannelArchiveInteraction } = require('../../modules/channelArchive');
+const { handleArchivePanelInteraction } = require('../../modules/contestExport/interactions');
+const { isArchivePanelCustomId } = require('../../modules/contestExport/services/archivePanel');
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
 // const {
     // handleMysteryInteraction,
@@ -201,6 +203,11 @@ async function interactionCreateHandler(interaction) {
             // 频道归档投票：静态 customId，重启后仍可用
             if (interaction.customId.startsWith('charc:')) {
                 await handleChannelArchiveInteraction(interaction);
+                return;
+            }
+            // 赛事归档投稿面板：查询作品
+            if (isArchivePanelCustomId(interaction.customId)) {
+                await handleArchivePanelInteraction(interaction);
                 return;
             }
             if (interaction.customId.startsWith(BULK_ROLE_PREFIX)) {
@@ -604,6 +611,10 @@ async function interactionCreateHandler(interaction) {
         
         // 处理模态窗口提交
         if (interaction.isModalSubmit()) {
+            if (isArchivePanelCustomId(interaction.customId)) {
+                await handleArchivePanelInteraction(interaction);
+                return;
+            }
             if (interaction.customId.startsWith('fourword:punish:')) {
                 const { handlePunishModal } = require('../../modules/punishment/services/fourWordService');
                 await handlePunishModal(interaction);

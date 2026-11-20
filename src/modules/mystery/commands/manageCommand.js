@@ -62,8 +62,15 @@ function buildData() {
             .addSubcommand(subcommand => subcommand.setName('下载').setDescription('校验并私密下载已完成的成员 ID 文件')))
         .addSubcommandGroup(group => group
             .setName('赛事')
-            .setDescription('赛事数据只读导出（限指定身份组）')
-            .addSubcommand(subcommand => subcommand.setName('导出').setDescription('私密下载本服务器全部赛事及投稿记录（JSON）')))
+            .setDescription('赛事数据导出与归档投稿面板（限指定身份组）')
+            .addSubcommand(subcommand => subcommand.setName('导出').setDescription('私密下载本服务器全部赛事及投稿记录（JSON）'))
+            .addSubcommand(subcommand => subcommand
+                .setName('归档面板')
+                .setDescription('按对照表在赛事归档帖里发布投稿面板（可查看全部作品与查询）')
+                .addAttachmentOption(option => option
+                    .setName('对照表')
+                    .setDescription('JSON 数组：[{"threadId":"归档帖ID","contestChannelId":"原赛事频道ID"}]')
+                    .setRequired(true))))
         // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
         // .addSubcommand(subcommand => subcommand
             // .setName(SUBCOMMAND_RESET_STATS)

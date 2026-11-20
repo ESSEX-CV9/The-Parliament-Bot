@@ -103,4 +103,4 @@ function buildContestExport(channels, submissions, guildId, now = new Date()) {
     };
 }
 
-module.exports = { buildContestExport, buildWorkUrl, EXPORT_VERSION };
+module.exports = { buildContestExport, buildWorkUrl, pickContest, EXPORT_VERSION };
