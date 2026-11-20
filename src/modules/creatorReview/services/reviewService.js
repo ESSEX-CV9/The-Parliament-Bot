@@ -1,6 +1,7 @@
 // src\modules\creatorReview\services\reviewService.js
 const { MessageFlags, ChannelType } = require('discord.js');
 const { getReviewSettings, isServerAllowed, isForumAllowed } = require('../../../core/utils/database');
+const { recordApproval } = require('./reviewRecordDatabase');
 
 /**
  * 解析Discord帖子链接
@@ -141,76 +142,6 @@ async function getThreadFirstMessageReactions(thread) {
 }
 
 /**
- * 获取论坛帖子的作者（分批处理以避免API限制）
- * @param {ThreadChannel} channel - 论坛帖子频道
- * @returns {User|null} 帖子作者
- */
-async function getThreadAuthor(channel) {
-    try {
-        let oldestMessage = null;
-        let oldestTimestamp = Date.now();
-        let lastMessageId = null;
-        let hasMoreMessages = true;
-        let fetchCount = 0;
-        const maxFetches = 5; // 最多获取5批消息，避免无限循环
-        
-        while (hasMoreMessages && fetchCount < maxFetches) {
-            const fetchOptions = {
-                limit: 100, // Discord API 最大限制
-                cache: false
-            };
-            
-            // 如果不是第一次获取，设置 before 参数
-            if (lastMessageId) {
-                fetchOptions.before = lastMessageId;
-            }
-            
-            console.log(`第 ${fetchCount + 1} 次获取消息，选项:`, fetchOptions);
-            
-            const messages = await channel.messages.fetch(fetchOptions);
-            
-            if (messages.size === 0) {
-                hasMoreMessages = false;
-                break;
-            }
-            
-            // 找到这批消息中最早的
-            messages.forEach(message => {
-                if (message.createdTimestamp < oldestTimestamp) {
-                    oldestTimestamp = message.createdTimestamp;
-                    oldestMessage = message;
-                }
-            });
-            
-            // 设置下次获取的起点
-            const messagesArray = Array.from(messages.values());
-            lastMessageId = messagesArray[messagesArray.length - 1].id;
-            
-            // 如果这批消息少于100条，说明没有更多消息了
-            if (messages.size < 100) {
-                hasMoreMessages = false;
-            }
-            
-            fetchCount++;
-            
-            console.log(`获取了 ${messages.size} 条消息，当前最早消息时间: ${new Date(oldestTimestamp).toISOString()}`);
-        }
-        
-        if (oldestMessage) {
-            console.log(`找到最早消息作者: ${oldestMessage.author.tag}, 创建时间: ${oldestMessage.createdAt}`);
-            return oldestMessage.author;
-        }
-        
-        console.log('未找到任何消息');
-        return null;
-        
-    } catch (error) {
-        console.error('获取帖子作者时出错:', error);
-        return null;
-    }
-}
-
-/**
  * 处理用户提交的创作者审核。
  * @param {import('discord.js').ModalSubmitInteraction} interaction - 提交交互对象。
  */
@@ -289,48 +220,21 @@ async function processReviewSubmission(interaction) {
             });
         }
         
-        // 获取帖子作者
-        let threadAuthor;
-        if (linkData.hasMessageId) {
-            // 如果有消息ID，检查该消息的作者
-            try {
-                const targetMessage = await targetChannel.messages.fetch(linkData.messageId);
-                threadAuthor = targetMessage.author;
-            } catch (error) {
-                console.error('获取消息失败:', error);
-                return interaction.editReply({ 
-                    content: '❌ 无法找到指定的消息，请检查链接是否正确。'
-                });
-            }
-        } else {
-            // 如果没有消息ID，获取帖子的原始作者
-            try {
-                // 方法1：尝试获取论坛帖子的 starterMessage（原始消息）
-                if (targetChannel.starterMessage) {
-                    threadAuthor = targetChannel.starterMessage.author;
-                    console.log(`通过starterMessage获取作者: ${threadAuthor.tag}`);
-                } else {
-                    // 方法2：分批获取消息以找到最早的消息
-                    threadAuthor = await getThreadAuthor(targetChannel);
-                    
-                    if (!threadAuthor) {
-                        return interaction.editReply({ 
-                            content: '❌ 无法找到帖子的作者信息。'
-                        });
-                    }
-                }
-            } catch (error) {
-                console.error('获取帖子作者失败:', error);
-                return interaction.editReply({ 
-                    content: '❌ 无法获取帖子作者信息，请检查链接是否正确。'
-                });
-            }
+        // 创作者审核只认发帖人：带消息ID的链接必须指向帖子首楼。
+        // 论坛帖子的首楼消息ID与帖子(thread)ID相同，指向其他消息即为帖子内的回复。
+        if (linkData.hasMessageId && linkData.messageId !== targetChannel.id) {
+            return interaction.editReply({
+                content: '❌ 只能提交帖子本身或帖子首楼的链接，帖子内的回复不能用于创作者审核。\n\n请在帖子标题处复制链接，或复制帖子首条消息的链接后重新提交。'
+            });
         }
 
-        console.log(`帖子作者: ${threadAuthor.tag} (${threadAuthor.id}), 提交者: ${interaction.user.tag} (${interaction.user.id})`);
+        // 帖子作者直接取 thread.ownerId，不依赖首楼消息是否还在、也不受帖子消息数量影响
+        const threadOwnerId = targetChannel.ownerId;
+
+        console.log(`帖子作者ID: ${threadOwnerId}, 提交者: ${interaction.user.tag} (${interaction.user.id})`);
 
         // 检查帖子作者是否为提交者
-        if (threadAuthor.id !== interaction.user.id) {
+        if (!threadOwnerId || threadOwnerId !== interaction.user.id) {
             return interaction.editReply({ 
                 content: '❌ 您只能提交自己发表的帖子进行审核。'
             });
@@ -359,7 +263,7 @@ async function processReviewSubmission(interaction) {
         const requiredReactions = reviewSettings.requiredReactions;
         
         console.log(`帖子反应统计: 当前不重复用户数=${totalReactions}, 需要=${requiredReactions}`);
-        console.log(`帖子信息: 服务器=${targetGuild.name}, 频道=${targetChannel.name}, 作者=${threadAuthor.tag}`);
+        console.log(`帖子信息: 服务器=${targetGuild.name}, 频道=${targetChannel.name}, 作者=${interaction.user.tag}`);
         
         // 检查是否达到要求
         if (totalReactions < requiredReactions) {
@@ -390,7 +294,28 @@ async function processReviewSubmission(interaction) {
             await interaction.member.roles.add(rewardRole);
             
             console.log(`成功为用户 ${interaction.user.tag} 添加身份组 ${rewardRole.name}`);
-            
+
+            // 身份组已发放，记录写入失败只打日志，不影响用户这边的结果
+            try {
+                const recordId = recordApproval({
+                    guildId: interaction.guild.id,
+                    userId: interaction.user.id,
+                    userTag: interaction.user.tag,
+                    roleId: rewardRole.id,
+                    sourceGuildId: linkData.guildId,
+                    forumChannelId,
+                    threadId: targetChannel.id,
+                    threadName: targetChannel.name,
+                    postLink,
+                    uniqueReactions: totalReactions,
+                    requiredReactions,
+                    threadCreatedTimestamp: postCreatedAt,
+                });
+                console.log(`[CreatorReview] 已写入审核通过记录 #${recordId}`);
+            } catch (recordError) {
+                console.error('[CreatorReview] 写入审核通过记录失败:', recordError);
+            }
+
             await interaction.editReply({ 
                 content: `✅ **审核通过！**\n\n🎉 恭喜您！您的帖子已获得 **${totalReactions}** 个独特用户的反应，成功通过审核。\n\n您已获得 ${rewardRole} 身份组！\n\n**帖子信息：**\n• 服务器：${targetGuild.name}\n• 帖子：${targetChannel.name}\n• 不重复反应用户数：${totalReactions}/${requiredReactions}\n• 帖子链接：[点击查看](${postLink})`
             });
@@ -428,6 +353,5 @@ module.exports = {
     getTotalReactions,
     getThreadTotalReactions,
     getThreadFirstMessageReactions,
-    isForumThread,
-    getThreadAuthor
+    isForumThread
 };
