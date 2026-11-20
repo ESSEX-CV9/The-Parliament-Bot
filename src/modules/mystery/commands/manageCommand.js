@@ -12,6 +12,7 @@ const {
 const { executeCloseDoor } = require('../../safetySetup/commands/closeDoor');
 const { executeOpenDoor } = require('../../safetySetup/commands/openDoor');
 const { executeMemberIds } = require('../../memberIdExport/commands/memberIds');
+const { executeContestExport } = require('../../contestExport/commands/contestExport');
 const { addRoleGroup, executeBulkRole } = require('../../bulkRole/commands');
 const { addThreadCommands, executeThreadModeration } = require('../../threadModeration/commands');
 // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
@@ -59,6 +60,10 @@ function buildData() {
             .addSubcommand(subcommand => subcommand.setName('开始').setDescription('创建或恢复当前服务器成员 ID 导出任务'))
             .addSubcommand(subcommand => subcommand.setName('状态').setDescription('查询当前服务器最近的成员 ID 导出任务'))
             .addSubcommand(subcommand => subcommand.setName('下载').setDescription('校验并私密下载已完成的成员 ID 文件')))
+        .addSubcommandGroup(group => group
+            .setName('赛事')
+            .setDescription('赛事数据只读导出（限指定身份组）')
+            .addSubcommand(subcommand => subcommand.setName('导出').setDescription('私密下载本服务器全部赛事及投稿记录（JSON）')))
         // 已停用（2026-10-01）：按要求保留源码，取消旧 Bot 接入。
         // .addSubcommand(subcommand => subcommand
             // .setName(SUBCOMMAND_RESET_STATS)
@@ -121,6 +126,7 @@ function createManageCommand({
     executeCloseDoor: closeDoor = executeCloseDoor,
     executeOpenDoor: openDoor = executeOpenDoor,
     executeMemberIds: memberIds = executeMemberIds,
+    executeContestExport: contestExport = executeContestExport,
     executeBulkRole: bulkRole = executeBulkRole,
     executeThreadModeration: threadModeration = executeThreadModeration,
     // 已停用：executeResetStats: resetStats = executeResetStats,
@@ -148,6 +154,10 @@ function createManageCommand({
         if (interaction.options.getSubcommandGroup(false) === '成员id') {
             // 新操作使用相同公共鉴权规则，并强制刷新当前调用者权限。
             return memberIds(interaction);
+        }
+        if (interaction.options.getSubcommandGroup(false) === '赛事') {
+            // 独立鉴权：只认导出身份组，不走根管理权限。
+            return contestExport(interaction);
         }
         if (!checkPermission(interaction.member)) {
             await interaction.reply({
