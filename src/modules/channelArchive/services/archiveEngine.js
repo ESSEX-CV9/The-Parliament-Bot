@@ -56,6 +56,32 @@ function threadUrl(guildId, threadId) {
     return `https://discord.com/channels/${guildId}/${threadId}`;
 }
 
+const FETCH_RETRY_DELAYS = [2000, 5000, 10000];
+
+async function fetchAfterWithRetry(channel, afterId, limit) {
+    let lastError = null;
+    for (let attempt = 0; attempt < FETCH_RETRY_DELAYS.length; attempt += 1) {
+        try {
+            return await fetchAfter(channel, afterId, limit);
+        } catch (error) {
+            lastError = error;
+            if (attempt < FETCH_RETRY_DELAYS.length - 1) {
+                await sleep(FETCH_RETRY_DELAYS[attempt]);
+            }
+        }
+    }
+    throw new Error(`拉取增量消息失败（已重试 ${FETCH_RETRY_DELAYS.length} 次）：${lastError?.message || '未知错误'}`);
+}
+
+async function fetchLatestMessageId(channel) {
+    try {
+        const messages = await channel.messages.fetch({ limit: 1 });
+        return messages.first()?.id || null;
+    } catch (error) {
+        throw new Error(`确认最新消息失败：${error.message}`);
+    }
+}
+
 class ArchiveJob {
     constructor(client, record) {
         this.client = client;
@@ -135,8 +161,14 @@ class ArchiveJob {
             this.mainTotal = this.mainManifest.total;
         }
 
-        const threads = await listThreads(this.channel);
-        for (const thread of threads) {
+        const enumeration = await listThreads(this.channel);
+        if (!enumeration.complete) {
+            throw new Error(
+                `子区列表读取不完整（${enumeration.failures.join('；')}）。`
+                + '请确认机器人拥有“管理帖子”权限后重试。',
+            );
+        }
+        for (const thread of enumeration.threads) {
             this.store.upsertSubthread({
                 threadId: thread.id,
                 guildId: this.guild.id,
@@ -203,6 +235,18 @@ class ArchiveJob {
 
         await this.appendContestAppendix();
 
+        // 归档期间可能出现新子区：收尾前再枚举一次，并补做这些子区。
+        await this.refreshSubthreads();
+        await this.sendRemainingLinks({ strict: true });
+
+        const processedIds = new Set(fillRows.map(row => row.thread_id));
+        const lateRows = this.store.listSubthreads(this.channel.id)
+            .filter(row => row.status !== SUBTHREAD_STATUS.ARCHIVED && !processedIds.has(row.thread_id));
+        for (let index = 0; index < lateRows.length; index += 1) {
+            if (this.stopped) break;
+            await this.fillSubthread(lateRows[index], index + 1, lateRows.length);
+        }
+
         const finalRows = this.store.listSubthreads(this.channel.id);
         this.subCount = finalRows.length;
         this.completedSub = finalRows.filter(row => row.status === SUBTHREAD_STATUS.ARCHIVED).length;
@@ -211,6 +255,14 @@ class ArchiveJob {
             const failed = finalRows.filter(row => row.status !== SUBTHREAD_STATUS.ARCHIVED);
             this.warnings.push(`仍有 ${failed.length} 个子区未完成备份`);
         }
+
+        if (!this.mainAlreadyArchived && !this.mainCaughtUp) {
+            throw new Error('主频道未完成追平核验，本次不标记归档完成，请重试。');
+        }
+
+        this.store.setArchive(this.channel.id, {
+            subthreads_complete: this.hasFailedSubthreads ? 0 : 1,
+        });
 
         if (!this.mainAlreadyArchived) {
             await this.finalizeMain();
@@ -305,10 +357,21 @@ class ArchiveJob {
         const warning = this.warnings.length
             ? `\n⚠️ ${this.warnings.slice(0, 5).map(item => truncate(item, 120)).join('\n⚠️ ')}`
             : '';
+        const failed = this.hasFailedSubthreads;
+        const integrity = failed
+            ? '完整性：子区尚未全部完成，原频道不可删除'
+            : '完整性：已确认（子区列表、追平与消息发送均通过）';
+        const watermark = this.lastVerifiedMainId
+            ? `\n同步截至消息 ID：${this.lastVerifiedMainId}`
+            : '';
         const content = [
-            `✅ ${PROGRESS_MARKER} 归档流程结束`,
+            failed
+                ? `⚠️ ${PROGRESS_MARKER} 归档未完成（可重试）`
+                : `✅ ${PROGRESS_MARKER} 归档完成（已核验）`,
             `主频道已同步：${this.sentMain} 条`,
             `子区：${this.completedSub}/${this.subCount}`,
+            integrity,
+            watermark,
             warning,
             mainLink,
         ].join('\n').trim();
@@ -462,8 +525,14 @@ class ArchiveJob {
     }
 
     async refreshSubthreads() {
-        const threads = await listThreads(this.channel);
-        for (const thread of threads) {
+        const enumeration = await listThreads(this.channel);
+        if (!enumeration.complete) {
+            throw new Error(
+                `子区列表读取不完整（${enumeration.failures.join('；')}）。`
+                + '请确认机器人拥有“管理帖子”权限后重试。',
+            );
+        }
+        for (const thread of enumeration.threads) {
             const existing = this.store.getSubthread(thread.id);
             if (existing) continue;
 
@@ -505,6 +574,16 @@ class ArchiveJob {
                 });
                 this.warnings.push(`新子区 ${row.thread_name} 处理失败：${error.message}`);
             }
+        }
+
+        if (this.mainAlreadyArchived && this.mainThread && this.links.some(link => !link.sent)) {
+            const wasLocked = this.mainThread.locked || this.mainThread.archived;
+            if (wasLocked) {
+                await this.mainThread.setArchived(false).catch(() => {});
+                await this.mainThread.setLocked(false).catch(() => {});
+            }
+            await this.sendRemainingLinks();
+            if (wasLocked) await this.lockThread(this.mainThread);
         }
     }
 
@@ -552,10 +631,11 @@ class ArchiveJob {
             },
             onIdle: async () => {
                 await this.refreshSubthreads();
-                await this.sendRemainingLinks();
             },
         });
         this.sentMain = result.sent;
+        this.lastVerifiedMainId = result.lastId;
+        this.mainCaughtUp = result.verified;
         await this.sendRemainingLinks();
         await this.updateProgress(true);
     }
@@ -572,19 +652,26 @@ class ArchiveJob {
         onIdle,
     }) {
         let idle = 0;
-        while (!this.stopped && idle < 2) {
-            const batch = await fetchAfter(sourceChannel, lastId, 100);
+        let verified = false;
+        while (!this.stopped) {
+            const batch = await fetchAfterWithRetry(sourceChannel, lastId, 100);
             if (!batch.length) {
                 idle += 1;
                 this.catchingUp = true;
                 await this.updateProgress(true);
-                if (onIdle) {
-                    try {
-                        await onIdle();
-                    } catch (error) {
-                        console.warn('[ChannelArchive] 追平期间检查新子区失败:', error.message);
+                if (onIdle) await onIdle();
+
+                if (idle >= 2) {
+                    // 连续两次成功拉取为空后，再确认一次频道最新消息，避免把接口失败当成“已追平”。
+                    const latestId = await fetchLatestMessageId(sourceChannel);
+                    if (latestId && (!lastId || compareIds(latestId, lastId) > 0)) {
+                        idle = 0;
+                        continue;
                     }
+                    verified = true;
+                    break;
                 }
+
                 await sleep(IDLE_CONFIRM_MS);
                 continue;
             }
@@ -609,7 +696,7 @@ class ArchiveJob {
             }
             await this.updateProgress(true);
         }
-        return { lastId, sent };
+        return { lastId, sent, verified };
     }
 
     // ---------- subthreads ----------
@@ -701,6 +788,7 @@ class ArchiveJob {
                 },
             });
             sent = result.sent;
+            if (this.stopped) return;
 
             const baseName = `${sanitizeFileName(current.thread_name)}_${current.thread_id}`;
             const backup = await createBackupArchive({
@@ -789,9 +877,18 @@ class ArchiveJob {
         }
     }
 
-    async sendRemainingLinks() {
+    async sendRemainingLinks({ strict = false } = {}) {
         for (const link of this.links) {
             if (!link.sent) await this.sendSubthreadLink(link);
+        }
+        if (strict) {
+            const unsent = this.links.filter(link => !link.sent);
+            if (unsent.length) {
+                throw new Error(
+                    `有 ${unsent.length} 个子区链接未能写入主帖（${unsent.slice(0, 3).map(link => link.name).join('、')}），`
+                    + '本次不标记完成，稍后重试。',
+                );
+            }
         }
     }
 
@@ -841,13 +938,24 @@ class ArchiveJob {
         const embeds = sanitizeEmbeds(record);
         let batches = [];
         let problems = [];
+        let attachmentFailures = [];
 
         if (record.attachments?.length) {
             const result = await buildAttachmentFiles(record, this.uploadLimit);
             batches = result.batches;
             problems = result.problems;
+            attachmentFailures = result.failures || [];
         }
 
+        if (attachmentFailures.length) {
+            const names = attachmentFailures.slice(0, 3).map(item => item.name).join('、');
+            throw new Error(
+                `消息 ${record.id} 的 ${attachmentFailures.length} 个附件下载失败：${names}；`
+                + '本次不推进断点，稍后重试。',
+            );
+        }
+
+        let sendError = null;
         for (let index = 0; index < parts.length; index += 1) {
             const last = index === parts.length - 1;
             let content = parts[index];
@@ -866,14 +974,7 @@ class ArchiveJob {
                 await this.transport.send(thread.id, payload);
             } catch (error) {
                 console.warn(`[ChannelArchive] 消息还原失败 ${record.id}:`, error.message);
-                try {
-                    await this.transport.send(thread.id, {
-                        content: `⚠️ 消息 ${record.id} 还原失败：${truncate(error.message, 150)}`,
-                        username: WEBHOOK_SENDER_NAME,
-                    });
-                } catch (_) {
-                    // ignore
-                }
+                sendError = sendError || error;
             }
         }
 
@@ -887,7 +988,12 @@ class ArchiveJob {
                 });
             } catch (error) {
                 console.warn(`[ChannelArchive] 附件续传失败 ${record.id}:`, error.message);
+                sendError = sendError || error;
             }
+        }
+
+        if (sendError) {
+            throw new Error(`消息 ${record.id} 还原失败：${sendError.message}`);
         }
 
         this.rememberRecord(record);

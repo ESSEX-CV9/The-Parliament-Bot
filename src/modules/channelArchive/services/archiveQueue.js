@@ -21,6 +21,7 @@ function needsWork(store, record) {
     if (!record) return false;
     if (record.status === ARCHIVE_STATUS.ARCHIVING) return true;
     if (record.status === ARCHIVE_STATUS.ARCHIVED) {
+        if (Number(record.subthreads_complete) !== 1) return true;
         return store.listSubthreads(record.source_channel_id)
             .some(row => row.status !== SUBTHREAD_STATUS.ARCHIVED);
     }
@@ -80,6 +81,7 @@ class ArchiveQueue {
                     store.setArchive(channelId, { last_error: truncate(error.message, 900) });
                     await this.notifyFailure(channelId, error);
                 } finally {
+                    job.stopProgressTimer();
                     this.current = null;
                 }
             }

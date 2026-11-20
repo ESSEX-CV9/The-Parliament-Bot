@@ -282,18 +282,20 @@ async function fetchAfter(channel, afterId, limit = MESSAGE_BATCH_SIZE) {
             .map(safeSerialize);
     } catch (error) {
         console.warn(`[ChannelArchive] 拉取增量消息失败 ${channel.id}:`, error.message);
-        return [];
+        throw error;
     }
 }
 
 async function listThreads(channel) {
     const found = new Map();
+    const failures = [];
 
     try {
         const active = await channel.threads.fetchActive();
         for (const thread of active.threads.values()) found.set(thread.id, thread);
     } catch (error) {
         console.warn(`[ChannelArchive] 读取活动子区失败 ${channel.id}:`, error.message);
+        failures.push(`活动子区：${error.message}`);
     }
 
     for (const type of ['public', 'private']) {
@@ -314,22 +316,26 @@ async function listThreads(channel) {
                 if (!oldest || oldest.id === before) break;
                 before = oldest.id;
             } catch (error) {
-                if (type === 'private') {
-                    console.warn(`[ChannelArchive] 读取私有子区失败 ${channel.id}:`, error.message);
-                } else {
-                    console.warn(`[ChannelArchive] 读取归档子区失败 ${channel.id}:`, error.message);
-                }
+                const label = type === 'private' ? '私有归档子区' : '公开归档子区';
+                console.warn(`[ChannelArchive] 读取${label}失败 ${channel.id}:`, error.message);
+                failures.push(`${label}：${error.message}`);
                 break;
             }
         }
     }
 
-    return [...found.values()].sort((a, b) => {
+    const threads = [...found.values()].sort((a, b) => {
         const left = a.createdTimestamp || 0;
         const right = b.createdTimestamp || 0;
         if (left !== right) return left - right;
         return compareIds(a.id, b.id);
     });
+
+    return {
+        threads,
+        complete: failures.length === 0,
+        failures,
+    };
 }
 
 module.exports = {

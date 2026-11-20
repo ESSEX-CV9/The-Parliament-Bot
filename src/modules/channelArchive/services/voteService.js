@@ -103,6 +103,12 @@ async function startVote(interaction, voteType) {
     }
 
     if (voteType === VOTE_TYPE.DELETE) {
+        if (Number(record.subthreads_complete) !== 1) {
+            await interaction.editReply({
+                content: '❌ 归档完整性尚未确认（可能遗漏子区）。请先执行 `/频道归档 重试` 补全校验，再发起删除投票。',
+            });
+            return;
+        }
         const mainThread = record.target_thread_id
             ? await interaction.client.channels.fetch(record.target_thread_id).catch(() => null)
             : null;

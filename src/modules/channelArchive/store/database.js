@@ -17,6 +17,7 @@ const ARCHIVE_COLUMNS = new Set([
     'progress_message_id',
     'last_error',
     'completed_at',
+    'subthreads_complete',
 ]);
 const SUBTHREAD_COLUMNS = new Set([
     'thread_name',
@@ -70,6 +71,7 @@ class ArchiveStore {
                     total_synced_count     INTEGER NOT NULL DEFAULT 0,
                     progress_message_id    TEXT,
                     last_error             TEXT,
+                    subthreads_complete    INTEGER NOT NULL DEFAULT 0,
                     created_at             INTEGER NOT NULL,
                     updated_at             INTEGER NOT NULL,
                     completed_at           INTEGER
@@ -126,6 +128,13 @@ class ArchiveStore {
                 CREATE INDEX IF NOT EXISTS idx_subthread_source
                     ON subthread_archives(source_channel_id);
             `);
+
+            const archiveColumns = this.db.prepare('PRAGMA table_info(channel_archives)').all();
+            if (!archiveColumns.some(column => column.name === 'subthreads_complete')) {
+                this.db.exec(
+                    'ALTER TABLE channel_archives ADD COLUMN subthreads_complete INTEGER NOT NULL DEFAULT 0',
+                );
+            }
         } catch (error) {
             this.db.close();
             throw error;

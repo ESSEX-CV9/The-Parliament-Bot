@@ -20,10 +20,18 @@ async function downloadBuffer(url) {
 /**
  * 下载附件并按单次上传上限分组；超过上限时拆成多条 Webhook 消息。
  */
+function isPermanentDownloadError(error) {
+    const match = /HTTP (\d{3})/.exec(String(error?.message || ''));
+    if (!match) return false;
+    const status = Number(match[1]);
+    return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
 async function buildAttachmentFiles(record, limitBytes, { retry = 1 } = {}) {
     const attachments = record.attachments || [];
     const batches = [];
     const problems = [];
+    const failures = [];
     let current = [];
     let usedBytes = 0;
     const safeLimit = Math.max(0, Math.floor(limitBytes * 0.95));
@@ -55,7 +63,12 @@ async function buildAttachmentFiles(record, limitBytes, { retry = 1 } = {}) {
             }
         }
         if (!buffer) {
-            problems.push(`[附件转存失败: ${attachment.name}（${lastError?.message || '下载失败'}）]`);
+            const message = lastError?.message || '下载失败';
+            if (isPermanentDownloadError(lastError)) {
+                problems.push(`[附件已失效: ${attachment.name}（${message}）]`);
+            } else {
+                failures.push({ name: attachment.name, error: message });
+            }
             continue;
         }
         if (buffer.length > safeLimit) {
@@ -70,7 +83,7 @@ async function buildAttachmentFiles(record, limitBytes, { retry = 1 } = {}) {
     }
     flush();
 
-    return { batches, problems };
+    return { batches, problems, failures };
 }
 
 function buildProblemText(problems) {

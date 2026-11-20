@@ -6,6 +6,7 @@ const {
     SUBTHREAD_STATUS,
 } = require('../utils/constants');
 const { truncate } = require('../utils/text');
+const { listThreads } = require('./historyReader');
 
 async function fetchThread(client, threadId) {
     if (!threadId) return null;
@@ -86,7 +87,28 @@ async function deleteArchivedChannel(client, vote) {
         }
     }
 
+    if (Number(record.subthreads_complete) !== 1) {
+        problems.push('归档完整性未确认（可能遗漏子区），请先执行 `/频道归档 重试` 补全校验');
+    }
+
     const subRows = store.listSubthreads(record.source_channel_id);
+
+    // 删除前重新枚举一次子区，防止归档完成后又创建的新子区被漏掉。
+    if (channel) {
+        const enumeration = await listThreads(channel);
+        if (!enumeration.complete) {
+            problems.push(`子区列表读取不完整：${enumeration.failures.join('；')}`);
+        } else {
+            const known = new Set(subRows.map(row => row.thread_id));
+            const unseen = enumeration.threads.filter(thread => !known.has(thread.id));
+            if (unseen.length) {
+                problems.push(
+                    `发现 ${unseen.length} 个未备份的子区：${unseen.slice(0, 5).map(thread => thread.name).join('、')}`,
+                );
+            }
+        }
+    }
+
     for (const row of subRows) {
         if (row.status !== SUBTHREAD_STATUS.ARCHIVED) {
             problems.push(`子区「${row.thread_name}」归档未完成（${row.status}）`);
