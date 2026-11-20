@@ -1,7 +1,14 @@
 // src/modules/channelArchive/services/archiveEngine.js
 const fs = require('node:fs');
 const path = require('node:path');
-const { AttachmentBuilder, ChannelType, EmbedBuilder } = require('discord.js');
+const {
+    ActionRowBuilder,
+    AttachmentBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ChannelType,
+    EmbedBuilder,
+} = require('discord.js');
 const { getStore } = require('../store/instance');
 const {
     ARCHIVE_STATUS,
@@ -38,6 +45,12 @@ const { composeWebhookParts, sanitizeEmbeds } = require('./contentFormatter');
 const { buildAttachmentFiles, buildProblemText } = require('./attachmentService');
 const { WebhookTransport } = require('./webhookTransport');
 const { createBackupArchive } = require('./backupService');
+const {
+    buildAppendixContents,
+    buildContestFields,
+    buildContestPayload,
+    getContestSnapshot,
+} = require('./contestSnapshot');
 
 function threadUrl(guildId, threadId) {
     return `https://discord.com/channels/${guildId}/${threadId}`;
@@ -72,6 +85,7 @@ class ArchiveJob {
         this.warnings = [];
 
         this.uploadLimit = 10 * 1024 * 1024;
+        this.contest = null;
         this.mainAlreadyArchived = record.status === ARCHIVE_STATUS.ARCHIVED;
         this.progressMessage = null;
         this.progressTimer = null;
@@ -97,6 +111,7 @@ class ArchiveJob {
         }
 
         this.uploadLimit = getUploadLimit(this.guild);
+        this.contest = await getContestSnapshot(this.channel.id);
         this.transport = new WebhookTransport(this.forum);
         await this.transport.initialize();
 
@@ -185,6 +200,8 @@ class ArchiveJob {
             this.stopProgressTimer();
             return;
         }
+
+        await this.appendContestAppendix();
 
         const finalRows = this.store.listSubthreads(this.channel.id);
         this.subCount = finalRows.length;
@@ -330,6 +347,7 @@ class ArchiveJob {
                 { name: '消息总数', value: final ? String(total) : '统计中', inline: true },
                 { name: '子区备份', value: `${this.subCount} 个子区`, inline: true },
                 { name: '文本备份', value: final ? '见本条消息附件 zip' : '完成后生成', inline: true },
+                ...buildContestFields(this.contest),
             )
             .setFooter({ text: '由频道归档系统生成' })
             .setTimestamp(new Date());
@@ -875,6 +893,63 @@ class ArchiveJob {
         this.rememberRecord(record);
     }
 
+    async appendContestAppendix() {
+        if (!this.contest || !this.contest.validSubmissions.length) return;
+        const contents = buildAppendixContents(this.contest);
+        if (!contents.length) return;
+
+        const thread = this.mainThread || await this.fetchThreadById(this.record.target_thread_id);
+        if (!thread) return;
+        this.mainThread = thread;
+
+        const wasLocked = Boolean(thread.locked);
+        const wasArchived = Boolean(thread.archived);
+        try {
+            if (wasArchived) await thread.setArchived(false).catch(() => {});
+            if (wasLocked) await thread.setLocked(false).catch(() => {});
+
+            const existing = new Set();
+            const messages = await thread.messages.fetch({ limit: 100 }).catch(() => null);
+            if (messages) {
+                for (const message of messages.values()) {
+                    const match = String(message.content || '').match(/【赛事附录 (\d+)\/(\d+)】/);
+                    if (match && message.author?.id === this.client.user.id) {
+                        existing.add(Number(match[1]));
+                    }
+                }
+            }
+
+            for (let index = 0; index < contents.length; index += 1) {
+                if (this.stopped) break;
+                if (existing.has(index + 1)) continue;
+                await thread.send({
+                    content: contents[index],
+                    allowedMentions: { parse: [] },
+                });
+                await sleep(300);
+            }
+        } catch (error) {
+            this.warnings.push(`赛事附录发送失败：${error.message}`);
+            console.warn('[ChannelArchive] 赛事附录发送失败:', error.message);
+        } finally {
+            if ((wasLocked || wasArchived) && !this.stopped) {
+                await this.lockThread(thread);
+            }
+        }
+    }
+
+    buildContestComponents() {
+        if (!this.contest) return [];
+        return [
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`c_all_${this.channel.id}`)
+                    .setLabel('📋 查看所有参赛作品')
+                    .setStyle(ButtonStyle.Primary),
+            ),
+        ];
+    }
+
     // ---------- finalize ----------
     async finalizeMain() {
         const baseName = `${sanitizeFileName(this.channel.name)}_${this.channel.id}`;
@@ -891,6 +966,12 @@ class ArchiveJob {
             },
             outDir: path.join(TEMP_ROOT, this.channel.id, 'backup', 'main'),
             baseName,
+            extraFiles: this.contest
+                ? [{
+                    name: 'contest-submissions.json',
+                    content: JSON.stringify(buildContestPayload(this.contest), null, 2),
+                }]
+                : [],
         });
 
         const zipName = `${baseName}.zip`;
@@ -902,6 +983,7 @@ class ArchiveJob {
         if (this.mainStarter) {
             await this.mainStarter.edit({
                 embeds: [this.buildMainEmbed({ final: true })],
+                components: this.buildContestComponents(),
                 files: canAttach ? [new AttachmentBuilder(backup.zipPath, { name: zipName })] : [],
             }).catch(error => {
                 console.warn('[ChannelArchive] 更新主帖首楼失败:', error.message);

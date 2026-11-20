@@ -51,14 +51,22 @@ async function writeBackupJson({ manifest, meta, outPath }) {
     return { messageCount: count, bytes: stats.size };
 }
 
-async function createBackupArchive({ manifest, meta, outDir, baseName }) {
+async function createBackupArchive({ manifest, meta, outDir, baseName, extraFiles = [] }) {
     fs.mkdirSync(outDir, { recursive: true });
     const safeBase = sanitizeFileName(baseName, 'channel');
     const jsonPath = path.join(outDir, `${safeBase}.json`);
     const zipPath = path.join(outDir, `${safeBase}.zip`);
 
     const result = await writeBackupJson({ manifest, meta, outPath: jsonPath });
-    createZip(zipPath, [{ name: `${safeBase}.json`, path: jsonPath }]);
+    const zipFiles = [{ name: `${safeBase}.json`, path: jsonPath }];
+    for (const extra of extraFiles) {
+        if (!extra?.name || typeof extra.content !== 'string') continue;
+        const extraName = sanitizeFileName(extra.name, 'extra');
+        const extraPath = path.join(outDir, extraName);
+        fs.writeFileSync(extraPath, extra.content, 'utf8');
+        zipFiles.push({ name: extraName, path: extraPath });
+    }
+    createZip(zipPath, zipFiles);
     const stats = fs.statSync(zipPath);
 
     return {
