@@ -577,6 +577,11 @@ function getAllContestChannels() {
     return readJsonFile(CONTEST_CHANNELS_FILE);
 }
 
+// 只读：返回全部投稿 { [globalId]: submission }，供赛事数据导出使用
+function getAllContestSubmissions() {
+    return readJsonFile(CONTEST_SUBMISSIONS_FILE);
+}
+
 async function setContestFinished(contestChannelId, finished = true) {
     const channels = readJsonFile(CONTEST_CHANNELS_FILE);
     if (channels[contestChannelId]) {
@@ -648,6 +653,7 @@ module.exports = {
     getContestChannel,
     updateContestChannel,
     getAllContestChannels,
+    getAllContestSubmissions,
     
     // 投稿相关
     getNextSubmissionId,

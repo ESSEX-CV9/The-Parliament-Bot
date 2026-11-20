@@ -1,0 +1,85 @@
+// src/modules/contestExport/commands/contestExport.js
+// /管理 赛事 导出：仅限指定身份组，私密返回本服务器赛事与投稿的只读 JSON 快照。
+const zlib = require('zlib');
+const { AttachmentBuilder, MessageFlags } = require('discord.js');
+const { buildContestExport } = require('../services/exportBuilder');
+
+// 延迟加载数据层：contestDatabase 在加载时会初始化 data 目录，测试中不应触发。
+const contestDatabase = () => require('../../contest/utils/contestDatabase');
+
+// 可用环境变量 CONTEST_EXPORT_ROLE_IDS（逗号分隔）覆盖；默认只允许该身份组使用。
+const DEFAULT_EXPORT_ROLE_IDS = ['1289224017789583453'];
+
+function getExportRoleIds(env = process.env) {
+    const ids = String(env.CONTEST_EXPORT_ROLE_IDS || '')
+        .split(',')
+        .map(id => id.trim())
+        .filter(Boolean);
+    return ids.length ? ids : DEFAULT_EXPORT_ROLE_IDS;
+}
+
+function hasExportRole(member, roleIds) {
+    return typeof member?.roles?.cache?.has === 'function' && roleIds.some(id => member.roles.cache.has(id));
+}
+
+function createContestExportCommand({
+    readChannels = () => contestDatabase().getAllContestChannels(),
+    readSubmissions = () => contestDatabase().getAllContestSubmissions(),
+    roleIds = getExportRoleIds(),
+    now = () => new Date(),
+} = {}) {
+    async function authorized(interaction) {
+        try {
+            // 强制刷新调用者，避免缓存里过期的身份组放行。
+            const member = await interaction.guild.members.fetch({ user: interaction.user.id, force: true, cache: false });
+            return hasExportRole(member, roleIds);
+        } catch (_) { return false; }
+    }
+
+    return async function executeContestExport(interaction) {
+        if (!interaction.inGuild()) {
+            return interaction.reply({ content: '❌ 此命令只能在服务器中使用。', flags: MessageFlags.Ephemeral });
+        }
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        if (!await authorized(interaction)) {
+            return interaction.editReply({ content: '❌ 你没有导出赛事数据的权限。' });
+        }
+        if (interaction.options.getSubcommand(false) !== '导出') {
+            return interaction.editReply({ content: '❌ 未知的赛事操作。' });
+        }
+
+        try {
+            const guildId = interaction.guild.id;
+            const time = now();
+            const data = buildContestExport(await readChannels(), await readSubmissions(), guildId, time);
+            const limit = Number.isSafeInteger(interaction.attachmentSizeLimit)
+                ? interaction.attachmentSizeLimit : 8 * 1024 * 1024;
+            let buffer = Buffer.from(JSON.stringify(data, null, 2), 'utf8');
+            let name = `contest-export-${guildId}-${time.toISOString().slice(0, 10)}.json`;
+            if (buffer.length > limit) {
+                buffer = zlib.gzipSync(buffer);
+                name += '.gz';
+            }
+            if (buffer.length > limit) {
+                return interaction.editReply({ content: `❌ 导出文件过大（${buffer.length} 字节），超过附件上限。` });
+            }
+            console.log(`[ContestExport] guild=${guildId} operator=${interaction.user.id} contests=${data.stats.contests} submissions=${data.stats.submissions}`);
+            return interaction.editReply({
+                content: `赛事 ${data.stats.contests} 个，投稿 ${data.stats.submissions} 条（有效 ${data.stats.validSubmissions}）。仅包含本服务器赛事，为只读快照。`,
+                files: [new AttachmentBuilder(buffer, { name })],
+                allowedMentions: { parse: [] },
+            });
+        } catch (error) {
+            console.error('[ContestExport] 导出失败:', error);
+            return interaction.editReply({ content: `❌ 导出失败：${error.message}` });
+        }
+    };
+}
+
+module.exports = {
+    createContestExportCommand,
+    executeContestExport: createContestExportCommand(),
+    getExportRoleIds,
+    hasExportRole,
+    DEFAULT_EXPORT_ROLE_IDS,
+};
